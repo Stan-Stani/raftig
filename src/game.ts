@@ -1,0 +1,1208 @@
+import { Vec, v, dist, clamp, rand, randInt, pick, gkey } from './util'
+import { Genome, Seed, Pheno, phenotype, wildGenome, breed, makeGenome } from './genetics'
+import { Tool, TOOLS, toolbarLayout, seedRowRects, seedPanelRect, restartRect, inRect } from './ui'
+import { keys } from './input'
+import { sfx, toggleMute } from './audio'
+
+export const TS = 46 // tile size, px
+export const RANGE = 280 // plant firing range
+export const TILE_HP = 60
+export const PLANT_HP = 40
+export const GROW_TIME = 28 // seconds to mature (while watered)
+export const WATER_PER_USE = 45 // meter points per 1💧
+export const BREED_COST = 2 // 💧
+export const BREED_CD = 18
+export const BUILD_COST = 5 // 🪵
+export const BOILER_COST = 6 // 🪵
+export const FUEL_TIME = 10 // seconds to burn 1🪵
+export const FUEL_WATER = 2 // 💧 per 🪵 burned
+export const FUEL_CAP = 4
+
+export interface Plant {
+  genome: Genome
+  gen: number
+  pheno: Pheno
+  growth: number // 0..1, shoots & breeds at 1
+  water: number // 0..100
+  hp: number
+  maxHp: number
+  cooldown: number
+  breedCd: number
+  dryTime: number
+  burnT: number
+  poisonT: number
+  wobble: number // render phase
+}
+
+export interface PotStructure {
+  kind: 'pot'
+  plant: Plant | null
+}
+export interface BoilerStructure {
+  kind: 'boiler'
+  fuel: number
+  progress: number
+}
+export type Structure = PotStructure | BoilerStructure
+
+export interface Tile {
+  gx: number
+  gy: number
+  hp: number
+  structure: Structure | null
+  burnT: number
+}
+
+export interface ETile {
+  gx: number
+  gy: number
+  hp: number
+  maxHp: number
+  plant: Plant | null
+  burnT: number
+}
+
+export interface EnemyRaft {
+  pos: Vec
+  vel: Vec
+  tiles: ETile[]
+  chillT: number
+  orbitDir: number
+  speed: number
+}
+
+export interface Bullet {
+  pos: Vec
+  vel: Vec
+  speed: number
+  dmg: number
+  element: Pheno['element']
+  quirk: Pheno['quirk']
+  friendly: boolean
+  life: number
+  pierceLeft: number
+  hitSet: Set<unknown>
+  tEnemy?: EnemyRaft
+  tTile?: ETile
+  tKey?: string
+  src?: Plant
+}
+
+export type LootKind = 'wood' | 'pot' | 'soil' | 'seed' | 'water'
+export interface Loot {
+  kind: LootKind
+  n: number
+  seed?: Seed
+  pos: Vec
+  vel: Vec
+  ttl: number
+  phase: number
+}
+
+export interface Particle {
+  pos: Vec
+  vel: Vec
+  life: number
+  maxLife: number
+  size: number
+  color: string
+}
+
+export interface FloatText {
+  pos: Vec
+  text: string
+  life: number
+  color: string
+}
+
+export interface HoverInfo {
+  plant: Plant
+  hostile: boolean
+  pos: Vec
+}
+
+function makePlant(genome: Genome, gen: number, growth = 0): Plant {
+  return {
+    genome,
+    gen,
+    pheno: phenotype(genome),
+    growth,
+    water: 70,
+    hp: PLANT_HP,
+    maxHp: PLANT_HP,
+    cooldown: rand(0.3, 1),
+    breedCd: 0,
+    dryTime: 0,
+    burnT: 0,
+    poisonT: 0,
+    wobble: rand(Math.PI * 2),
+  }
+}
+
+export class Game {
+  vw = 800
+  vh = 600
+  time = 0
+
+  raft = { pos: v(0, 0), vel: v(0, 0) }
+  tiles = new Map<string, Tile>()
+
+  wood = 0
+  water = 0
+  pots = 0
+  soil = 0
+  seeds: Seed[] = []
+  seedId = 1
+
+  enemies: EnemyRaft[] = []
+  bullets: Bullet[] = []
+  loot: Loot[] = []
+  particles: Particle[] = []
+  texts: FloatText[] = []
+
+  wave = 1
+  phase: 'calm' | 'raid' = 'calm'
+  phaseT = 30
+  ambientT = 2
+
+  tool: Tool = 'water'
+  seedSel = 0
+  seedScroll = 0
+  breedFirst: string | null = null
+
+  chillT = 0 // frost debuff on our raft
+  shake = 0
+  cam = v(0, 0)
+  hover = v(0, 0) // world coords of pointer
+  hoverScreen = v(0, 0)
+  hoverInfo: HoverInfo | null = null
+
+  over = false
+  paused = false
+  helpOpen = true
+  banner = { title: '', sub: '', t: 0 }
+  stats = { sunk: 0, bred: 0, time: 0 }
+
+  constructor() {
+    this.reset()
+    this.helpOpen = true
+  }
+
+  reset() {
+    this.raft = { pos: v(0, 0), vel: v(0, 0) }
+    this.tiles = new Map()
+    for (let gx = -1; gx <= 1; gx++) {
+      for (let gy = -1; gy <= 1; gy++) {
+        this.tiles.set(gkey(gx, gy), { gx, gy, hp: TILE_HP, structure: null, burnT: 0 })
+      }
+    }
+    // two pots to start; one holds a half-grown basic shooter so wave 1 is survivable
+    const potA = this.tiles.get(gkey(0, 0))!
+    const potB = this.tiles.get(gkey(1, 0))!
+    potA.structure = { kind: 'pot', plant: makePlant(makeGenome(), 0, 0.55) }
+    potB.structure = { kind: 'pot', plant: null }
+
+    this.wood = 8
+    this.water = 6
+    this.pots = 1
+    this.soil = 2
+    this.seedId = 1
+    // starter seeds: heterozygous lines that reward crossing (stout × brisk/twin,
+    // with ember and hardy hiding in the pairs)
+    this.seeds = [
+      { id: this.seedId++, gen: 0, genome: makeGenome({ power: ['mild', 'stout'], element: ['plain', 'ember'] }) },
+      { id: this.seedId++, gen: 0, genome: makeGenome({ rate: ['lazy', 'brisk'], barrel: ['single', 'twin'], thirst: ['thirsty', 'hardy'] }) },
+    ]
+
+    this.enemies = []
+    this.bullets = []
+    this.loot = []
+    this.particles = []
+    this.texts = []
+    this.wave = 1
+    this.phase = 'calm'
+    this.phaseT = 30
+    this.ambientT = 2
+    this.tool = 'water'
+    this.seedSel = 0
+    this.seedScroll = 0
+    this.breedFirst = null
+    this.chillT = 0
+    this.shake = 0
+    this.over = false
+    this.paused = false
+    this.helpOpen = false
+    this.stats = { sunk: 0, bred: 0, time: 0 }
+    this.banner = { title: 'raftig', sub: 'calm seas — plant, water, breed', t: 4 }
+  }
+
+  resize(w: number, h: number) {
+    this.vw = w
+    this.vh = h
+  }
+
+  // ---- coordinates ----
+
+  tilePos(t: { gx: number; gy: number }): Vec {
+    return v(this.raft.pos.x + t.gx * TS, this.raft.pos.y + t.gy * TS)
+  }
+
+  etilePos(e: EnemyRaft, t: ETile): Vec {
+    return v(e.pos.x + t.gx * TS, e.pos.y + t.gy * TS)
+  }
+
+  raftCenter(): Vec {
+    if (this.tiles.size === 0) return this.raft.pos
+    let x = 0
+    let y = 0
+    for (const t of this.tiles.values()) {
+      x += t.gx
+      y += t.gy
+    }
+    const n = this.tiles.size
+    return v(this.raft.pos.x + (x / n) * TS, this.raft.pos.y + (y / n) * TS)
+  }
+
+  screenToWorld(mx: number, my: number): Vec {
+    return v(this.cam.x + mx - this.vw / 2, this.cam.y + my - this.vh / 2)
+  }
+
+  /** any watered magnet plant on deck pulls loot in */
+  magnetActive(): boolean {
+    for (const t of this.tiles.values()) {
+      const p = t.structure?.kind === 'pot' ? t.structure.plant : null
+      if (p && p.growth >= 1 && p.water > 0 && p.pheno.quirk === 'magnet') return true
+    }
+    return false
+  }
+
+  // ---- update ----
+
+  update(dt: number) {
+    this.cam = this.raftCenter()
+    this.hover = this.screenToWorld(this.hoverScreen.x, this.hoverScreen.y)
+    if (this.over || this.paused || this.helpOpen) {
+      this.updateFx(dt)
+      return
+    }
+    this.time += dt
+    this.stats.time += dt
+    this.chillT = Math.max(0, this.chillT - dt)
+
+    this.updateMovement(dt)
+    this.updateRaft(dt)
+    this.updateEnemies(dt)
+    this.updateBullets(dt)
+    this.updateLoot(dt)
+    this.updateWaves(dt)
+    this.updateHoverInfo()
+    this.updateFx(dt)
+  }
+
+  private updateFx(dt: number) {
+    this.shake = Math.max(0, this.shake - this.shake * 5 * dt - 2 * dt)
+    this.banner.t = Math.max(0, this.banner.t - dt)
+    for (const p of this.particles) {
+      p.pos.x += p.vel.x * dt
+      p.pos.y += p.vel.y * dt
+      p.vel.x *= 1 - 2 * dt
+      p.vel.y *= 1 - 2 * dt
+      p.life -= dt
+    }
+    this.particles = this.particles.filter(p => p.life > 0)
+    for (const t of this.texts) {
+      t.pos.y -= 22 * dt
+      t.life -= dt
+    }
+    this.texts = this.texts.filter(t => t.life > 0)
+  }
+
+  private updateMovement(dt: number) {
+    const accel = 220
+    const maxSpeed = 85 * (this.chillT > 0 ? 0.55 : 1)
+    let ax = 0
+    let ay = 0
+    if (keys.has('KeyW') || keys.has('ArrowUp')) ay -= 1
+    if (keys.has('KeyS') || keys.has('ArrowDown')) ay += 1
+    if (keys.has('KeyA') || keys.has('ArrowLeft')) ax -= 1
+    if (keys.has('KeyD') || keys.has('ArrowRight')) ax += 1
+    if (ax || ay) {
+      const len = Math.hypot(ax, ay)
+      this.raft.vel.x += (ax / len) * accel * dt
+      this.raft.vel.y += (ay / len) * accel * dt
+    }
+    const sp = Math.hypot(this.raft.vel.x, this.raft.vel.y)
+    if (sp > maxSpeed) {
+      this.raft.vel.x *= maxSpeed / sp
+      this.raft.vel.y *= maxSpeed / sp
+    }
+    this.raft.vel.x *= 1 - Math.min(1, 1.4 * dt)
+    this.raft.vel.y *= 1 - Math.min(1, 1.4 * dt)
+    this.raft.pos.x += this.raft.vel.x * dt
+    this.raft.pos.y += this.raft.vel.y * dt
+  }
+
+  private updateRaft(dt: number) {
+    for (const tile of this.tiles.values()) {
+      // burning planks
+      if (tile.burnT > 0) {
+        tile.burnT -= dt
+        tile.hp -= 4 * dt
+        if (Math.random() < 6 * dt) this.puff(this.tilePos(tile), '#ff8c42', 1)
+        if (tile.hp <= 0) {
+          this.destroyPlayerTile(tile)
+          continue
+        }
+      }
+
+      const s = tile.structure
+      if (!s) continue
+
+      if (s.kind === 'boiler') {
+        if (s.fuel > 0) {
+          s.progress += dt
+          if (Math.random() < 3 * dt) this.puff(v(this.tilePos(tile).x, this.tilePos(tile).y - 14), '#cfd8dc', 1)
+          if (s.progress >= FUEL_TIME) {
+            s.progress = 0
+            s.fuel--
+            this.water += FUEL_WATER
+            this.toastAt(this.tilePos(tile), `+${FUEL_WATER}💧`, '#7fd8ff')
+          }
+        }
+        continue
+      }
+
+      const p = s.plant
+      if (!p) continue
+
+      // growth & thirst
+      if (p.water > 0) {
+        p.growth = Math.min(1, p.growth + dt / GROW_TIME)
+        p.dryTime = 0
+      } else {
+        p.dryTime += dt
+        if (p.dryTime > 6) p.hp -= 2 * dt
+      }
+      p.water = Math.max(0, p.water - p.pheno.drain * (p.growth < 1 ? 0.6 : 1) * dt)
+
+      // damage over time
+      if (p.burnT > 0) {
+        p.burnT -= dt
+        p.hp -= 3 * dt
+      }
+      if (p.poisonT > 0) {
+        p.poisonT -= dt
+        p.hp -= 2.5 * dt
+      }
+      if (p.hp <= 0) {
+        s.plant = null
+        this.toastAt(this.tilePos(tile), '🥀', '#c5b8a0')
+        if (this.breedFirst === gkey(tile.gx, tile.gy)) this.breedFirst = null
+        continue
+      }
+
+      p.cooldown -= dt
+      p.breedCd = Math.max(0, p.breedCd - dt)
+
+      // firing
+      if (p.growth >= 1 && p.water > 0 && p.cooldown <= 0) {
+        const from = this.tilePos(tile)
+        const targets = this.findTargets(from)
+        if (targets.length) {
+          this.firePlant(p, from, targets)
+          p.cooldown = p.pheno.period * (this.chillT > 0 ? 1.35 : 1)
+          p.water = Math.max(0, p.water - 0.35)
+        }
+      }
+    }
+    if (this.tiles.size === 0 && !this.over) this.gameOver()
+  }
+
+  /** enemy tiles in range, nearest first, plant-bearing tiles preferred */
+  private findTargets(from: Vec): { enemy: EnemyRaft; tile: ETile; d: number }[] {
+    const out: { enemy: EnemyRaft; tile: ETile; d: number }[] = []
+    for (const e of this.enemies) {
+      for (const t of e.tiles) {
+        const d = dist(from, this.etilePos(e, t))
+        if (d < RANGE) out.push({ enemy: e, tile: t, d: d - (t.plant ? 40 : 0) })
+      }
+    }
+    out.sort((a, b) => a.d - b.d)
+    return out
+  }
+
+  private firePlant(p: Plant, from: Vec, targets: { enemy: EnemyRaft; tile: ETile }[]) {
+    for (let i = 0; i < p.pheno.shots; i++) {
+      const t = targets[Math.min(i, targets.length - 1)]
+      const aim = this.etilePos(t.enemy, t.tile)
+      const dx = aim.x - from.x
+      const dy = aim.y - from.y
+      const len = Math.hypot(dx, dy) || 1
+      const speed = 330
+      this.bullets.push({
+        pos: v(from.x + rand(-4, 4), from.y - 16 + rand(-3, 3)),
+        vel: v((dx / len) * speed, (dy / len) * speed),
+        speed,
+        dmg: p.pheno.dmg,
+        element: p.pheno.element,
+        quirk: p.pheno.quirk,
+        friendly: true,
+        life: 4,
+        pierceLeft: p.pheno.quirk === 'pierce' ? 2 : 0,
+        hitSet: new Set(),
+        tEnemy: t.enemy,
+        tTile: t.tile,
+        src: p,
+      })
+    }
+    this.puff(v(from.x, from.y - 16), '#fff3c4', 2)
+    if (Math.random() < 0.7) sfx('shoot')
+  }
+
+  // ---- enemies ----
+
+  spawnEnemyRaft() {
+    const size = randInt(2, Math.min(2 + Math.ceil(this.wave / 2), 6))
+    const cells: { gx: number; gy: number }[] = [{ gx: 0, gy: 0 }]
+    while (cells.length < size) {
+      const base = pick(cells)
+      const dir = pick([
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ])
+      const gx = base.gx + dir[0]
+      const gy = base.gy + dir[1]
+      if (!cells.some(c => c.gx === gx && c.gy === gy)) cells.push({ gx, gy })
+    }
+    const maxHp = 34 + this.wave * 7
+    const tiles: ETile[] = cells.map(c => ({ ...c, hp: maxHp, maxHp, plant: null, burnT: 0 }))
+    let plantCount = 1 + (size >= 4 ? 1 : 0) + (this.wave >= 6 && size >= 5 ? 1 : 0)
+    const shuffled = [...tiles].sort(() => Math.random() - 0.5)
+    for (const t of shuffled) {
+      if (plantCount-- <= 0) break
+      t.plant = makePlant(wildGenome(1 + this.wave * 0.4), 0, 1)
+      t.plant.water = 100
+    }
+    const angle = rand(Math.PI * 2)
+    const c = this.raftCenter()
+    this.enemies.push({
+      pos: v(c.x + Math.cos(angle) * 780, c.y + Math.sin(angle) * 780),
+      vel: v(0, 0),
+      tiles,
+      chillT: 0,
+      orbitDir: Math.random() < 0.5 ? 1 : -1,
+      speed: Math.min(78, 42 + this.wave * 2 + rand(10)),
+    })
+  }
+
+  private updateEnemies(dt: number) {
+    const center = this.raftCenter()
+    for (const e of this.enemies) {
+      e.chillT = Math.max(0, e.chillT - dt)
+      const spd = e.speed * (e.chillT > 0 ? 0.5 : 1)
+      const dx = center.x - e.pos.x
+      const dy = center.y - e.pos.y
+      const d = Math.hypot(dx, dy) || 1
+      const ux = dx / d
+      const uy = dy / d
+      if (d > 290) {
+        e.vel.x = ux * spd
+        e.vel.y = uy * spd
+      } else {
+        // orbit at ~270px, drifting sideways
+        const radial = (d - 270) * 0.6
+        e.vel.x = -uy * e.orbitDir * spd * 0.45 + ux * radial
+        e.vel.y = ux * e.orbitDir * spd * 0.45 + uy * radial
+      }
+      // separation from other rafts
+      for (const o of this.enemies) {
+        if (o === e) continue
+        const ox = e.pos.x - o.pos.x
+        const oy = e.pos.y - o.pos.y
+        const od = Math.hypot(ox, oy)
+        if (od > 0 && od < 190) {
+          e.vel.x += (ox / od) * 30
+          e.vel.y += (oy / od) * 30
+        }
+      }
+      e.pos.x += e.vel.x * dt
+      e.pos.y += e.vel.y * dt
+
+      for (const t of e.tiles) {
+        if (t.burnT > 0) {
+          t.burnT -= dt
+          t.hp -= 4 * dt
+          if (Math.random() < 6 * dt) this.puff(this.etilePos(e, t), '#ff8c42', 1)
+          if (t.hp <= 0) {
+            this.destroyEnemyTile(e, t)
+            continue
+          }
+        }
+        const p = t.plant
+        if (!p) continue
+        if (p.burnT > 0) {
+          p.burnT -= dt
+          p.hp -= 3 * dt
+        }
+        if (p.poisonT > 0) {
+          p.poisonT -= dt
+          p.hp -= 2.5 * dt
+        }
+        if (p.hp <= 0) {
+          this.killEnemyPlant(e, t)
+          continue
+        }
+        p.cooldown -= dt
+        const from = this.etilePos(e, t)
+        if (p.cooldown <= 0 && dist(from, center) < 360 && this.tiles.size > 0) {
+          this.enemyFire(e, p, from)
+          const diffMult = Math.max(0.7, 1.5 - this.wave * 0.08)
+          p.cooldown = p.pheno.period * diffMult * (e.chillT > 0 ? 1.5 : 1) * rand(0.9, 1.15)
+        }
+      }
+    }
+    this.enemies = this.enemies.filter(e => e.tiles.length > 0)
+  }
+
+  private enemyFire(e: EnemyRaft, p: Plant, from: Vec) {
+    const all = [...this.tiles.values()]
+    if (!all.length) return
+    const potted = all.filter(t => t.structure?.kind === 'pot' && t.structure.plant)
+    const target = potted.length && Math.random() < 0.5 ? pick(potted) : pick(all)
+    const aim = this.tilePos(target)
+    const dx = aim.x - from.x
+    const dy = aim.y - from.y
+    const len = Math.hypot(dx, dy) || 1
+    const speed = 190
+    this.bullets.push({
+      pos: v(from.x, from.y - 16),
+      vel: v((dx / len) * speed, (dy / len) * speed),
+      speed,
+      dmg: p.pheno.dmg * (0.75 + this.wave * 0.06),
+      element: p.pheno.element,
+      quirk: 'none',
+      friendly: false,
+      life: 6,
+      pierceLeft: 0,
+      hitSet: new Set(),
+      tKey: gkey(target.gx, target.gy),
+    })
+  }
+
+  private destroyEnemyTile(e: EnemyRaft, t: ETile) {
+    const pos = this.etilePos(e, t)
+    if (t.plant) this.killEnemyPlant(e, t)
+    const n = randInt(2, 3 + Math.min(2, Math.floor(this.wave / 3)))
+    this.dropLoot('wood', n, pos)
+    this.burst(pos, '#8a6a45', 10)
+    sfx('break')
+    const i = e.tiles.indexOf(t)
+    if (i >= 0) e.tiles.splice(i, 1)
+    if (e.tiles.length === 0) {
+      this.stats.sunk++
+      this.shake = Math.min(10, this.shake + 5)
+      this.dropLoot(Math.random() < 0.6 ? 'pot' : 'soil', 1, v(pos.x + rand(-20, 20), pos.y + rand(-20, 20)))
+      this.dropLoot('water', 2, v(pos.x + rand(-20, 20), pos.y + rand(-20, 20)))
+      this.toastAt(pos, '☠ raft sunk!', '#ffd257')
+      sfx('sunk')
+    }
+  }
+
+  private killEnemyPlant(e: EnemyRaft, t: ETile) {
+    const p = t.plant
+    if (!p) return
+    t.plant = null
+    const pos = this.etilePos(e, t)
+    this.burst(pos, '#4e9a5f', 8)
+    const roll = Math.random()
+    if (roll < 0.45) {
+      this.dropLoot('seed', 1, pos, { id: this.seedId++, genome: p.genome, gen: 0 })
+      this.toastAt(pos, '🌰 seed adrift!', '#b8e986')
+    } else if (roll < 0.7) {
+      this.dropLoot('soil', 1, pos)
+    }
+  }
+
+  // ---- bullets ----
+
+  private updateBullets(dt: number) {
+    const dead = new Set<Bullet>()
+    for (const b of this.bullets) {
+      b.life -= dt
+      if (b.life <= 0) {
+        dead.add(b)
+        continue
+      }
+      // gentle homing while the target still exists
+      let aim: Vec | null = null
+      if (b.friendly && b.tEnemy && b.tTile && b.tEnemy.tiles.includes(b.tTile)) {
+        aim = this.etilePos(b.tEnemy, b.tTile)
+      } else if (!b.friendly && b.tKey) {
+        const t = this.tiles.get(b.tKey)
+        if (t) aim = this.tilePos(t)
+      }
+      if (aim) {
+        const dx = aim.x - b.pos.x
+        const dy = aim.y - b.pos.y
+        const len = Math.hypot(dx, dy) || 1
+        b.vel.x = (dx / len) * b.speed
+        b.vel.y = (dy / len) * b.speed
+      }
+      b.pos.x += b.vel.x * dt
+      b.pos.y += b.vel.y * dt
+
+      if (b.friendly) {
+        if (this.friendlyHit(b)) dead.add(b)
+      } else {
+        if (this.enemyHit(b)) dead.add(b)
+      }
+    }
+    this.bullets = this.bullets.filter(b => !dead.has(b))
+  }
+
+  /** returns true if the bullet is spent */
+  private friendlyHit(b: Bullet): boolean {
+    for (const e of this.enemies) {
+      for (const t of e.tiles) {
+        const tp = this.etilePos(e, t)
+        const p = t.plant
+        if (p && !b.hitSet.has(p) && dist(b.pos, v(tp.x, tp.y - 14)) < 15) {
+          b.hitSet.add(p)
+          p.hp -= b.dmg * (b.element === 'venom' ? 1.6 : 1)
+          if (b.element === 'ember') p.burnT = 3
+          if (b.element === 'frost') e.chillT = 2.5
+          if (b.element === 'venom') p.poisonT = 4
+          if (b.quirk === 'leech' && b.src) b.src.water = Math.min(100, b.src.water + 2)
+          this.puff(b.pos, this.bulletColor(b), 2)
+          sfx('hit')
+          if (p.hp <= 0) this.killEnemyPlant(e, t)
+          if (b.pierceLeft > 0) {
+            b.pierceLeft--
+            return false
+          }
+          return true
+        }
+        if (!b.hitSet.has(t) && dist(b.pos, tp) < TS * 0.55) {
+          b.hitSet.add(t)
+          t.hp -= b.dmg
+          if (b.element === 'ember') t.burnT = 3
+          if (b.element === 'frost') e.chillT = 2.5
+          if (b.quirk === 'leech' && b.src) b.src.water = Math.min(100, b.src.water + 2)
+          this.puff(b.pos, this.bulletColor(b), 2)
+          sfx('hit')
+          if (t.hp <= 0) this.destroyEnemyTile(e, t)
+          if (b.pierceLeft > 0) {
+            b.pierceLeft--
+            return false
+          }
+          return true
+        }
+      }
+    }
+    return false
+  }
+
+  /** returns true if the bullet is spent */
+  private enemyHit(b: Bullet): boolean {
+    for (const t of this.tiles.values()) {
+      const tp = this.tilePos(t)
+      const plant = t.structure?.kind === 'pot' ? t.structure.plant : null
+      if (plant && dist(b.pos, v(tp.x, tp.y - 14)) < 15) {
+        plant.hp -= b.dmg * (b.element === 'venom' ? 1.6 : 1)
+        if (b.element === 'ember') plant.burnT = 3
+        if (b.element === 'frost') this.chillT = 2.5
+        if (b.element === 'venom') plant.poisonT = 4
+        this.puff(b.pos, this.bulletColor(b), 2)
+        this.shake = Math.min(8, this.shake + 1)
+        return true
+      }
+      if (dist(b.pos, tp) < TS * 0.55) {
+        t.hp -= b.dmg
+        if (b.element === 'ember') t.burnT = 3
+        if (b.element === 'frost') this.chillT = 2.5
+        this.puff(b.pos, this.bulletColor(b), 3)
+        this.shake = Math.min(8, this.shake + 1.5)
+        sfx('hit')
+        if (t.hp <= 0) this.destroyPlayerTile(t)
+        return true
+      }
+    }
+    return false
+  }
+
+  bulletColor(b: Bullet): string {
+    switch (b.element) {
+      case 'ember':
+        return '#ff7a45'
+      case 'frost':
+        return '#7fd8ff'
+      case 'venom':
+        return '#b07fff'
+      default:
+        return b.friendly ? '#ffd257' : '#ff9d9d'
+    }
+  }
+
+  private destroyPlayerTile(tile: Tile) {
+    const pos = this.tilePos(tile)
+    this.tiles.delete(gkey(tile.gx, tile.gy))
+    if (this.breedFirst === gkey(tile.gx, tile.gy)) this.breedFirst = null
+    this.burst(pos, '#8a6a45', 12)
+    this.shake = Math.min(12, this.shake + 4)
+    sfx('break')
+    if (this.tiles.size === 0) this.gameOver()
+  }
+
+  private gameOver() {
+    this.over = true
+    sfx('over')
+  }
+
+  // ---- loot ----
+
+  dropLoot(kind: LootKind, n: number, pos: Vec, seed?: Seed) {
+    this.loot.push({
+      kind,
+      n,
+      seed,
+      pos: v(pos.x, pos.y),
+      vel: v(rand(-15, 15), rand(-15, 15)),
+      ttl: 70,
+      phase: rand(Math.PI * 2),
+    })
+  }
+
+  spawnAmbientLoot() {
+    const c = this.raftCenter()
+    const angle = rand(Math.PI * 2)
+    const d = rand(380, 620)
+    const pos = v(c.x + Math.cos(angle) * d, c.y + Math.sin(angle) * d)
+    const speed = rand(8, 16)
+    const vel = v(((c.x - pos.x) / d) * speed, ((c.y - pos.y) / d) * speed)
+    const roll = Math.random()
+    let loot: Loot
+    if (roll < 0.42) loot = { kind: 'wood', n: randInt(2, 3), seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
+    else if (roll < 0.58) loot = { kind: 'soil', n: 1, seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
+    else if (roll < 0.72) loot = { kind: 'pot', n: 1, seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
+    else if (roll < 0.86) loot = { kind: 'water', n: 2, seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
+    else
+      loot = {
+        kind: 'seed',
+        n: 1,
+        seed: { id: this.seedId++, genome: wildGenome(1 + this.wave * 0.3), gen: 0 },
+        pos,
+        vel,
+        ttl: 70,
+        phase: rand(6),
+      }
+    this.loot.push(loot)
+  }
+
+  private updateLoot(dt: number) {
+    const center = this.raftCenter()
+    const magnet = this.magnetActive()
+    const taken = new Set<Loot>()
+    for (const l of this.loot) {
+      l.phase += dt
+      l.ttl -= dt
+      if (l.ttl <= 0) {
+        taken.add(l)
+        continue
+      }
+      if (magnet) {
+        const d = dist(l.pos, center)
+        if (d < 190 && d > 1) {
+          l.vel.x += ((center.x - l.pos.x) / d) * 90 * dt
+          l.vel.y += ((center.y - l.pos.y) / d) * 90 * dt
+        }
+      }
+      l.pos.x += l.vel.x * dt
+      l.pos.y += l.vel.y * dt
+      for (const t of this.tiles.values()) {
+        if (dist(l.pos, this.tilePos(t)) < TS * 0.8) {
+          this.collect(l)
+          taken.add(l)
+          break
+        }
+      }
+    }
+    this.loot = this.loot.filter(l => !taken.has(l))
+  }
+
+  private collect(l: Loot) {
+    switch (l.kind) {
+      case 'wood':
+        this.wood += l.n
+        this.toastAt(l.pos, `+${l.n}🪵`, '#e8c98a')
+        break
+      case 'water':
+        this.water += l.n
+        this.toastAt(l.pos, `+${l.n}💧`, '#7fd8ff')
+        break
+      case 'pot':
+        this.pots += l.n
+        this.toastAt(l.pos, '+1🏺', '#e8a87c')
+        break
+      case 'soil':
+        this.soil += l.n
+        this.toastAt(l.pos, '+1🟤', '#c5a880')
+        break
+      case 'seed':
+        if (l.seed) {
+          this.seeds.push(l.seed)
+          this.toastAt(l.pos, `🌰 ${phenotype(l.seed.genome).name}`, '#b8e986')
+        }
+        break
+    }
+    sfx('collect')
+  }
+
+  // ---- waves ----
+
+  private updateWaves(dt: number) {
+    this.ambientT -= dt
+    if (this.ambientT <= 0) {
+      this.ambientT = this.phase === 'calm' ? 4.5 : 9
+      this.spawnAmbientLoot()
+    }
+    if (this.phase === 'calm') {
+      this.phaseT -= dt
+      if (this.phaseT <= 0) {
+        this.phase = 'raid'
+        const n = Math.min(5, 1 + Math.floor((this.wave - 1) / 2))
+        for (let i = 0; i < n; i++) this.spawnEnemyRaft()
+        this.banner = { title: `wave ${this.wave}`, sub: `${n} hostile raft${n > 1 ? 's' : ''} sighted`, t: 3.5 }
+      }
+    } else if (this.enemies.length === 0) {
+      this.wave++
+      this.phase = 'calm'
+      this.phaseT = 26
+      this.banner = { title: 'calm seas', sub: 'rebuild · water · breed', t: 3.5 }
+    }
+  }
+
+  // ---- input / actions ----
+
+  pointerMove(mx: number, my: number) {
+    this.hoverScreen = v(mx, my)
+    this.hover = this.screenToWorld(mx, my)
+  }
+
+  private updateHoverInfo() {
+    this.hoverInfo = null
+    for (const t of this.tiles.values()) {
+      const p = t.structure?.kind === 'pot' ? t.structure.plant : null
+      if (!p) continue
+      const tp = this.tilePos(t)
+      if (dist(this.hover, v(tp.x, tp.y - 12)) < 20) {
+        this.hoverInfo = { plant: p, hostile: false, pos: tp }
+        return
+      }
+    }
+    for (const e of this.enemies) {
+      for (const t of e.tiles) {
+        if (!t.plant) continue
+        const tp = this.etilePos(e, t)
+        if (dist(this.hover, v(tp.x, tp.y - 12)) < 20) {
+          this.hoverInfo = { plant: t.plant, hostile: true, pos: tp }
+          return
+        }
+      }
+    }
+  }
+
+  click(mx: number, my: number) {
+    if (this.over) {
+      if (inRect(mx, my, restartRect(this.vw, this.vh))) this.reset()
+      return
+    }
+    if (this.helpOpen) {
+      this.helpOpen = false
+      return
+    }
+    for (const r of toolbarLayout(this.vw, this.vh)) {
+      if (inRect(mx, my, r)) {
+        this.tool = r.tool
+        this.breedFirst = null
+        return
+      }
+    }
+    if (this.tool === 'plant' && this.seeds.length) {
+      const panel = seedPanelRect(this.vw)
+      if (inRect(mx, my, panel)) {
+        for (const row of seedRowRects(this.vw, this.seeds.length, this.seedScroll)) {
+          if (inRect(mx, my, row)) {
+            this.seedSel = row.idx
+            return
+          }
+        }
+        return
+      }
+    }
+    if (this.paused) return
+    this.worldClick(this.screenToWorld(mx, my))
+  }
+
+  rightClick() {
+    this.breedFirst = null
+  }
+
+  wheel(dir: number) {
+    if (this.tool === 'plant') {
+      this.seedScroll = clamp(this.seedScroll + dir, 0, Math.max(0, this.seeds.length - 8))
+    }
+  }
+
+  keydown(code: string) {
+    const idx = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7'].indexOf(code)
+    if (idx >= 0) {
+      this.tool = TOOLS[idx].tool
+      this.breedFirst = null
+      return
+    }
+    switch (code) {
+      case 'KeyQ':
+        if (this.seeds.length) this.seedSel = (this.seedSel + this.seeds.length - 1) % this.seeds.length
+        break
+      case 'KeyE':
+        if (this.seeds.length) this.seedSel = (this.seedSel + 1) % this.seeds.length
+        break
+      case 'KeyH':
+        this.helpOpen = !this.helpOpen
+        break
+      case 'KeyP':
+        if (!this.over) this.paused = !this.paused
+        break
+      case 'KeyM':
+        toggleMute()
+        break
+      case 'KeyR':
+        if (this.over) this.reset()
+        break
+      case 'Escape':
+        this.breedFirst = null
+        break
+    }
+  }
+
+  private toast(text: string) {
+    this.toastAt(this.hover, text, '#ffb3b3')
+    sfx('deny')
+  }
+
+  toastAt(pos: Vec, text: string, color: string) {
+    this.texts.push({ pos: v(pos.x, pos.y - 20), text, life: 1.6, color })
+  }
+
+  private worldClick(w: Vec) {
+    const gx = Math.round((w.x - this.raft.pos.x) / TS)
+    const gy = Math.round((w.y - this.raft.pos.y) / TS)
+    const key = gkey(gx, gy)
+    const tile = this.tiles.get(key)
+
+    switch (this.tool) {
+      case 'build':
+        if (tile) {
+          if (tile.hp >= TILE_HP) return this.toast('tile is sound')
+          if (this.wood < 1) return this.toast('need 1🪵')
+          this.wood--
+          tile.hp = Math.min(TILE_HP, tile.hp + 30)
+          this.puff(this.tilePos(tile), '#e8c98a', 4)
+          sfx('build')
+        } else {
+          if (!this.isBuildable(gx, gy)) return
+          if (this.wood < BUILD_COST) return this.toast(`need ${BUILD_COST}🪵`)
+          this.wood -= BUILD_COST
+          this.tiles.set(key, { gx, gy, hp: TILE_HP, structure: null, burnT: 0 })
+          this.puff(this.tilePos({ gx, gy }), '#e8c98a', 6)
+          sfx('build')
+        }
+        break
+
+      case 'pot':
+        if (!tile) return
+        if (tile.structure) return this.toast('tile occupied')
+        if (this.pots < 1) return this.toast('need a pot 🏺')
+        if (this.soil < 1) return this.toast('need soil 🟤')
+        this.pots--
+        this.soil--
+        tile.structure = { kind: 'pot', plant: null }
+        sfx('build')
+        break
+
+      case 'plant': {
+        if (!tile || tile.structure?.kind !== 'pot') return
+        if (tile.structure.plant) return this.toast('pot occupied')
+        if (!this.seeds.length) return this.toast('no seeds — breed or loot')
+        const seed = this.seeds.splice(this.seedSel, 1)[0]
+        this.seedSel = clamp(this.seedSel, 0, Math.max(0, this.seeds.length - 1))
+        this.seedScroll = clamp(this.seedScroll, 0, Math.max(0, this.seeds.length - 8))
+        tile.structure.plant = makePlant(seed.genome, seed.gen)
+        this.toastAt(this.tilePos(tile), `🌱 ${phenotype(seed.genome).name}`, '#b8e986')
+        sfx('build')
+        break
+      }
+
+      case 'water': {
+        const p = tile?.structure?.kind === 'pot' ? tile.structure.plant : null
+        if (!tile || !p) return
+        if (this.water < 1) return this.toast('no fresh water — stoke a boiler')
+        if (p.water >= 100) return this.toast('already soaked')
+        this.water--
+        p.water = Math.min(100, p.water + WATER_PER_USE)
+        p.dryTime = 0
+        this.puff(v(this.tilePos(tile).x, this.tilePos(tile).y - 14), '#7fd8ff', 5)
+        sfx('water')
+        break
+      }
+
+      case 'breed':
+        this.breedClick(tile)
+        break
+
+      case 'boiler':
+        if (!tile) return
+        if (tile.structure?.kind === 'boiler') {
+          if (this.wood < 1) return this.toast('need 1🪵 to stoke')
+          if (tile.structure.fuel >= FUEL_CAP) return this.toast('boiler is full')
+          this.wood--
+          tile.structure.fuel++
+          this.toastAt(this.tilePos(tile), '+fuel 🔥', '#ff8c42')
+          sfx('build')
+        } else if (!tile.structure) {
+          if (this.wood < BOILER_COST) return this.toast(`need ${BOILER_COST}🪵`)
+          this.wood -= BOILER_COST
+          tile.structure = { kind: 'boiler', fuel: 0, progress: 0 }
+          sfx('build')
+        } else {
+          this.toast('tile occupied')
+        }
+        break
+
+      case 'remove':
+        if (!tile || !tile.structure) return
+        if (tile.structure.kind === 'pot') {
+          if (tile.structure.plant) {
+            tile.structure.plant = null
+            this.toastAt(this.tilePos(tile), 'dug up 🥀', '#c5b8a0')
+            if (this.breedFirst === key) this.breedFirst = null
+          } else {
+            tile.structure = null
+            this.pots++
+            this.toastAt(this.tilePos(tile), '+1🏺', '#e8a87c')
+          }
+        } else {
+          tile.structure = null
+          this.wood += 2
+          this.toastAt(this.tilePos(tile), '+2🪵', '#e8c98a')
+        }
+        break
+    }
+  }
+
+  isBuildable(gx: number, gy: number): boolean {
+    if (this.tiles.has(gkey(gx, gy))) return false
+    return (
+      this.tiles.has(gkey(gx + 1, gy)) ||
+      this.tiles.has(gkey(gx - 1, gy)) ||
+      this.tiles.has(gkey(gx, gy + 1)) ||
+      this.tiles.has(gkey(gx, gy - 1))
+    )
+  }
+
+  buildableCells(): { gx: number; gy: number }[] {
+    const out = new Map<string, { gx: number; gy: number }>()
+    for (const t of this.tiles.values()) {
+      for (const [dx, dy] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ]) {
+        const gx = t.gx + dx
+        const gy = t.gy + dy
+        const k = gkey(gx, gy)
+        if (!this.tiles.has(k) && !out.has(k)) out.set(k, { gx, gy })
+      }
+    }
+    return [...out.values()]
+  }
+
+  private breedClick(tile: Tile | undefined) {
+    const plant = tile?.structure?.kind === 'pot' ? tile.structure.plant : null
+    if (!tile || !plant) return
+    const key = gkey(tile.gx, tile.gy)
+    if (plant.growth < 1) return this.toast('not mature yet')
+    if (plant.breedCd > 0) return this.toast(`resting ${Math.ceil(plant.breedCd)}s`)
+
+    if (!this.breedFirst) {
+      this.breedFirst = key
+      this.toastAt(this.tilePos(tile), 'pick a partner 🐝', '#ffd257')
+      return
+    }
+    if (this.breedFirst === key) {
+      this.breedFirst = null
+      return
+    }
+    const firstTile = this.tiles.get(this.breedFirst)
+    const first = firstTile?.structure?.kind === 'pot' ? firstTile.structure.plant : null
+    if (!firstTile || !first || first.growth < 1 || first.breedCd > 0) {
+      this.breedFirst = null
+      return
+    }
+    if (Math.max(Math.abs(firstTile.gx - tile.gx), Math.abs(firstTile.gy - tile.gy)) > 2) {
+      return this.toast('too far apart (≤2 tiles)')
+    }
+    if (this.water < BREED_COST) return this.toast(`need ${BREED_COST}💧`)
+
+    this.water -= BREED_COST
+    first.breedCd = BREED_CD
+    plant.breedCd = BREED_CD
+    const gen = Math.max(first.gen, plant.gen) + 1
+    const make = () => ({ id: this.seedId++, genome: breed(first.genome, plant.genome), gen })
+    this.seeds.push(make())
+    let msg = '🌰 new seed!'
+    if (Math.random() < 0.3) {
+      this.seeds.push(make())
+      msg = '🌰🌰 twin seeds!'
+    }
+    this.stats.bred++
+    this.breedFirst = null
+    this.burst(this.tilePos(tile), '#ffd257', 8)
+    this.burst(this.tilePos(firstTile), '#ffd257', 8)
+    this.toastAt(this.tilePos(tile), `${msg} (F${gen})`, '#ffd257')
+    sfx('breed')
+  }
+
+  // ---- fx helpers ----
+
+  puff(pos: Vec, color: string, n: number) {
+    for (let i = 0; i < n; i++) {
+      this.particles.push({
+        pos: v(pos.x + rand(-4, 4), pos.y + rand(-4, 4)),
+        vel: v(rand(-30, 30), rand(-40, 5)),
+        life: rand(0.3, 0.7),
+        maxLife: 0.7,
+        size: rand(1.5, 3.5),
+        color,
+      })
+    }
+  }
+
+  burst(pos: Vec, color: string, n: number) {
+    for (let i = 0; i < n; i++) {
+      const a = rand(Math.PI * 2)
+      const sp = rand(30, 110)
+      this.particles.push({
+        pos: v(pos.x, pos.y),
+        vel: v(Math.cos(a) * sp, Math.sin(a) * sp),
+        life: rand(0.4, 0.9),
+        maxLife: 0.9,
+        size: rand(2, 4.5),
+        color,
+      })
+    }
+  }
+}
