@@ -31,13 +31,15 @@ npm run dev
   wind — sink them or lose them in a gale. The farther from home waters,
   the deadlier the raiders — and the loot scales faster than the threat.
 - **Salvage** — destroyed enemy planks drop 🪵 wood; sunken rafts drop pots
-  and water. Flotsam drifts by on the wind — set an intercept course; nothing
-  floats to you for free (unless you breed a magnet plant).
+  and water. Kill a raft's last plant and its crew scuttles — the whole hull
+  breaks up for you. Flotsam drifts by on the wind — set an intercept course;
+  nothing floats to you for free (unless you breed a magnet plant).
 - **Rebuild** — wood repairs and extends your deck (build tool), or…
 - **Burn** — stoke the boiler: 1🪵 → 2💧 fresh water. Salt water is free;
   drinkable water is the economy.
 - **Garden** — pots need 🏺 + 🟤 soil (both drift by on the current). Plants
-  need regular watering or they wilt, stop shooting, and die.
+  need watering or they wilt, stop shooting, and die — they gulp water in
+  battle but only sip while resting, so peaceful sailing is cheap.
 - **Breed** — the 🐝 tool crosses two mature plants (2💧) into new seeds.
 - Run ends when your last plank sinks.
 

@@ -34,6 +34,8 @@ export interface Plant {
   pheno: Pheno
   growth: number // 0..1, shoots & breeds at 1
   water: number // 0..100
+  /** seconds since last shot that still count as "in action" — full thirst */
+  activeT: number
   hp: number
   maxHp: number
   cooldown: number
@@ -93,6 +95,8 @@ export interface EnemyRaft {
   kind: 'raider' | 'harrier'
   /** raft belongs to a nest and stays tethered to it */
   home?: POI
+  /** mid-scuttle guard — the hull is being torn down, don't re-enter */
+  scuttling?: boolean
 }
 
 export interface Wind {
@@ -159,6 +163,7 @@ function makePlant(genome: Genome, gen: number, growth = 0): Plant {
     pheno: phenotype(genome),
     growth,
     water: 70,
+    activeT: 0,
     hp: PLANT_HP,
     maxHp: PLANT_HP,
     cooldown: rand(0.3, 1),
@@ -466,6 +471,7 @@ export class Game {
   }
 
   private nestCleared(p: POI) {
+    if (p.done) return
     p.done = true
     const danger = this.dangerAt(p.pos) + 2
     const scatter = () => v(p.pos.x + rand(-60, 60), p.pos.y + rand(-60, 60))
@@ -603,7 +609,7 @@ export class Game {
       const p = s.plant
       if (!p) continue
 
-      // growth & thirst
+      // growth & thirst — plants gulp in battle, only sip at rest
       if (p.water > 0) {
         p.growth = Math.min(1, p.growth + dt / GROW_TIME)
         p.dryTime = 0
@@ -611,7 +617,9 @@ export class Game {
         p.dryTime += dt
         if (p.dryTime > 6) p.hp -= 2 * dt
       }
-      p.water = Math.max(0, p.water - p.pheno.drain * (p.growth < 1 ? 0.6 : 1) * dt)
+      p.activeT = Math.max(0, p.activeT - dt)
+      const thirst = p.growth < 1 ? 0.6 : p.activeT > 0 ? 1 : 0.2
+      p.water = Math.max(0, p.water - p.pheno.drain * thirst * dt)
 
       // damage over time
       if (p.burnT > 0) {
@@ -660,6 +668,7 @@ export class Game {
   }
 
   private firePlant(p: Plant, from: Vec, targets: { enemy: EnemyRaft; tile: ETile }[]) {
+    p.activeT = 4
     for (let i = 0; i < p.pheno.shots; i++) {
       const t = targets[Math.min(i, targets.length - 1)]
       const aim = this.etilePos(t.enemy, t.tile)
@@ -906,6 +915,7 @@ export class Game {
         }
         if (p.hp <= 0) {
           this.killEnemyPlant(e, t)
+          this.checkScuttle(e)
           continue
         }
         p.cooldown -= dt
@@ -982,6 +992,15 @@ export class Game {
         this.nestCleared(e.home)
       }
     }
+    this.checkScuttle(e)
+  }
+
+  /** a raft with no plants left has no fight left — the crew scuttles it */
+  private checkScuttle(e: EnemyRaft) {
+    if (e.scuttling || e.tiles.length === 0 || e.tiles.some(t => t.plant)) return
+    e.scuttling = true
+    this.toastAt(e.pos, 'defenseless — crew scuttles!', '#ffd257')
+    while (e.tiles.length) this.destroyEnemyTile(e, e.tiles[0])
   }
 
   private killEnemyPlant(e: EnemyRaft, t: ETile) {
@@ -1050,7 +1069,10 @@ export class Game {
           if (b.quirk === 'leech' && b.src) b.src.water = Math.min(100, b.src.water + 2)
           this.puff(b.pos, this.bulletColor(b), 2)
           sfx('hit')
-          if (p.hp <= 0) this.killEnemyPlant(e, t)
+          if (p.hp <= 0) {
+            this.killEnemyPlant(e, t)
+            this.checkScuttle(e)
+          }
           if (b.pierceLeft > 0) {
             b.pierceLeft--
             return false
