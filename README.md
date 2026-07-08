@@ -15,12 +15,21 @@ npm run dev
 ## The loop
 
 - **Sail** — a wandering wind blows across the sea. Running with it is fast;
-  beating into it is a crawl. Watch the wind arrow and tack.
-- **Hunt** — raider rafts roam the open sea and only engage if you sail close
-  (or shoot first). Pick your fights; flee downwind and they give up. The
-  farther from home waters, the deadlier the raiders — and the hotter their
-  genes. Your mature plants auto-fire at anything in range; enemy plants
-  shoot back, with their own genetics.
+  beating into it is a crawl. Watch the wind arrow and tack. A fog-of-war
+  minimap charts where you've been; ⌂ always points home, and faint danger
+  rings show the gradient you're gambling against.
+- **Explore** — sights telegraph on the horizon and are worth a heading:
+  ⚓ smoking **wrecks** (one-time fat salvage), 🏮 **traders** (press T to
+  barter 6🪵 for a good seed line), 🌀 **becalmed pools** (flotsam collects
+  in the dead water, but your sail dies inside too), and ☠️ **raider nests**
+  (a tethered pod guarding the wildest genes — clear it for a seed cache).
+- **Hunt** — raider rafts roam the open sea. Sail close and they eye you
+  (❓) for a beat before committing (⚔️) — back off while they wonder and
+  nothing happens. Waking one raft stirs its podmates, so pick where you
+  engage. Fleeing works, but crews patch their hulls while you run: commit
+  and finish, or eat the loss. Red-pennant **harriers** row through any
+  wind — sink them or lose them in a gale. The farther from home waters,
+  the deadlier the raiders — and the loot scales faster than the threat.
 - **Salvage** — destroyed enemy planks drop 🪵 wood; sunken rafts drop pots
   and water. Flotsam drifts by on the wind — set an intercept course; nothing
   floats to you for free (unless you breed a magnet plant).
@@ -62,8 +71,8 @@ Every plant is diploid: two alleles per locus, six loci.
 
 ## Controls
 
-WASD/arrows sail (speed depends on the wind) · 1–7 tools · Q/E or wheel picks
-seeds · right-click/Esc cancels breeding · H help · P pause · M mute ·
-R restart after sinking.
+WASD/arrows sail (speed depends on the wind) · 1–7 tools · T trades with a
+nearby trader · Q/E or wheel picks seeds · right-click/Esc cancels breeding ·
+H help · P pause · M mute · R restart after sinking.
 
 Hover any plant — yours or theirs — to read its full genotype.
