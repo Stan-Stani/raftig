@@ -14,10 +14,16 @@ npm run dev
 
 ## The loop
 
-- **Fight** — hostile rafts raid in waves. Your mature plants auto-fire at
-  anything in range. Enemy plants shoot back, with their own genetics.
+- **Sail** — a wandering wind blows across the sea. Running with it is fast;
+  beating into it is a crawl. Watch the wind arrow and tack.
+- **Hunt** — raider rafts roam the open sea and only engage if you sail close
+  (or shoot first). Pick your fights; flee downwind and they give up. The
+  farther from home waters, the deadlier the raiders — and the hotter their
+  genes. Your mature plants auto-fire at anything in range; enemy plants
+  shoot back, with their own genetics.
 - **Salvage** — destroyed enemy planks drop 🪵 wood; sunken rafts drop pots
-  and water. Steer the raft (WASD) over floating loot to scoop it up.
+  and water. Flotsam drifts by on the wind — set an intercept course; nothing
+  floats to you for free (unless you breed a magnet plant).
 - **Rebuild** — wood repairs and extends your deck (build tool), or…
 - **Burn** — stoke the boiler: 1🪵 → 2💧 fresh water. Salt water is free;
   drinkable water is the economy.
@@ -48,15 +54,16 @@ Every plant is diploid: two alleles per locus, six loci.
   chills rafts and fire rates, **venom** shreds enemy plants.
 - Quirks: **pierce** shoots through targets, **leech** waters its own plant
   per hit, **magnet** pulls floating loot toward your raft.
-- Kill an enemy plant and it may drop its seed — steal wild genes from late
-  waves, where rare alleles run hotter.
+- Kill an enemy plant and it may drop its seed — sail far from home to steal
+  wild genes where rare alleles run hotter.
 - Seeds carry a pedigree badge (wild, F1, F2 …) and every genome gets a
   deterministic cultivar name (Brinefang, Squallpetal, …). Shiny ✦ marks a
   plant expressing at least one rare allele.
 
 ## Controls
 
-WASD/arrows steer · 1–7 tools · Q/E or wheel picks seeds · right-click/Esc
-cancels breeding · H help · P pause · M mute · R restart after sinking.
+WASD/arrows sail (speed depends on the wind) · 1–7 tools · Q/E or wheel picks
+seeds · right-click/Esc cancels breeding · H help · P pause · M mute ·
+R restart after sinking.
 
 Hover any plant — yours or theirs — to read its full genotype.

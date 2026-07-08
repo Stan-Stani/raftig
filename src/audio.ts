@@ -46,6 +46,7 @@ export type SfxName =
   | 'sunk'
   | 'over'
   | 'deny'
+  | 'spot'
 
 export function sfx(name: SfxName) {
   if (!actx || muted) return
@@ -85,6 +86,10 @@ export function sfx(name: SfxName) {
       break
     case 'deny':
       tone(150, 0.09, 'square', 0.03, -20)
+      break
+    case 'spot':
+      tone(440, 0.12, 'square', 0.035, 120)
+      tone(587, 0.16, 'square', 0.03, 100, 0.12)
       break
   }
 }

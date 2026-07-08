@@ -89,6 +89,25 @@ function drawWaves(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number,
       ctx.stroke()
     }
   }
+  // wind streaks sliding across the swell
+  const wx = Math.cos(g.wind.a)
+  const wy = Math.sin(g.wind.a)
+  const slen = 10 + g.wind.speed * 0.45
+  ctx.lineWidth = 1
+  for (let gx = x0; gx <= x1; gx++) {
+    for (let gy = y0; gy <= y1; gy++) {
+      const r = hash01(gx * 3.7 + 11.2, gy * 5.1 + 4.8)
+      if (r < 0.72) continue
+      const ph = (t * (0.18 + g.wind.speed * 0.01) + r * 9) % 1
+      const cx = gx * cell + r * 70 + wx * (ph - 0.5) * cell
+      const cy = gy * cell + hash01(gy * 2.3, gx * 1.7) * 70 + wy * (ph - 0.5) * cell
+      ctx.globalAlpha = Math.sin(ph * Math.PI) * 0.13
+      ctx.beginPath()
+      ctx.moveTo(cx - wx * slen * 0.5, cy - wy * slen * 0.5)
+      ctx.lineTo(cx + wx * slen * 0.5, cy + wy * slen * 0.5)
+      ctx.stroke()
+    }
+  }
   ctx.globalAlpha = 1
 }
 
@@ -246,6 +265,18 @@ function drawPlayerRaft(ctx: CanvasRenderingContext2D, g: Game, t: number) {
     const p = g.tilePos(tile)
     drawPlank(ctx, p.x, p.y, tile.hp, TILE_HP, false, tile.burnT)
   }
+  // mast & sail on the plank nearest the raft's heart (empty deck preferred)
+  let mast: Vec | null = null
+  let best = Infinity
+  for (const tile of g.tiles.values()) {
+    const p = g.tilePos(tile)
+    const score = (p.x - g.cam.x) ** 2 + (p.y - g.cam.y) ** 2 + (tile.structure ? 1e6 : 0)
+    if (score < best) {
+      best = score
+      mast = p
+    }
+  }
+  if (mast) drawSail(ctx, g, mast, t)
   // structures on top
   for (const tile of g.tiles.values()) {
     const p = g.tilePos(tile)
@@ -304,6 +335,32 @@ function drawPlayerRaft(ctx: CanvasRenderingContext2D, g: Game, t: number) {
       ctx.setLineDash([])
     }
   }
+}
+
+function drawSail(ctx: CanvasRenderingContext2D, g: Game, mp: Vec, t: number) {
+  const a = g.wind.a
+  const stretch = g.sailEff ?? 0.55
+  const boom = 20 + g.wind.speed * 0.18
+  const tipX = mp.x + Math.cos(a) * boom
+  const tipY = mp.y + Math.sin(a) * boom
+  const px = -Math.sin(a)
+  const py = Math.cos(a)
+  const bulge = (7 + g.wind.speed * 0.1) * (0.6 + 0.4 * stretch) + Math.sin(t * 3.1) * 1.2
+  const midX = (mp.x + tipX) / 2
+  const midY = (mp.y + tipY) / 2
+  ctx.fillStyle = 'rgba(238,229,205,0.93)'
+  ctx.strokeStyle = '#b9ac8a'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(mp.x, mp.y)
+  ctx.quadraticCurveTo(midX + px * bulge, midY + py * bulge, tipX, tipY)
+  ctx.quadraticCurveTo(midX + px * bulge * 0.25, midY + py * bulge * 0.25, mp.x, mp.y)
+  ctx.fill()
+  ctx.stroke()
+  ctx.fillStyle = '#5f4830'
+  ctx.beginPath()
+  ctx.arc(mp.x, mp.y, 3.5, 0, Math.PI * 2)
+  ctx.fill()
 }
 
 function drawPot(ctx: CanvasRenderingContext2D, x: number, y: number) {
@@ -375,6 +432,19 @@ function drawEnemyRaft(ctx: CanvasRenderingContext2D, g: Game, e: EnemyRaft, t: 
       ctx.fill()
     }
   }
+  if (e.mode === 'hunt' && e.tiles.length) {
+    let cx = 0
+    let cy = 0
+    for (const tile of e.tiles) {
+      cx += tile.gx
+      cy += tile.gy
+    }
+    const hx = e.pos.x + (cx / e.tiles.length) * TS
+    const hy = e.pos.y + (cy / e.tiles.length) * TS - TS * 0.95 + Math.sin(t * 5) * 2
+    ctx.font = '15px serif'
+    ctx.textAlign = 'center'
+    ctx.fillText('⚔️', hx, hy)
+  }
 }
 
 function drawBullet(ctx: CanvasRenderingContext2D, g: Game, b: Bullet) {
@@ -423,21 +493,25 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
   x += chip(ctx, x, 12, `🌰 ${g.seeds.length}`) + 6
   if (g.chillT > 0) chip(ctx, x, 12, '❄ chilled!')
 
-  // wave status
+  // sea status
   const mins = Math.floor(g.stats.time / 60)
   const secs = Math.floor(g.stats.time % 60)
-  const status =
-    g.phase === 'calm'
-      ? `wave ${g.wave} · raid in ${Math.ceil(g.phaseT)}s`
-      : `wave ${g.wave} · ${g.enemies.length} raft${g.enemies.length === 1 ? '' : 's'} left`
+  const hunting = g.enemies.filter(e => e.mode === 'hunt').length
+  const danger = g.dangerAt(g.cam)
+  const seaName = danger < 2 ? 'home waters' : danger < 4 ? 'open sea' : danger < 6 ? 'raider seas' : 'deadly waters'
+  const status = hunting
+    ? `⚔️ ${hunting} raider${hunting === 1 ? '' : 's'} engaging!`
+    : `${seaName} · danger ${danger.toFixed(1)} · ${g.enemies.length} sail${g.enemies.length === 1 ? '' : 's'} near`
   ctx.font = 'bold 15px ui-monospace, monospace'
   const sw = ctx.measureText(status).width + 24
-  ctx.fillStyle = g.phase === 'raid' ? 'rgba(80,16,16,0.8)' : 'rgba(4,20,32,0.75)'
+  ctx.fillStyle = hunting ? 'rgba(80,16,16,0.8)' : 'rgba(4,20,32,0.75)'
   roundRect(ctx, w / 2 - sw / 2, 12, sw, 28, 14)
   ctx.fill()
   ctx.fillStyle = '#e8f1f5'
   ctx.textAlign = 'center'
   ctx.fillText(status, w / 2, 31)
+
+  drawWindPill(ctx, g, w)
 
   // right chips
   ctx.font = '14px ui-monospace, monospace'
@@ -475,6 +549,40 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
     ctx.fillText('paused — P to resume', w / 2, h / 2)
   }
   if (g.over) drawGameOver(ctx, g, w, h, t)
+}
+
+function drawWindPill(ctx: CanvasRenderingContext2D, g: Game, w: number) {
+  const y = 46
+  const label = `${Math.round(g.wind.speed)} kn`
+  ctx.font = '13px ui-monospace, monospace'
+  const pw = ctx.measureText(label).width + 52
+  const x0 = w / 2 - pw / 2
+  ctx.fillStyle = 'rgba(4,20,32,0.75)'
+  roundRect(ctx, x0, y, pw, 24, 12)
+  ctx.fill()
+  // arrow points where the wind blows; color = how well your heading catches it
+  const eff = g.sailEff
+  const color = eff == null ? '#cfe3ee' : `hsl(${Math.round(((eff - 0.3) / 0.7) * 120)}, 75%, 62%)`
+  ctx.save()
+  ctx.translate(x0 + 18, y + 12)
+  ctx.rotate(g.wind.a)
+  ctx.strokeStyle = color
+  ctx.fillStyle = color
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(-7, 0)
+  ctx.lineTo(4, 0)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(9, 0)
+  ctx.lineTo(2, -4.5)
+  ctx.lineTo(2, 4.5)
+  ctx.closePath()
+  ctx.fill()
+  ctx.restore()
+  ctx.fillStyle = '#cfe3ee'
+  ctx.textAlign = 'left'
+  ctx.fillText(label, x0 + 32, y + 17)
 }
 
 function drawToolbar(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number) {
@@ -634,17 +742,20 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.fillText('a raft roguelike where your garden is the gun deck', w / 2, h * 0.16 + 28)
 
   const lines = [
-    'WASD — steer the raft · mouse — use tools (1–7) · P pause · M mute · H this help',
+    'WASD — sail the raft · mouse — use tools (1–7) · P pause · M mute · H this help',
     '',
-    'your plants shoot raiders on their own. keep them WATERED or they wilt and die.',
-    'sink enemy rafts for wood. burn wood in the BOILER to desalt sea water.',
-    'wood also rebuilds and extends your deck. pots + soil drift by — scoop them up.',
+    'mind the WIND (arrow up top): running with it is fast, beating into it is a crawl.',
+    'flotsam — wood, pots, soil, seeds — drifts by on the breeze. set an intercept course.',
     '',
-    'BREED (🐝) two mature plants to cross their genes — plantig rules apply:',
-    'two alleles per gene, dominant ones mask recessives, and the best traits',
-    '(titan damage, hydra barrels, camel thirst, pierce/leech/magnet quirks)',
-    'are rare recessives — they hide in carrier lines until the right cross.',
-    'shoot enemy plants and they may drop their seed. steal good genes. go wild.',
+    'raiders ROAM the sea and only fight if you sail close (or shoot first).',
+    'pick fights when your garden is ready — flee downwind and they give up the chase.',
+    'the farther from home waters, the deadlier the raiders and the hotter their genes.',
+    '',
+    'your plants shoot on their own — keep them WATERED or they wilt and die.',
+    'sink rafts for wood; burn wood in the BOILER to desalt sea water.',
+    'BREED (🐝) two mature plants to cross genes — plantig rules: dominant alleles',
+    'mask recessives, and the best traits (titan, hydra, camel, pierce/leech/magnet)',
+    'are rare recessives hiding in carrier lines until the right cross.',
     '',
     'the run ends when your last plank sinks.',
   ]
@@ -669,7 +780,7 @@ function drawGameOver(ctx: CanvasRenderingContext2D, g: Game, w: number, h: numb
   const mins = Math.floor(g.stats.time / 60)
   const secs = Math.floor(g.stats.time % 60)
   ctx.fillText(
-    `waves survived: ${g.wave - 1} · rafts sunk: ${g.stats.sunk} · seeds bred: ${g.stats.bred} · ${mins}:${secs.toString().padStart(2, '0')} afloat`,
+    `rafts sunk: ${g.stats.sunk} · seeds bred: ${g.stats.bred} · farthest ${(g.stats.far / 100).toFixed(1)} leagues · ${mins}:${secs.toString().padStart(2, '0')} afloat`,
     w / 2,
     h / 2 - 30
   )

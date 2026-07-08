@@ -24,6 +24,14 @@ export function weighted<T>(items: T[], w: (t: T) => number): T {
   return items[items.length - 1]
 }
 
+/** signed shortest angle from b to a, in [-π, π] */
+export function angleDiff(a: number, b: number): number {
+  let d = a - b
+  while (d > Math.PI) d -= Math.PI * 2
+  while (d < -Math.PI) d += Math.PI * 2
+  return d
+}
+
 export const gkey = (gx: number, gy: number) => `${gx},${gy}`
 
 /** cheap deterministic hash → [0,1), for stable procedural visuals */

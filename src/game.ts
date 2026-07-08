@@ -1,4 +1,4 @@
-import { Vec, v, dist, clamp, rand, randInt, pick, gkey } from './util'
+import { Vec, v, dist, clamp, rand, randInt, pick, gkey, angleDiff } from './util'
 import { Genome, Seed, Pheno, phenotype, wildGenome, breed, makeGenome } from './genetics'
 import { Tool, TOOLS, toolbarLayout, seedRowRects, seedPanelRect, restartRect, inRect } from './ui'
 import { keys } from './input'
@@ -17,6 +17,11 @@ export const BOILER_COST = 6 // 🪵
 export const FUEL_TIME = 10 // seconds to burn 1🪵
 export const FUEL_WATER = 2 // 💧 per 🪵 burned
 export const FUEL_CAP = 4
+export const WIND_MIN = 16 // px/s
+export const WIND_MAX = 60
+export const AGGRO_R = 330 // raiders engage inside this range…
+export const DEAGGRO_R = 590 // …and give up the chase beyond this
+export const DANGER_SCALE = 550 // px from home waters per +1 danger
 
 export interface Plant {
   genome: Genome
@@ -69,6 +74,18 @@ export interface EnemyRaft {
   chillT: number
   orbitDir: number
   speed: number
+  mode: 'roam' | 'hunt'
+  wanderA: number
+  wanderT: number
+  danger: number // difficulty of the waters it spawned in
+}
+
+export interface Wind {
+  a: number // blowing toward this angle
+  speed: number
+  targetA: number
+  targetSpeed: number
+  shiftT: number
 }
 
 export interface Bullet {
@@ -84,7 +101,6 @@ export interface Bullet {
   hitSet: Set<unknown>
   tEnemy?: EnemyRaft
   tTile?: ETile
-  tKey?: string
   src?: Plant
 }
 
@@ -160,10 +176,10 @@ export class Game {
   particles: Particle[] = []
   texts: FloatText[] = []
 
-  wave = 1
-  phase: 'calm' | 'raid' = 'calm'
-  phaseT = 30
+  wind: Wind = { a: 0, speed: 30, targetA: 0, targetSpeed: 30, shiftT: 8 }
+  sailEff: number | null = null // sailing efficiency while steering, for the HUD
   ambientT = 2
+  spawnT = 3
 
   tool: Tool = 'water'
   seedSel = 0
@@ -181,7 +197,7 @@ export class Game {
   paused = false
   helpOpen = true
   banner = { title: '', sub: '', t: 0 }
-  stats = { sunk: 0, bred: 0, time: 0 }
+  stats = { sunk: 0, bred: 0, time: 0, far: 0 }
 
   constructor() {
     this.reset()
@@ -219,10 +235,11 @@ export class Game {
     this.loot = []
     this.particles = []
     this.texts = []
-    this.wave = 1
-    this.phase = 'calm'
-    this.phaseT = 30
+    const wa = rand(Math.PI * 2)
+    this.wind = { a: wa, speed: rand(26, 44), targetA: wa, targetSpeed: rand(26, 44), shiftT: rand(7, 15) }
+    this.sailEff = null
     this.ambientT = 2
+    this.spawnT = 3
     this.tool = 'water'
     this.seedSel = 0
     this.seedScroll = 0
@@ -232,8 +249,9 @@ export class Game {
     this.over = false
     this.paused = false
     this.helpOpen = false
-    this.stats = { sunk: 0, bred: 0, time: 0 }
-    this.banner = { title: 'raftig', sub: 'calm seas — plant, water, breed', t: 4 }
+    this.stats = { sunk: 0, bred: 0, time: 0, far: 0 }
+    this.banner = { title: 'raftig', sub: 'hoist the sail — raiders roam these waters', t: 4 }
+    for (let i = 0; i < 3; i++) this.spawnEnemyRaft()
   }
 
   resize(w: number, h: number) {
@@ -267,6 +285,11 @@ export class Game {
     return v(this.cam.x + mx - this.vw / 2, this.cam.y + my - this.vh / 2)
   }
 
+  /** difficulty of the waters at p — grows with distance from home (the spawn point) */
+  dangerAt(p: Vec): number {
+    return 1 + dist(p, v(0, 0)) / DANGER_SCALE
+  }
+
   /** any watered magnet plant on deck pulls loot in */
   magnetActive(): boolean {
     for (const t of this.tiles.values()) {
@@ -289,14 +312,29 @@ export class Game {
     this.stats.time += dt
     this.chillT = Math.max(0, this.chillT - dt)
 
+    this.updateWind(dt)
     this.updateMovement(dt)
     this.updateRaft(dt)
     this.updateEnemies(dt)
     this.updateBullets(dt)
     this.updateLoot(dt)
-    this.updateWaves(dt)
+    this.updateSea(dt)
     this.updateHoverInfo()
     this.updateFx(dt)
+    this.stats.far = Math.max(this.stats.far, dist(this.raftCenter(), v(0, 0)))
+  }
+
+  private updateWind(dt: number) {
+    const w = this.wind
+    w.shiftT -= dt
+    if (w.shiftT <= 0) {
+      w.shiftT = rand(7, 15)
+      w.targetA = w.a + rand(-1.4, 1.4)
+      w.targetSpeed = clamp(w.targetSpeed + rand(-16, 16), WIND_MIN, WIND_MAX)
+    }
+    const ease = Math.min(1, 0.4 * dt)
+    w.a += angleDiff(w.targetA, w.a) * ease
+    w.speed += (w.targetSpeed - w.speed) * ease
   }
 
   private updateFx(dt: number) {
@@ -318,23 +356,28 @@ export class Game {
   }
 
   private updateMovement(dt: number) {
-    const accel = 220
-    const maxSpeed = 85 * (this.chillT > 0 ? 0.55 : 1)
     let ax = 0
     let ay = 0
     if (keys.has('KeyW') || keys.has('ArrowUp')) ay -= 1
     if (keys.has('KeyS') || keys.has('ArrowDown')) ay += 1
     if (keys.has('KeyA') || keys.has('ArrowLeft')) ax -= 1
     if (keys.has('KeyD') || keys.has('ArrowRight')) ax += 1
+    this.sailEff = null
     if (ax || ay) {
-      const len = Math.hypot(ax, ay)
-      this.raft.vel.x += (ax / len) * accel * dt
-      this.raft.vel.y += (ay / len) * accel * dt
-    }
-    const sp = Math.hypot(this.raft.vel.x, this.raft.vel.y)
-    if (sp > maxSpeed) {
-      this.raft.vel.x *= maxSpeed / sp
-      this.raft.vel.y *= maxSpeed / sp
+      // sail physics: full speed running with the wind, a crawl beating into it —
+      // tack across the wind (or wait for it to shift) instead of fighting it head-on
+      const heading = Math.atan2(ay, ax)
+      const eff = 0.3 + 0.7 * Math.pow((1 + Math.cos(angleDiff(heading, this.wind.a))) / 2, 1.5)
+      const gust = 0.5 + 0.5 * (this.wind.speed / WIND_MAX)
+      this.sailEff = eff
+      const maxSpeed = 120 * eff * gust * (this.chillT > 0 ? 0.55 : 1)
+      this.raft.vel.x += Math.cos(heading) * 260 * eff * gust * dt
+      this.raft.vel.y += Math.sin(heading) * 260 * eff * gust * dt
+      const sp = Math.hypot(this.raft.vel.x, this.raft.vel.y)
+      if (sp > maxSpeed) {
+        this.raft.vel.x *= maxSpeed / sp
+        this.raft.vel.y *= maxSpeed / sp
+      }
     }
     this.raft.vel.x *= 1 - Math.min(1, 1.4 * dt)
     this.raft.vel.y *= 1 - Math.min(1, 1.4 * dt)
@@ -462,7 +505,12 @@ export class Game {
   // ---- enemies ----
 
   spawnEnemyRaft() {
-    const size = randInt(2, Math.min(2 + Math.ceil(this.wave / 2), 6))
+    const c = this.raftCenter()
+    const angle = rand(Math.PI * 2)
+    const away = rand(650, 1000)
+    const pos = v(c.x + Math.cos(angle) * away, c.y + Math.sin(angle) * away)
+    const danger = this.dangerAt(pos)
+    const size = randInt(2, Math.min(2 + Math.ceil(danger / 2), 6))
     const cells: { gx: number; gy: number }[] = [{ gx: 0, gy: 0 }]
     while (cells.length < size) {
       const base = pick(cells)
@@ -474,27 +522,36 @@ export class Game {
       ])
       const gx = base.gx + dir[0]
       const gy = base.gy + dir[1]
-      if (!cells.some(c => c.gx === gx && c.gy === gy)) cells.push({ gx, gy })
+      if (!cells.some(cl => cl.gx === gx && cl.gy === gy)) cells.push({ gx, gy })
     }
-    const maxHp = 34 + this.wave * 7
-    const tiles: ETile[] = cells.map(c => ({ ...c, hp: maxHp, maxHp, plant: null, burnT: 0 }))
-    let plantCount = 1 + (size >= 4 ? 1 : 0) + (this.wave >= 6 && size >= 5 ? 1 : 0)
+    const maxHp = 30 + danger * 7
+    const tiles: ETile[] = cells.map(cl => ({ ...cl, hp: maxHp, maxHp, plant: null, burnT: 0 }))
+    let plantCount = 1 + (size >= 4 ? 1 : 0) + (danger >= 6 && size >= 5 ? 1 : 0)
     const shuffled = [...tiles].sort(() => Math.random() - 0.5)
     for (const t of shuffled) {
       if (plantCount-- <= 0) break
-      t.plant = makePlant(wildGenome(1 + this.wave * 0.4), 0, 1)
+      t.plant = makePlant(wildGenome(1 + danger * 0.4), 0, 1)
       t.plant.water = 100
     }
-    const angle = rand(Math.PI * 2)
-    const c = this.raftCenter()
     this.enemies.push({
-      pos: v(c.x + Math.cos(angle) * 780, c.y + Math.sin(angle) * 780),
+      pos,
       vel: v(0, 0),
       tiles,
       chillT: 0,
       orbitDir: Math.random() < 0.5 ? 1 : -1,
-      speed: Math.min(78, 42 + this.wave * 2 + rand(10)),
+      speed: Math.min(80, 40 + danger * 3 + rand(10)),
+      mode: 'roam',
+      wanderA: rand(Math.PI * 2),
+      wanderT: rand(2, 6),
+      danger,
     })
+  }
+
+  aggro(e: EnemyRaft) {
+    if (e.mode === 'hunt') return
+    e.mode = 'hunt'
+    this.toastAt(e.pos, '⚔️ spotted you!', '#ff9d9d')
+    sfx('spot')
   }
 
   private updateEnemies(dt: number) {
@@ -507,14 +564,39 @@ export class Game {
       const d = Math.hypot(dx, dy) || 1
       const ux = dx / d
       const uy = dy / d
-      if (d > 290) {
-        e.vel.x = ux * spd
-        e.vel.y = uy * spd
+
+      // raiders only fight once you sail close — flee far enough and they break off
+      if (e.mode === 'roam' && d < AGGRO_R && this.tiles.size > 0) {
+        this.aggro(e)
+      } else if (e.mode === 'hunt' && d > DEAGGRO_R) {
+        e.mode = 'roam'
+        e.wanderT = 0
+        this.toastAt(e.pos, 'lost them…', '#9fb8c8')
+      }
+
+      if (e.mode === 'hunt') {
+        if (d > 290) {
+          e.vel.x = ux * spd
+          e.vel.y = uy * spd
+        } else {
+          // orbit at ~270px, drifting sideways
+          const radial = (d - 270) * 0.6
+          e.vel.x = -uy * e.orbitDir * spd * 0.45 + ux * radial
+          e.vel.y = ux * e.orbitDir * spd * 0.45 + uy * radial
+        }
+        // raiders feel the wind too, just less than your square rig — flee downwind
+        const wEff = 0.8 + 0.2 * ((1 + Math.cos(angleDiff(Math.atan2(e.vel.y, e.vel.x), this.wind.a))) / 2)
+        e.vel.x *= wEff
+        e.vel.y *= wEff
       } else {
-        // orbit at ~270px, drifting sideways
-        const radial = (d - 270) * 0.6
-        e.vel.x = -uy * e.orbitDir * spd * 0.45 + ux * radial
-        e.vel.y = ux * e.orbitDir * spd * 0.45 + uy * radial
+        // amble on a wander heading, drifting with the wind
+        e.wanderT -= dt
+        if (e.wanderT <= 0) {
+          e.wanderT = rand(3, 8)
+          e.wanderA = rand(Math.PI * 2)
+        }
+        e.vel.x = Math.cos(e.wanderA) * spd * 0.3 + Math.cos(this.wind.a) * this.wind.speed * 0.25
+        e.vel.y = Math.sin(e.wanderA) * spd * 0.3 + Math.sin(this.wind.a) * this.wind.speed * 0.25
       }
       // separation from other rafts
       for (const o of this.enemies) {
@@ -556,14 +638,15 @@ export class Game {
         }
         p.cooldown -= dt
         const from = this.etilePos(e, t)
-        if (p.cooldown <= 0 && dist(from, center) < 360 && this.tiles.size > 0) {
+        if (p.cooldown <= 0 && e.mode === 'hunt' && dist(from, center) < 360 && this.tiles.size > 0) {
           this.enemyFire(e, p, from)
-          const diffMult = Math.max(0.7, 1.5 - this.wave * 0.08)
+          const diffMult = Math.max(0.7, 1.5 - e.danger * 0.08)
           p.cooldown = p.pheno.period * diffMult * (e.chillT > 0 ? 1.5 : 1) * rand(0.9, 1.15)
         }
       }
     }
-    this.enemies = this.enemies.filter(e => e.tiles.length > 0)
+    // sunk rafts go; distant roamers slip over the horizon (fresh ones respawn nearer)
+    this.enemies = this.enemies.filter(e => e.tiles.length > 0 && (e.mode === 'hunt' || dist(e.pos, center) < 1700))
   }
 
   private enemyFire(e: EnemyRaft, p: Plant, from: Vec) {
@@ -571,30 +654,32 @@ export class Game {
     if (!all.length) return
     const potted = all.filter(t => t.structure?.kind === 'pot' && t.structure.plant)
     const target = potted.length && Math.random() < 0.5 ? pick(potted) : pick(all)
-    const aim = this.tilePos(target)
+    const speed = 190
+    // lead the raft's current velocity — no homing, so hard sailing dodges
+    const at = this.tilePos(target)
+    const lead = (dist(from, at) / speed) * 0.85
+    const aim = v(at.x + this.raft.vel.x * lead + rand(-12, 12), at.y + this.raft.vel.y * lead + rand(-12, 12))
     const dx = aim.x - from.x
     const dy = aim.y - from.y
     const len = Math.hypot(dx, dy) || 1
-    const speed = 190
     this.bullets.push({
       pos: v(from.x, from.y - 16),
       vel: v((dx / len) * speed, (dy / len) * speed),
       speed,
-      dmg: p.pheno.dmg * (0.75 + this.wave * 0.06),
+      dmg: p.pheno.dmg * (0.75 + e.danger * 0.06),
       element: p.pheno.element,
       quirk: 'none',
       friendly: false,
       life: 6,
       pierceLeft: 0,
       hitSet: new Set(),
-      tKey: gkey(target.gx, target.gy),
     })
   }
 
   private destroyEnemyTile(e: EnemyRaft, t: ETile) {
     const pos = this.etilePos(e, t)
     if (t.plant) this.killEnemyPlant(e, t)
-    const n = randInt(2, 3 + Math.min(2, Math.floor(this.wave / 3)))
+    const n = randInt(2, 3 + Math.min(2, Math.floor(e.danger / 3)))
     this.dropLoot('wood', n, pos)
     this.burst(pos, '#8a6a45', 10)
     sfx('break')
@@ -635,13 +720,11 @@ export class Game {
         dead.add(b)
         continue
       }
-      // gentle homing while the target still exists
+      // friendly shots home gently while the target tile survives;
+      // raider shots fly straight — outsail them
       let aim: Vec | null = null
       if (b.friendly && b.tEnemy && b.tTile && b.tEnemy.tiles.includes(b.tTile)) {
         aim = this.etilePos(b.tEnemy, b.tTile)
-      } else if (!b.friendly && b.tKey) {
-        const t = this.tiles.get(b.tKey)
-        if (t) aim = this.tilePos(t)
       }
       if (aim) {
         const dx = aim.x - b.pos.x
@@ -670,6 +753,7 @@ export class Game {
         const p = t.plant
         if (p && !b.hitSet.has(p) && dist(b.pos, v(tp.x, tp.y - 14)) < 15) {
           b.hitSet.add(p)
+          this.aggro(e)
           p.hp -= b.dmg * (b.element === 'venom' ? 1.6 : 1)
           if (b.element === 'ember') p.burnT = 3
           if (b.element === 'frost') e.chillT = 2.5
@@ -686,6 +770,7 @@ export class Game {
         }
         if (!b.hitSet.has(t) && dist(b.pos, tp) < TS * 0.55) {
           b.hitSet.add(t)
+          this.aggro(e)
           t.hp -= b.dmg
           if (b.element === 'ember') t.burnT = 3
           if (b.element === 'frost') e.chillT = 2.5
@@ -775,12 +860,16 @@ export class Game {
   }
 
   spawnAmbientLoot() {
+    // flotsam rides the wind past your raft — set an intercept course or let it go
     const c = this.raftCenter()
-    const angle = rand(Math.PI * 2)
-    const d = rand(380, 620)
+    const angle = this.wind.a + Math.PI + rand(-1.3, 1.3) // upwind side, so it drifts through
+    const d = rand(380, 640)
     const pos = v(c.x + Math.cos(angle) * d, c.y + Math.sin(angle) * d)
-    const speed = rand(8, 16)
-    const vel = v(((c.x - pos.x) / d) * speed, ((c.y - pos.y) / d) * speed)
+    const drift = rand(0.22, 0.4)
+    const vel = v(
+      Math.cos(this.wind.a) * this.wind.speed * drift + rand(-5, 5),
+      Math.sin(this.wind.a) * this.wind.speed * drift + rand(-5, 5)
+    )
     const roll = Math.random()
     let loot: Loot
     if (roll < 0.42) loot = { kind: 'wood', n: randInt(2, 3), seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
@@ -791,7 +880,7 @@ export class Game {
       loot = {
         kind: 'seed',
         n: 1,
-        seed: { id: this.seedId++, genome: wildGenome(1 + this.wave * 0.3), gen: 0 },
+        seed: { id: this.seedId++, genome: wildGenome(1 + this.dangerAt(c) * 0.3), gen: 0 },
         pos,
         vel,
         ttl: 70,
@@ -811,12 +900,18 @@ export class Game {
         taken.add(l)
         continue
       }
-      if (magnet) {
+      const pulled = magnet && dist(l.pos, center) < 190
+      if (pulled) {
         const d = dist(l.pos, center)
-        if (d < 190 && d > 1) {
+        if (d > 1) {
           l.vel.x += ((center.x - l.pos.x) / d) * 90 * dt
           l.vel.y += ((center.y - l.pos.y) / d) * 90 * dt
         }
+      } else {
+        // everything afloat settles into the wind current
+        const k = Math.min(1, 0.5 * dt)
+        l.vel.x += (Math.cos(this.wind.a) * this.wind.speed * 0.3 - l.vel.x) * k
+        l.vel.y += (Math.sin(this.wind.a) * this.wind.speed * 0.3 - l.vel.y) * k
       }
       l.pos.x += l.vel.x * dt
       l.pos.y += l.vel.y * dt
@@ -859,27 +954,20 @@ export class Game {
     sfx('collect')
   }
 
-  // ---- waves ----
+  // ---- open sea ----
 
-  private updateWaves(dt: number) {
+  private updateSea(dt: number) {
     this.ambientT -= dt
     if (this.ambientT <= 0) {
-      this.ambientT = this.phase === 'calm' ? 4.5 : 9
+      this.ambientT = 5.5
       this.spawnAmbientLoot()
     }
-    if (this.phase === 'calm') {
-      this.phaseT -= dt
-      if (this.phaseT <= 0) {
-        this.phase = 'raid'
-        const n = Math.min(5, 1 + Math.floor((this.wave - 1) / 2))
-        for (let i = 0; i < n; i++) this.spawnEnemyRaft()
-        this.banner = { title: `wave ${this.wave}`, sub: `${n} hostile raft${n > 1 ? 's' : ''} sighted`, t: 3.5 }
-      }
-    } else if (this.enemies.length === 0) {
-      this.wave++
-      this.phase = 'calm'
-      this.phaseT = 26
-      this.banner = { title: 'calm seas', sub: 'rebuild · water · breed', t: 3.5 }
+    // keep the surrounding waters populated with roaming raiders
+    this.spawnT -= dt
+    if (this.spawnT <= 0) {
+      this.spawnT = 4
+      const cap = Math.min(7, 3 + Math.floor(this.dangerAt(this.raftCenter()) / 2))
+      if (this.enemies.length < cap) this.spawnEnemyRaft()
     }
   }
 
