@@ -44,6 +44,7 @@ export interface Plant {
   burnT: number
   poisonT: number
   wobble: number // render phase
+  aim: number // fixed firing heading, radians; set by the player during calm
 }
 
 export interface PotStructure {
@@ -172,6 +173,7 @@ function makePlant(genome: Genome, gen: number, growth = 0): Plant {
     burnT: 0,
     poisonT: 0,
     wobble: rand(Math.PI * 2),
+    aim: -Math.PI / 2, // default: straight up; re-point with the 🎯 tool
   }
 }
 
@@ -213,6 +215,7 @@ export class Game {
   seedSel = 0
   seedScroll = 0
   breedFirst: string | null = null
+  aimFirst: string | null = null // plant awaiting a heading click (🎯 tool)
 
   chillT = 0 // frost debuff on our raft
   shake = 0
@@ -279,6 +282,7 @@ export class Game {
     this.seedSel = 0
     this.seedScroll = 0
     this.breedFirst = null
+    this.aimFirst = null
     this.chillT = 0
     this.shake = 0
     this.over = false
@@ -640,12 +644,12 @@ export class Game {
       p.cooldown -= dt
       p.breedCd = Math.max(0, p.breedCd - dt)
 
-      // firing
+      // firing — plants shoot along a fixed heading set by the player, engaging
+      // whenever a raider drifts into range but never tracking it.
       if (p.growth >= 1 && p.water > 0 && p.cooldown <= 0) {
         const from = this.tilePos(tile)
-        const targets = this.findTargets(from)
-        if (targets.length) {
-          this.firePlant(p, from, targets)
+        if (this.enemyInRange(from)) {
+          this.firePlant(p, from)
           p.cooldown = p.pheno.period * (this.chillT > 0 ? 1.35 : 1)
           p.water = Math.max(0, p.water - 0.35)
         }
@@ -654,31 +658,33 @@ export class Game {
     if (this.tiles.size === 0 && !this.over) this.gameOver()
   }
 
-  /** enemy tiles in range, nearest first, plant-bearing tiles preferred */
-  private findTargets(from: Vec): { enemy: EnemyRaft; tile: ETile; d: number }[] {
-    const out: { enemy: EnemyRaft; tile: ETile; d: number }[] = []
+  /** true if any enemy tile sits within firing range of the given point */
+  private enemyInRange(from: Vec): boolean {
     for (const e of this.enemies) {
       for (const t of e.tiles) {
-        const d = dist(from, this.etilePos(e, t))
-        if (d < RANGE) out.push({ enemy: e, tile: t, d: d - (t.plant ? 40 : 0) })
+        if (dist(from, this.etilePos(e, t)) < RANGE) return true
       }
     }
-    out.sort((a, b) => a.d - b.d)
-    return out
+    return false
   }
 
-  private firePlant(p: Plant, from: Vec, targets: { enemy: EnemyRaft; tile: ETile }[]) {
+  /** true while a raider sits within any plant's firing range — locks re-aiming */
+  private inCombat(): boolean {
+    for (const t of this.tiles.values()) {
+      if (this.enemyInRange(this.tilePos(t))) return true
+    }
+    return false
+  }
+
+  private firePlant(p: Plant, from: Vec) {
     p.activeT = 4
+    const spread = 0.14 // radians between barrels of a multi-shot plant
+    const speed = 330
     for (let i = 0; i < p.pheno.shots; i++) {
-      const t = targets[Math.min(i, targets.length - 1)]
-      const aim = this.etilePos(t.enemy, t.tile)
-      const dx = aim.x - from.x
-      const dy = aim.y - from.y
-      const len = Math.hypot(dx, dy) || 1
-      const speed = 330
+      const a = p.aim + (i - (p.pheno.shots - 1) / 2) * spread
       this.bullets.push({
         pos: v(from.x + rand(-4, 4), from.y - 16 + rand(-3, 3)),
-        vel: v((dx / len) * speed, (dy / len) * speed),
+        vel: v(Math.cos(a) * speed, Math.sin(a) * speed),
         speed,
         dmg: p.pheno.dmg,
         element: p.pheno.element,
@@ -687,8 +693,6 @@ export class Game {
         life: 4,
         pierceLeft: p.pheno.quirk === 'pierce' ? 2 : 0,
         hitSet: new Set(),
-        tEnemy: t.enemy,
-        tTile: t.tile,
         src: p,
       })
     }
@@ -1330,6 +1334,7 @@ export class Game {
       if (inRect(mx, my, r)) {
         this.tool = r.tool
         this.breedFirst = null
+        this.aimFirst = null
         return
       }
     }
@@ -1351,6 +1356,7 @@ export class Game {
 
   rightClick() {
     this.breedFirst = null
+    this.aimFirst = null
   }
 
   wheel(dir: number) {
@@ -1360,10 +1366,11 @@ export class Game {
   }
 
   keydown(code: string) {
-    const idx = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7'].indexOf(code)
-    if (idx >= 0) {
+    const idx = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8'].indexOf(code)
+    if (idx >= 0 && idx < TOOLS.length) {
       this.tool = TOOLS[idx].tool
       this.breedFirst = null
+      this.aimFirst = null
       return
     }
     switch (code) {
@@ -1390,6 +1397,7 @@ export class Game {
         break
       case 'Escape':
         this.breedFirst = null
+        this.aimFirst = null
         break
     }
   }
@@ -1506,6 +1514,35 @@ export class Game {
           this.toastAt(this.tilePos(tile), '+2🪵', '#e8c98a')
         }
         break
+
+      case 'aim': {
+        if (this.inCombat()) return this.toast('re-aim only out of combat')
+        const p = tile?.structure?.kind === 'pot' ? tile.structure.plant : null
+        if (!this.aimFirst) {
+          if (!tile || !p) return
+          this.aimFirst = key
+          this.toastAt(this.tilePos(tile), 'aim where? 🎯', '#ffd257')
+          return
+        }
+        // second click sets the heading; clicking the same plant cancels
+        const firstTile = this.tiles.get(this.aimFirst)
+        const first = firstTile?.structure?.kind === 'pot' ? firstTile.structure.plant : null
+        if (!firstTile || !first) {
+          this.aimFirst = null
+          return
+        }
+        if (this.aimFirst === key) {
+          this.aimFirst = null
+          return
+        }
+        const fpos = this.tilePos(firstTile)
+        first.aim = Math.atan2(w.y - fpos.y, w.x - fpos.x)
+        this.aimFirst = null
+        this.puff(v(fpos.x, fpos.y - 16), '#ffd257', 4)
+        this.toastAt(fpos, 'heading set 🎯', '#ffd257')
+        sfx('build')
+        break
+      }
     }
   }
 

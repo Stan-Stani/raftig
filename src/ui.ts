@@ -1,7 +1,7 @@
 // Toolbar / seed-panel definitions and layout, shared by render (drawing)
 // and game (hit-testing).
 
-export type Tool = 'build' | 'pot' | 'plant' | 'water' | 'breed' | 'boiler' | 'remove'
+export type Tool = 'build' | 'pot' | 'plant' | 'water' | 'breed' | 'boiler' | 'remove' | 'aim'
 
 export interface ToolDef {
   tool: Tool
@@ -18,6 +18,7 @@ export const TOOLS: ToolDef[] = [
   { tool: 'breed', icon: '🐝', name: 'breed', tip: 'click two mature plants within 2 tiles of each other to cross them (2💧)' },
   { tool: 'boiler', icon: '🔥', name: 'boiler', tip: 'click an empty tile to build a boiler (6🪵) · click a boiler to stoke it (1🪵 → 2💧)' },
   { tool: 'remove', icon: '⛏️', name: 'remove', tip: 'click to dig up a plant, or reclaim a pot / boiler' },
+  { tool: 'aim', icon: '🎯', name: 'aim', tip: 'out of combat — click a plant, then click to point its fixed firing heading' },
 ]
 
 export interface Rect {

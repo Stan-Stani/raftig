@@ -30,6 +30,10 @@ npm run dev
   and finish, or eat the loss. Red-pennant **harriers** row through any
   wind — sink them or lose them in a gale. The farther from home waters,
   the deadlier the raiders — and the loot scales faster than the threat.
+- **Aim** — plants auto-fire along a **fixed heading** whenever a raider drifts
+  into range — they don't track it, so aim them well. Out of combat, the 🎯 tool
+  sets each plant's heading: click a plant, then click where it should shoot.
+  Headings lock while a raider is in range.
 - **Salvage** — destroyed enemy planks drop 🪵 wood; sunken rafts drop pots
   and water. Kill a raft's last plant and its crew scuttles — the whole hull
   breaks up for you. Flotsam drifts by on the wind — set an intercept course;
@@ -73,8 +77,8 @@ Every plant is diploid: two alleles per locus, six loci.
 
 ## Controls
 
-WASD/arrows sail (speed depends on the wind) · 1–7 tools · T trades with a
-nearby trader · Q/E or wheel picks seeds · right-click/Esc cancels breeding ·
-H help · P pause · M mute · R restart after sinking.
+WASD/arrows sail (speed depends on the wind) · 1–8 tools · T trades with a
+nearby trader · Q/E or wheel picks seeds · right-click/Esc cancels breeding or
+aiming · H help · P pause · M mute · R restart after sinking.
 
 Hover any plant — yours or theirs — to read its full genotype.

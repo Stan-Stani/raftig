@@ -299,6 +299,12 @@ function drawPlayerRaft(ctx: CanvasRenderingContext2D, g: Game, t: number) {
           ctx.arc(p.x, p.y - 12, 20, 0, Math.PI * 2)
           ctx.stroke()
         }
+        // fixed firing heading — faint always, bright while the 🎯 tool is up
+        if (s.plant.growth >= 1) {
+          const aiming = g.tool === 'aim'
+          const selected = aiming && g.aimFirst === gkey(tile.gx, tile.gy)
+          drawAim(ctx, p.x, p.y - 12, s.plant.aim, aiming, selected, t)
+        }
         drawPlant(ctx, p.x, p.y, s.plant, false, t)
         drawWaterBar(ctx, p.x, p.y, s.plant)
         if (s.plant.breedCd > 0) {
@@ -338,6 +344,56 @@ function drawPlayerRaft(ctx: CanvasRenderingContext2D, g: Game, t: number) {
       ctx.stroke()
       ctx.setLineDash([])
     }
+  }
+
+  // aim heading preview to cursor
+  if (g.tool === 'aim' && g.aimFirst) {
+    const ft = g.tiles.get(g.aimFirst)
+    if (ft) {
+      const fp = g.tilePos(ft)
+      ctx.strokeStyle = '#ffd257aa'
+      ctx.setLineDash([6, 5])
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(fp.x, fp.y - 12)
+      ctx.lineTo(g.hover.x, g.hover.y)
+      ctx.stroke()
+      ctx.setLineDash([])
+    }
+  }
+}
+
+/** short arrow from a plant showing where it will fire */
+function drawAim(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  angle: number,
+  toolActive: boolean,
+  selected: boolean,
+  t: number,
+) {
+  const len = toolActive ? 26 : 16
+  const alpha = selected ? 0.6 + 0.4 * Math.sin(t * 6) : toolActive ? 0.55 : 0.22
+  const ex = x + Math.cos(angle) * len
+  const ey = y + Math.sin(angle) * len
+  ctx.strokeStyle = `rgba(255,210,87,${alpha})`
+  ctx.lineWidth = selected ? 2.5 : 1.5
+  ctx.beginPath()
+  ctx.moveTo(x, y)
+  ctx.lineTo(ex, ey)
+  ctx.stroke()
+  const ah = 5
+  ctx.beginPath()
+  ctx.moveTo(ex, ey)
+  ctx.lineTo(ex - Math.cos(angle - 0.4) * ah, ey - Math.sin(angle - 0.4) * ah)
+  ctx.moveTo(ex, ey)
+  ctx.lineTo(ex - Math.cos(angle + 0.4) * ah, ey - Math.sin(angle + 0.4) * ah)
+  ctx.stroke()
+  if (selected) {
+    ctx.beginPath()
+    ctx.arc(x, y, 20, 0, Math.PI * 2)
+    ctx.stroke()
   }
 }
 
@@ -1085,7 +1141,7 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.fillText('a raft roguelike where your garden is the gun deck', w / 2, h * 0.16 + 28)
 
   const lines = [
-    'WASD — sail · mouse — tools (1–7) · T — trade · P pause · M mute · H this help',
+    'WASD — sail · mouse — tools (1–8) · T — trade · P pause · M mute · H this help',
     '',
     'mind the WIND (arrow up top): running with it is fast, beating into it is a crawl.',
     'the MINIMAP (bottom left) charts where you sail; ⌂ points the way home.',
@@ -1099,7 +1155,8 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
     'red-pennant HARRIERS row through any wind: sink them or lose them in a gale.',
     'the farther from home, the deadlier the sea — and the richer everything it holds.',
     '',
-    'your plants shoot on their own — keep them WATERED or they wilt and die',
+    'plants auto-fire along a FIXED heading — aim each with the 🎯 tool out of combat.',
+    'keep them WATERED or they wilt and die',
     "(they gulp water in battle, only sip at rest). kill a raft's last plant",
     'and the crew scuttles — every plank is yours. the BOILER desalts: 1🪵 → 2💧.',
     'BREED (🐝) two mature plants to cross genes — dominant alleles mask recessives,',
