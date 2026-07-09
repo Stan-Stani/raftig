@@ -33,7 +33,10 @@ npm run dev
 - **Aim** — plants auto-fire along a **fixed heading** whenever a raider drifts
   into range — they don't track it, so aim them well. Out of combat, the 🎯 tool
   sets each plant's heading: click a plant, then click where it should shoot.
-  Headings lock while a raider is in range.
+  Headings lock while a raider is in range. Raider guns are fixed mounts too,
+  ship-cannon style: red arrows mark their firing lines, and they hold fire
+  until they've sailed a battery onto you — stay off the lines and rake them
+  while they maneuver.
 - **Salvage** — destroyed enemy planks drop 🪵 wood; sunken rafts drop pots
   and water. Kill a raft's last plant and its crew scuttles — the whole hull
   breaks up for you. Flotsam drifts by on the wind — set an intercept course;

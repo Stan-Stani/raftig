@@ -24,6 +24,7 @@ export const AGGRO_R = 330 // raiders notice you inside this range…
 export const DEAGGRO_R = 590 // …and give up the chase beyond this
 export const NOTICE_T = 1.0 // seconds of ❓ before a raider commits
 export const POD_WAKE_R = 340 // committing raiders stir roaming neighbours this close
+export const GUN_ARC = 0.45 // radians — raider gunners hold fire until the target bears
 export const DANGER_SCALE = 550 // px from home waters per +1 danger
 export const FOG_CELL = 280 // minimap fog-of-war resolution
 export const FOG_SIGHT = 640 // radius revealed around the raft
@@ -44,7 +45,7 @@ export interface Plant {
   burnT: number
   poisonT: number
   wobble: number // render phase
-  aim: number // fixed firing heading, radians; set by the player during calm
+  aim: number // fixed firing heading, radians; yours via the 🎯 tool, raiders' set at launch
 }
 
 export interface PotStructure {
@@ -738,6 +739,13 @@ export class Game {
       t.plant = makePlant(wildGenome((opts.home ? 1.6 : 1) + danger * 0.4), 0, 1)
       t.plant.water = 100
     }
+    // guns are bolted to the hull, ship-cannon style: batteries share an axis and
+    // alternate port/starboard — the raft has to maneuver to bring one to bear
+    const gunA = rand(Math.PI * 2)
+    let battery = 0
+    for (const t of tiles) {
+      if (t.plant) t.plant.aim = gunA + (battery++ % 2) * Math.PI + rand(-0.15, 0.15)
+    }
     this.enemies.push({
       pos,
       vel: v(0, 0),
@@ -826,15 +834,28 @@ export class Game {
       }
 
       if (e.mode === 'hunt') {
-        const orbit = e.kind === 'harrier' ? 215 : 270
-        if (d > orbit + 20) {
+        const standoff = e.kind === 'harrier' ? 215 : 270
+        // guns are fixed mounts with no traverse — instead of orbiting freely,
+        // sail for the station where the cheapest battery bears on you
+        const gun = this.bestGun(e, center, standoff)
+        if (gun) {
+          const fx = gun.fp.x - e.pos.x
+          const fy = gun.fp.y - e.pos.y
+          const fd = Math.hypot(fx, fy) || 1
+          // ease onto station rather than overshooting the firing line
+          const s = Math.min(spd, fd * 1.7)
+          e.vel.x = (fx / fd) * s - uy * e.orbitDir * spd * 0.1
+          e.vel.y = (fy / fd) * s + ux * e.orbitDir * spd * 0.1
+          // never cut across the player's deck on the way there
+          if (d < 180) {
+            const push = ((180 - d) / 180) * spd
+            e.vel.x -= ux * push
+            e.vel.y -= uy * push
+          }
+        } else {
+          // no guns left — checkScuttle will end this raft; just close in
           e.vel.x = ux * spd
           e.vel.y = uy * spd
-        } else {
-          // orbit, drifting sideways
-          const radial = (d - orbit) * 0.6
-          e.vel.x = -uy * e.orbitDir * spd * 0.45 + ux * radial
-          e.vel.y = ux * e.orbitDir * spd * 0.45 + uy * radial
         }
         if (e.kind === 'raider') {
           // raiders feel the wind too, just less than your square rig — flee downwind
@@ -925,9 +946,13 @@ export class Game {
         p.cooldown -= dt
         const from = this.etilePos(e, t)
         if (p.cooldown <= 0 && e.mode === 'hunt' && dist(from, center) < 360 && this.tiles.size > 0) {
-          this.enemyFire(e, p, from)
-          const diffMult = Math.max(0.7, 1.5 - e.danger * 0.08)
-          p.cooldown = p.pheno.period * diffMult * (e.chillT > 0 ? 1.5 : 1) * rand(0.9, 1.15)
+          // gunners hold fire until the target bears on the fixed mount
+          const bearing = Math.atan2(center.y - from.y, center.x - from.x)
+          if (Math.abs(angleDiff(p.aim, bearing)) < GUN_ARC) {
+            this.enemyFire(e, p, from)
+            const diffMult = Math.max(0.7, 1.5 - e.danger * 0.08)
+            p.cooldown = p.pheno.period * diffMult * (e.chillT > 0 ? 1.5 : 1) * rand(0.9, 1.15)
+          }
         }
       }
     }
@@ -941,22 +966,31 @@ export class Game {
     }
   }
 
+  /** the armed plant whose firing station costs the least sailing — fixed mounts
+   *  can't traverse, so the raft picks the battery that bears cheapest */
+  private bestGun(e: EnemyRaft, center: Vec, standoff: number): { p: Plant; fp: Vec } | null {
+    let best: { p: Plant; fp: Vec; d: number } | null = null
+    for (const t of e.tiles) {
+      const p = t.plant
+      if (!p) continue
+      const fp = v(
+        center.x - Math.cos(p.aim) * standoff - t.gx * TS,
+        center.y - Math.sin(p.aim) * standoff - t.gy * TS
+      )
+      const d = dist(e.pos, fp)
+      if (!best || d < best.d) best = { p, fp, d }
+    }
+    return best
+  }
+
   private enemyFire(e: EnemyRaft, p: Plant, from: Vec) {
-    const all = [...this.tiles.values()]
-    if (!all.length) return
-    const potted = all.filter(t => t.structure?.kind === 'pot' && t.structure.plant)
-    const target = potted.length && Math.random() < 0.5 ? pick(potted) : pick(all)
     const speed = 190
-    // lead the raft's current velocity — no homing, so hard sailing dodges
-    const at = this.tilePos(target)
-    const lead = (dist(from, at) / speed) * 0.85
-    const aim = v(at.x + this.raft.vel.x * lead + rand(-12, 12), at.y + this.raft.vel.y * lead + rand(-12, 12))
-    const dx = aim.x - from.x
-    const dy = aim.y - from.y
-    const len = Math.hypot(dx, dy) || 1
+    // fixed mounts fire dead along their heading — no leading, no homing:
+    // read the red arrows, stay out of the lines, outsail what does come
+    const a = p.aim + rand(-0.05, 0.05)
     this.bullets.push({
       pos: v(from.x, from.y - 16),
-      vel: v((dx / len) * speed, (dy / len) * speed),
+      vel: v(Math.cos(a) * speed, Math.sin(a) * speed),
       speed,
       dmg: p.pheno.dmg * (0.75 + e.danger * 0.06),
       element: p.pheno.element,

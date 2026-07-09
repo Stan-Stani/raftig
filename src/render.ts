@@ -372,12 +372,13 @@ function drawAim(
   toolActive: boolean,
   selected: boolean,
   t: number,
+  rgb = '255,210,87',
 ) {
   const len = toolActive ? 26 : 16
   const alpha = selected ? 0.6 + 0.4 * Math.sin(t * 6) : toolActive ? 0.55 : 0.22
   const ex = x + Math.cos(angle) * len
   const ey = y + Math.sin(angle) * len
-  ctx.strokeStyle = `rgba(255,210,87,${alpha})`
+  ctx.strokeStyle = `rgba(${rgb},${alpha})`
   ctx.lineWidth = selected ? 2.5 : 1.5
   ctx.beginPath()
   ctx.moveTo(x, y)
@@ -482,6 +483,8 @@ function drawEnemyRaft(ctx: CanvasRenderingContext2D, g: Game, e: EnemyRaft, t: 
     if (!tile.plant) continue
     const p = g.etilePos(e, tile)
     drawPot(ctx, p.x, p.y)
+    // fixed gun mounts, ship-cannon style — the red arrow is the firing line
+    drawAim(ctx, p.x, p.y - 12, tile.plant.aim, e.mode === 'hunt', false, t, '255,105,90')
     drawPlant(ctx, p.x, p.y, tile.plant, true, t)
   }
   if (e.chillT > 0) {
@@ -1153,6 +1156,8 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
     'waking one raft stirs its podmates, so pick where you engage.',
     'fleeing works, but they patch their hulls while you run — commit, or eat the loss.',
     'red-pennant HARRIERS row through any wind: sink them or lose them in a gale.',
+    'raider guns are fixed mounts too — red arrows mark their firing lines;',
+    'they must sail to bring one to bear, so stay off the lines and rake them.',
     'the farther from home, the deadlier the sea — and the richer everything it holds.',
     '',
     'plants auto-fire along a FIXED heading — aim each with the 🎯 tool out of combat.',
