@@ -251,24 +251,46 @@ function drawWaterBar(ctx: CanvasRenderingContext2D, x: number, y: number, p: Pl
 }
 
 function drawPlayerRaft(ctx: CanvasRenderingContext2D, g: Game, t: number) {
+  // hull layer turns with the heading; sprites above stay upright at their
+  // (rotated) tile positions so flowers and bars remain readable
+  ctx.save()
+  ctx.translate(g.raft.pos.x, g.raft.pos.y)
+  ctx.rotate(g.raft.a)
+
   // build ghosts first (under tiles)
   if (g.tool === 'build' && !g.over) {
+    const hl = g.worldToGrid(g.hover)
     for (const c of g.buildableCells()) {
-      const p = g.tilePos(c)
-      const hovered = Math.abs(g.hover.x - p.x) < TS / 2 && Math.abs(g.hover.y - p.y) < TS / 2
+      const hovered = Math.abs(hl.x - c.gx) < 0.5 && Math.abs(hl.y - c.gy) < 0.5
       ctx.setLineDash([5, 4])
       ctx.strokeStyle = g.wood >= 5 ? (hovered ? '#b8e986' : '#b8e98666') : '#ff8a6566'
       ctx.lineWidth = 2
-      roundRect(ctx, p.x - TS / 2 + 3, p.y - TS / 2 + 3, TS - 6, TS - 6, 5)
+      roundRect(ctx, c.gx * TS - TS / 2 + 3, c.gy * TS - TS / 2 + 3, TS - 6, TS - 6, 5)
       ctx.stroke()
       ctx.setLineDash([])
     }
   }
 
   for (const tile of g.tiles.values()) {
-    const p = g.tilePos(tile)
-    drawPlank(ctx, p.x, p.y, tile.hp, TILE_HP, false, tile.burnT)
+    drawPlank(ctx, tile.gx * TS, tile.gy * TS, tile.hp, TILE_HP, false, tile.burnT)
   }
+  // the prow: a chevron on the leading edge so you always know where "forward" is
+  let prow: { gx: number; gy: number } | null = null
+  for (const tile of g.tiles.values()) {
+    if (!prow || tile.gx > prow.gx || (tile.gx === prow.gx && Math.abs(tile.gy) < Math.abs(prow.gy))) prow = tile
+  }
+  if (prow) {
+    const px = prow.gx * TS + TS / 2 - 2
+    const py = prow.gy * TS
+    ctx.fillStyle = '#e8c98a'
+    ctx.beginPath()
+    ctx.moveTo(px, py - 10)
+    ctx.lineTo(px + 14, py)
+    ctx.lineTo(px, py + 10)
+    ctx.closePath()
+    ctx.fill()
+  }
+  ctx.restore()
   // mast & sail on the plank nearest the raft's heart (empty deck preferred)
   let mast: Vec | null = null
   let best = Infinity
@@ -303,7 +325,8 @@ function drawPlayerRaft(ctx: CanvasRenderingContext2D, g: Game, t: number) {
         if (s.plant.growth >= 1) {
           const aiming = g.tool === 'aim'
           const selected = aiming && g.aimFirst === gkey(tile.gx, tile.gy)
-          drawAim(ctx, p.x, p.y - 12, s.plant.aim, aiming, selected, t)
+          // hull-relative mount: the arrow swings with the ship
+          drawAim(ctx, p.x, p.y - 12, g.raft.a + s.plant.aim, aiming, selected, t)
         }
         drawPlant(ctx, p.x, p.y, s.plant, false, t)
         drawWaterBar(ctx, p.x, p.y, s.plant)
@@ -1144,8 +1167,10 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.fillText('a raft roguelike where your garden is the gun deck', w / 2, h * 0.16 + 28)
 
   const lines = [
-    'WASD — sail · mouse — tools (1–8) · T — trade · P pause · M mute · H this help',
+    'A/D — helm (turn the prow) · W — sheet in · S — back water · mouse — tools (1–8)',
+    'T — trade · P pause · M mute · H this help',
     '',
+    'she sails like a SHIP: the prow leads, the hull turns, momentum carries.',
     'mind the WIND (arrow up top): running with it is fast, beating into it is a crawl.',
     'the MINIMAP (bottom left) charts where you sail; ⌂ points the way home.',
     '',
@@ -1160,7 +1185,8 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
     'they must sail to bring one to bear, so stay off the lines and rake them.',
     'the farther from home, the deadlier the sea — and the richer everything it holds.',
     '',
-    'plants auto-fire along a FIXED heading — aim each with the 🎯 tool out of combat.',
+    'plants are FIXED gun mounts (🎯 tool aims them, out of combat) bolted to the deck —',
+    'they swing with the hull, so turn the ship to bring a broadside to bear.',
     'keep them WATERED or they wilt and die',
     "(they gulp water in battle, only sip at rest). kill a raft's last plant",
     'and the crew scuttles — every plank is yours. the BOILER desalts: 1🪵 → 2💧.',

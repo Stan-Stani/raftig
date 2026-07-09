@@ -14,8 +14,12 @@ npm run dev
 
 ## The loop
 
-- **Sail** — a wandering wind blows across the sea. Running with it is fast;
-  beating into it is a crawl. Watch the wind arrow and tack. A fog-of-war
+- **Sail** — she handles like a ship: the prow (chevron on the leading edge)
+  goes first. **A/D** work the helm, **W** sheets in and puts on way along the
+  heading, **S** backs water — a windless crawl astern that also brakes.
+  Momentum carries through turns; the keel gradually swings it in behind the
+  prow. A wandering wind blows across the sea: running with it is fast,
+  beating into it is a crawl — watch the wind arrow and tack. A fog-of-war
   minimap charts where you've been; ⌂ always points home, and faint danger
   rings show the gradient you're gambling against.
 - **Explore** — sights telegraph on the horizon and are worth a heading:
@@ -30,10 +34,12 @@ npm run dev
   and finish, or eat the loss. Red-pennant **harriers** row through any
   wind — sink them or lose them in a gale. The farther from home waters,
   the deadlier the raiders — and the loot scales faster than the threat.
-- **Aim** — plants auto-fire along a **fixed heading** whenever a raider drifts
-  into range — they don't track it, so aim them well. Out of combat, the 🎯 tool
-  sets each plant's heading: click a plant, then click where it should shoot.
-  Headings lock while a raider is in range. Raider guns are fixed mounts too,
+- **Aim** — plants are **fixed gun mounts bolted to the deck**: they auto-fire
+  along their mount heading whenever a raider drifts into range, never
+  tracking it — and the mounts swing with the hull, so the helm is a weapon:
+  turn the ship to bring a broadside to bear. Out of combat, the 🎯 tool
+  re-points a mount on the deck: click a plant, then click where it should
+  shoot. Headings lock while a raider is in range. Raider guns are fixed mounts too,
   ship-cannon style: red arrows mark their firing lines, and they hold fire
   until they've sailed a battery onto you — stay off the lines and rake them
   while they maneuver.
@@ -80,8 +86,8 @@ Every plant is diploid: two alleles per locus, six loci.
 
 ## Controls
 
-WASD/arrows sail (speed depends on the wind) · 1–8 tools · T trades with a
-nearby trader · Q/E or wheel picks seeds · right-click/Esc cancels breeding or
-aiming · H help · P pause · M mute · R restart after sinking.
+A/D (or ←/→) helm · W (↑) sheet in · S (↓) back water · 1–8 tools · T trades
+with a nearby trader · Q/E or wheel picks seeds · right-click/Esc cancels
+breeding or aiming · H help · P pause · M mute · R restart after sinking.
 
 Hover any plant — yours or theirs — to read its full genotype.

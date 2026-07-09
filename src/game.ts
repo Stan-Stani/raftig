@@ -20,6 +20,7 @@ export const FUEL_WATER = 2 // 💧 per 🪵 burned
 export const FUEL_CAP = 4
 export const WIND_MIN = 16 // px/s
 export const WIND_MAX = 60
+export const TURN_RATE = 1.7 // rad/s — the tiller answers even with no way on
 export const AGGRO_R = 330 // raiders notice you inside this range…
 export const DEAGGRO_R = 590 // …and give up the chase beyond this
 export const NOTICE_T = 1.0 // seconds of ❓ before a raider commits
@@ -45,7 +46,9 @@ export interface Plant {
   burnT: number
   poisonT: number
   wobble: number // render phase
-  aim: number // fixed firing heading, radians; yours via the 🎯 tool, raiders' set at launch
+  /** fixed firing heading, radians. Hull-relative on your raft (guns swing with the
+   *  prow, set via the 🎯 tool); world-fixed on raider rafts, set at launch. */
+  aim: number
 }
 
 export interface PotStructure {
@@ -174,7 +177,7 @@ function makePlant(genome: Genome, gen: number, growth = 0): Plant {
     burnT: 0,
     poisonT: 0,
     wobble: rand(Math.PI * 2),
-    aim: -Math.PI / 2, // default: straight up; re-point with the 🎯 tool
+    aim: -Math.PI / 2, // default: hard to port (screen-up at launch); re-point with 🎯
   }
 }
 
@@ -183,7 +186,8 @@ export class Game {
   vh = 600
   time = 0
 
-  raft = { pos: v(0, 0), vel: v(0, 0) }
+  /** a: hull heading, radians — the prow points along it and the tile grid turns with it */
+  raft = { pos: v(0, 0), vel: v(0, 0), a: 0 }
   tiles = new Map<string, Tile>()
 
   wood = 0
@@ -237,7 +241,7 @@ export class Game {
   }
 
   reset() {
-    this.raft = { pos: v(0, 0), vel: v(0, 0) }
+    this.raft = { pos: v(0, 0), vel: v(0, 0), a: 0 }
     this.tiles = new Map()
     for (let gx = -1; gx <= 1; gx++) {
       for (let gy = -1; gy <= 1; gy++) {
@@ -301,8 +305,20 @@ export class Game {
 
   // ---- coordinates ----
 
+  /** the tile grid is bolted to the hull: it turns with the heading (+gx is the prow) */
   tilePos(t: { gx: number; gy: number }): Vec {
-    return v(this.raft.pos.x + t.gx * TS, this.raft.pos.y + t.gy * TS)
+    const c = Math.cos(this.raft.a)
+    const s = Math.sin(this.raft.a)
+    return v(this.raft.pos.x + (t.gx * c - t.gy * s) * TS, this.raft.pos.y + (t.gx * s + t.gy * c) * TS)
+  }
+
+  /** world point → raft grid coords (unrounded) — the inverse of tilePos */
+  worldToGrid(w: Vec): Vec {
+    const c = Math.cos(this.raft.a)
+    const s = Math.sin(this.raft.a)
+    const dx = w.x - this.raft.pos.x
+    const dy = w.y - this.raft.pos.y
+    return v((dx * c + dy * s) / TS, (dy * c - dx * s) / TS)
   }
 
   etilePos(e: EnemyRaft, t: ETile): Vec {
@@ -318,7 +334,7 @@ export class Game {
       y += t.gy
     }
     const n = this.tiles.size
-    return v(this.raft.pos.x + (x / n) * TS, this.raft.pos.y + (y / n) * TS)
+    return this.tilePos({ gx: x / n, gy: y / n })
   }
 
   screenToWorld(mx: number, my: number): Vec {
@@ -550,30 +566,49 @@ export class Game {
   }
 
   private updateMovement(dt: number) {
-    let ax = 0
-    let ay = 0
-    if (keys.has('KeyW') || keys.has('ArrowUp')) ay -= 1
-    if (keys.has('KeyS') || keys.has('ArrowDown')) ay += 1
-    if (keys.has('KeyA') || keys.has('ArrowLeft')) ax -= 1
-    if (keys.has('KeyD') || keys.has('ArrowRight')) ax += 1
+    const left = keys.has('KeyA') || keys.has('ArrowLeft')
+    const right = keys.has('KeyD') || keys.has('ArrowRight')
+    const fwd = keys.has('KeyW') || keys.has('ArrowUp')
+    const back = keys.has('KeyS') || keys.has('ArrowDown')
+    // the tiller: A/D swing the prow, the hull (and every gun on it) turns with it
+    if (left !== right) this.raft.a += (right ? 1 : -1) * TURN_RATE * dt
     this.sailEff = null
-    if (ax || ay) {
-      // sail physics: full speed running with the wind, a crawl beating into it —
-      // tack across the wind (or wait for it to shift) instead of fighting it head-on
-      const heading = Math.atan2(ay, ax)
-      const eff = 0.3 + 0.7 * Math.pow((1 + Math.cos(angleDiff(heading, this.wind.a))) / 2, 1.5)
-      // becalmed pools starve the sail — rowing raiders don't care
-      const calm = this.calmAt(this.raft.pos)
-      const gust = (0.5 + 0.5 * (this.wind.speed * calm / WIND_MAX)) * (0.45 + 0.55 * calm)
+    // becalmed pools starve the sail — rowing raiders don't care
+    const calm = this.calmAt(this.raft.pos)
+    const gust = (0.5 + 0.5 * (this.wind.speed * calm) / WIND_MAX) * (0.45 + 0.55 * calm)
+    if (fwd) {
+      // sheet in: way comes on along the prow. Sail physics — full speed running
+      // with the wind, a crawl beating into it; tack across the wind (or wait for
+      // it to shift) instead of fighting it head-on
+      const eff = 0.3 + 0.7 * Math.pow((1 + Math.cos(angleDiff(this.raft.a, this.wind.a))) / 2, 1.5)
       this.sailEff = eff
       const maxSpeed = 120 * eff * gust * (this.chillT > 0 ? 0.55 : 1)
-      this.raft.vel.x += Math.cos(heading) * 260 * eff * gust * dt
-      this.raft.vel.y += Math.sin(heading) * 260 * eff * gust * dt
+      this.raft.vel.x += Math.cos(this.raft.a) * 260 * eff * gust * dt
+      this.raft.vel.y += Math.sin(this.raft.a) * 260 * eff * gust * dt
       const sp = Math.hypot(this.raft.vel.x, this.raft.vel.y)
       if (sp > maxSpeed) {
         this.raft.vel.x *= maxSpeed / sp
         this.raft.vel.y *= maxSpeed / sp
       }
+    } else if (back) {
+      // back water: the crew rows astern — kills way fast, then slow sternway.
+      // No sail involved, so calm pools and headwinds don't matter
+      this.raft.vel.x *= 1 - Math.min(1, 2.2 * dt)
+      this.raft.vel.y *= 1 - Math.min(1, 2.2 * dt)
+      const sternway = -(this.raft.vel.x * Math.cos(this.raft.a) + this.raft.vel.y * Math.sin(this.raft.a))
+      if (sternway < 42) {
+        this.raft.vel.x -= Math.cos(this.raft.a) * 100 * dt
+        this.raft.vel.y -= Math.sin(this.raft.a) * 100 * dt
+      }
+    }
+    // the keel swings momentum in behind the prow — the hull carves, not skates
+    const sp = Math.hypot(this.raft.vel.x, this.raft.vel.y)
+    if (sp > 4) {
+      const va = Math.atan2(this.raft.vel.y, this.raft.vel.x)
+      const target = Math.cos(angleDiff(va, this.raft.a)) >= 0 ? this.raft.a : this.raft.a + Math.PI
+      const na = va + clamp(angleDiff(target, va), -1.5 * dt, 1.5 * dt)
+      this.raft.vel.x = Math.cos(na) * sp
+      this.raft.vel.y = Math.sin(na) * sp
     }
     this.raft.vel.x *= 1 - Math.min(1, 1.4 * dt)
     this.raft.vel.y *= 1 - Math.min(1, 1.4 * dt)
@@ -682,7 +717,8 @@ export class Game {
     const spread = 0.14 // radians between barrels of a multi-shot plant
     const speed = 330
     for (let i = 0; i < p.pheno.shots; i++) {
-      const a = p.aim + (i - (p.pheno.shots - 1) / 2) * spread
+      // aim is hull-relative: turning the ship brings the guns to bear
+      const a = this.raft.a + p.aim + (i - (p.pheno.shots - 1) / 2) * spread
       this.bullets.push({
         pos: v(from.x + rand(-4, 4), from.y - 16 + rand(-3, 3)),
         vel: v(Math.cos(a) * speed, Math.sin(a) * speed),
@@ -1446,8 +1482,9 @@ export class Game {
   }
 
   private worldClick(w: Vec) {
-    const gx = Math.round((w.x - this.raft.pos.x) / TS)
-    const gy = Math.round((w.y - this.raft.pos.y) / TS)
+    const gl = this.worldToGrid(w)
+    const gx = Math.round(gl.x)
+    const gy = Math.round(gl.y)
     const key = gkey(gx, gy)
     const tile = this.tiles.get(key)
 
@@ -1570,7 +1607,8 @@ export class Game {
           return
         }
         const fpos = this.tilePos(firstTile)
-        first.aim = Math.atan2(w.y - fpos.y, w.x - fpos.x)
+        // stored hull-relative, so the mount stays bolted to the deck as she turns
+        first.aim = angleDiff(Math.atan2(w.y - fpos.y, w.x - fpos.x), this.raft.a)
         this.aimFirst = null
         this.puff(v(fpos.x, fpos.y - 16), '#ffd257', 4)
         this.toastAt(fpos, 'heading set 🎯', '#ffd257')
