@@ -732,10 +732,10 @@ export class Game {
       p.breedCd = Math.max(0, p.breedCd - dt)
 
       // firing — mounts shoot along their fixed heading, engaging whenever a
-      // raider drifts into range but never tracking it
+      // raider drifts inside the plant's genetic reach but never tracking it
       if (p.growth >= 1 && p.water > 0 && p.cooldown <= 0) {
         const from = this.mountPos(m)
-        if (this.enemyInRange(from)) {
+        if (this.enemyInRange(from, p.pheno.range)) {
           this.firePlant(p, from)
           p.cooldown = p.pheno.period * (this.chillT > 0 ? 1.35 : 1)
           p.water = Math.max(0, p.water - 0.35)
@@ -745,18 +745,23 @@ export class Game {
     if (this.ship.hp <= 0 && !this.over) this.gameOver()
   }
 
-  /** true if any enemy hull sits within firing range of the given point */
-  private enemyInRange(from: Vec): boolean {
+  /** true if any enemy hull sits within the given firing range of a point */
+  private enemyInRange(from: Vec, range: number): boolean {
     for (const e of this.enemies) {
-      if (dist(from, e.pos) - e.r < RANGE) return true
+      if (dist(from, e.pos) - e.r < range) return true
     }
     return false
   }
 
   /** true while a raider sits within gun range of the ship — locks refits & re-aiming */
   inCombat(): boolean {
+    // the longest glass on deck decides when the fight has started
+    let reach = RANGE
+    for (const m of this.mounts) {
+      if (m.plant) reach = Math.max(reach, m.plant.pheno.range)
+    }
     for (const e of this.enemies) {
-      if (dist(this.ship.pos, e.pos) - e.r - this.tierDef().len < RANGE) return true
+      if (dist(this.ship.pos, e.pos) - e.r - this.tierDef().len < reach) return true
     }
     return false
   }
@@ -964,13 +969,35 @@ export class Game {
       }
 
       if (e.mode === 'hunt') {
-        const standoff = e.engaged ? (e.kind === 'harrier' ? 215 : 270) : 430
+        // raiders station a touch inside their common gun reach so short guns bear
+        const standoff = e.engaged ? (e.kind === 'harrier' ? 215 : 240) : 430
         // guns are fixed mounts with no traverse — instead of orbiting freely,
         // sail for the station where the cheapest battery bears on you
         const gun = this.bestGun(e, center, standoff)
         if (gun) {
-          const fx = gun.fp.x - e.pos.x
-          const fy = gun.fp.y - e.pos.y
+          let tx = gun.fp.x
+          let ty = gun.fp.y
+          // never plot a course through the player's deck: if the straight run
+          // to the firing point crosses the hull, swing wide and come around
+          const sx = tx - e.pos.x
+          const sy = ty - e.pos.y
+          const sl2 = sx * sx + sy * sy
+          if (sl2 > 60 * 60) {
+            const tp = clamp(((center.x - e.pos.x) * sx + (center.y - e.pos.y) * sy) / sl2, 0, 1)
+            const nx = e.pos.x + sx * tp
+            const ny = e.pos.y + sy * tp
+            const clearance = Math.hypot(center.x - nx, center.y - ny)
+            if (clearance < 160) {
+              const side =
+                clearance > 1
+                  ? { x: (nx - center.x) / clearance, y: (ny - center.y) / clearance }
+                  : { x: -uy * e.orbitDir, y: ux * e.orbitDir }
+              tx = center.x + side.x * 250
+              ty = center.y + side.y * 250
+            }
+          }
+          const fx = tx - e.pos.x
+          const fy = ty - e.pos.y
           const fd = Math.hypot(fx, fy) || 1
           // ease onto station rather than overshooting the firing line
           const s = Math.min(spd, fd * 1.7)
@@ -1076,7 +1103,8 @@ export class Game {
         }
         p.cooldown -= dt
         const from = this.gunPos(e, g)
-        if (p.cooldown <= 0 && e.mode === 'hunt' && e.engaged && dist(from, center) < 360 && !this.over) {
+        // raider guns respect their own genetic reach — a spyglass line snipes
+        if (p.cooldown <= 0 && e.mode === 'hunt' && e.engaged && dist(from, center) < p.pheno.range && !this.over) {
           // gunners hold fire until the target bears on the fixed mount
           const bearing = Math.atan2(center.y - from.y, center.x - from.x)
           if (Math.abs(angleDiff(p.aim, bearing)) < GUN_ARC) {

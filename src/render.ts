@@ -360,14 +360,14 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
     }
   })
 
-  // hovering a mature plant → show range
+  // hovering a mature plant → show its genetic reach (theirs too — know the sniper)
   const hi = g.hoverInfo
-  if (hi && !hi.hostile && hi.plant.growth >= 1) {
-    ctx.fillStyle = 'rgba(255,255,255,0.04)'
+  if (hi && hi.plant.growth >= 1) {
+    ctx.fillStyle = hi.hostile ? 'rgba(255,110,90,0.05)' : 'rgba(255,255,255,0.04)'
     ctx.beginPath()
-    ctx.arc(hi.pos.x, hi.pos.y, RANGE, 0, Math.PI * 2)
+    ctx.arc(hi.pos.x, hi.pos.y, hi.plant.pheno.range, 0, Math.PI * 2)
     ctx.fill()
-    ctx.strokeStyle = 'rgba(255,255,255,0.15)'
+    ctx.strokeStyle = hi.hostile ? 'rgba(255,110,90,0.2)' : 'rgba(255,255,255,0.15)'
     ctx.lineWidth = 1
     ctx.stroke()
   }
@@ -1105,8 +1105,8 @@ function drawPlantTooltip(ctx: CanvasRenderingContext2D, g: Game, w: number, h: 
   const title = `${p.pheno.shiny ? '✦ ' : ''}${p.pheno.name} ${p.gen > 0 ? `· F${p.gen}` : hi.hostile ? '· hostile' : '· wild'}`
   const sub = p.pheno.blurb
   const stat = hi.hostile
-    ? `hp ${Math.ceil(p.hp)}/${p.maxHp}`
-    : `hp ${Math.ceil(p.hp)}/${p.maxHp} · water ${Math.ceil(p.water)} · ${p.growth >= 1 ? 'mature' : `${Math.floor(p.growth * 100)}% grown`}`
+    ? `hp ${Math.ceil(p.hp)}/${p.maxHp} · reach ${p.pheno.range}`
+    : `hp ${Math.ceil(p.hp)}/${p.maxHp} · water ${Math.ceil(p.water)} · reach ${p.pheno.range} · ${p.growth >= 1 ? 'mature' : `${Math.floor(p.growth * 100)}% grown`}`
 
   ctx.font = '12px ui-monospace, monospace'
   const tw = Math.max(

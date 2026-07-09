@@ -6,8 +6,8 @@
 
 import { pick, weighted } from './util'
 
-export type LocusId = 'power' | 'rate' | 'barrel' | 'element' | 'thirst' | 'quirk'
-export const LOCUS_ORDER: LocusId[] = ['power', 'rate', 'barrel', 'element', 'thirst', 'quirk']
+export type LocusId = 'power' | 'rate' | 'barrel' | 'reach' | 'element' | 'thirst' | 'quirk'
+export const LOCUS_ORDER: LocusId[] = ['power', 'rate', 'barrel', 'reach', 'element', 'thirst', 'quirk']
 
 export type Element = 'plain' | 'ember' | 'frost' | 'venom'
 export type Quirk = 'none' | 'pierce' | 'leech' | 'magnet'
@@ -28,6 +28,7 @@ export interface AlleleDef {
   effect?: Element
   drain?: number
   quirk?: Quirk
+  range?: number
 }
 
 export const LOCI: Record<LocusId, AlleleDef[]> = {
@@ -45,6 +46,11 @@ export const LOCI: Record<LocusId, AlleleDef[]> = {
     { id: 'single', sym: 'b', label: 'single', dom: 2, w: 6, shots: 1, mult: 1 },
     { id: 'twin', sym: 'B', label: 'twin', dom: 1, w: 2.5, shots: 2, mult: 0.7 },
     { id: 'hydra', sym: 'H', label: 'hydra', dom: 0, w: 0.3, rare: true, shots: 3, mult: 0.55 },
+  ],
+  reach: [
+    { id: 'short', sym: 'n', label: 'short', dom: 1, w: 6, range: 280 },
+    { id: 'long', sym: 'N', label: 'long', dom: 0, w: 2, range: 340 },
+    { id: 'spyglass', sym: 'S', label: 'spyglass', dom: 0, w: 0.3, rare: true, range: 420 },
   ],
   element: [
     { id: 'plain', sym: 'e', label: 'plain', dom: 0, w: 6 },
@@ -79,6 +85,8 @@ export interface Pheno {
   dmg: number
   period: number
   shots: number
+  /** firing range, px — the gun engages nothing beyond it */
+  range: number
   element: Element
   drain: number
   quirk: Quirk
@@ -127,21 +135,24 @@ export function phenotype(g: Genome): Pheno {
   const power = expressed('power', g.power)
   const rate = expressed('rate', g.rate)
   const barrel = expressed('barrel', g.barrel)
+  const reach = expressed('reach', g.reach)
   const element = expressed('element', g.element)
   const thirst = expressed('thirst', g.thirst)
   const quirk = expressed('quirk', g.quirk)
   const parts = [element.effect ?? 'plain', barrel.label, power.label]
+  if (reach.id !== 'short') parts.push(reach.label)
   if (quirk.quirk && quirk.quirk !== 'none') parts.push(quirk.quirk)
   return {
     dmg: Math.round(power.dmg! * barrel.mult! * 10) / 10,
     period: rate.period!,
     shots: barrel.shots!,
+    range: reach.range!,
     element: element.effect ?? 'plain',
     drain: thirst.drain!,
     quirk: quirk.quirk ?? 'none',
     name: cultivarName(g),
     blurb: parts.join(' · '),
-    shiny: [power, rate, barrel, element, thirst, quirk].some(a => a.rare),
+    shiny: [power, rate, barrel, reach, element, thirst, quirk].some(a => a.rare),
   }
 }
 
@@ -203,6 +214,7 @@ export function makeGenome(spec: Partial<Record<LocusId, [string, string]>> = {}
     power: spec.power ?? ['mild', 'mild'],
     rate: spec.rate ?? ['lazy', 'lazy'],
     barrel: spec.barrel ?? ['single', 'single'],
+    reach: spec.reach ?? ['short', 'short'],
     element: spec.element ?? ['plain', 'plain'],
     thirst: spec.thirst ?? ['thirsty', 'thirsty'],
     quirk: spec.quirk ?? ['none', 'none'],

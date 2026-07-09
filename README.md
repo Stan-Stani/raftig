@@ -69,13 +69,14 @@ npm run dev
 
 ## Genetics (the plantig part)
 
-Every plant is diploid: two alleles per locus, six loci.
+Every plant is diploid: two alleles per locus, seven loci.
 
 | locus   | common                | uncommon        | rare recessive |
 | ------- | --------------------- | --------------- | -------------- |
 | power   | mild (4 dmg)          | stout (7)       | **titan (13)** |
 | rate    | lazy (1.5s)           | brisk (1.0s)    | **rapid (0.55s)** |
 | barrel  | single                | twin (2×0.7)    | **hydra (3×0.55)** |
+| reach   | short (280)           | long (340)      | **spyglass (420)** |
 | element | plain                 | ember/frost/venom | —            |
 | thirst  | thirsty (1.8/s)       | hardy (0.9/s)   | **camel (0.35/s)** |
 | quirk   | none                  | —               | **pierce / leech / magnet** |
