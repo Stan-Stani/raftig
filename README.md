@@ -30,11 +30,17 @@ npm run dev
   (a tethered pod guarding the wildest genes — clear it for a seed cache).
 - **Hunt** — raider ships roam the open sea. Sail close and they eye you
   (❓) for a beat before committing (⚔️) — back off while they wonder and
-  nothing happens. Waking one ship stirs its podmates, so pick where you
-  engage. Fleeing works, but crews patch their hulls while you run: commit
-  and finish, or eat the loss. Red-pennant **harriers** row through any
-  wind — sink them or lose them in a gale. The farther from home waters,
-  the deadlier the raiders — and the loot scales faster than the threat.
+  nothing happens. Waking one ship stirs its podmates, but only a few press
+  the attack at once; the rest shadow you outside gun range, waiting for a
+  slot. The farther from home waters, the deadlier the raiders — and the
+  loot scales faster than the threat.
+- **Flee** — hunters have *patience*: run clean and stop trading shots, and
+  after a dozen-odd seconds they decide you're not worth the powder and break
+  off. Every hit landed — theirs or yours — renews it, so a fight holds them
+  and a retreat sheds them. Red-pennant **harriers** sprint on oars through
+  any wind, but rowers blow: outlast the burst and even they fall away. No
+  reinforcements spawn while a pack is already on you. Crews patch their
+  hulls while you run, though — flee and the loot sails off with them.
 - **Aim** — plants are **fixed gun mounts bolted to the deck**: they auto-fire
   along their mount heading whenever a raider drifts into range, never
   tracking it — and the mounts swing with the hull, so the helm is a weapon:

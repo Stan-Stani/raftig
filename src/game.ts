@@ -22,6 +22,8 @@ export const DEAGGRO_R = 590 // …and give up the chase beyond this
 export const NOTICE_T = 1.0 // seconds of ❓ before a raider commits
 export const POD_WAKE_R = 340 // committing raiders stir roaming neighbours this close
 export const GUN_ARC = 0.45 // radians — raider gunners hold fire until the target bears
+export const CHASE_PATIENCE = 13 // seconds a hunter presses before you're not worth the powder
+export const HUNT_CAP = 3 // ships in full ⚔️ at once — the rest shadow outside gun range
 export const DANGER_SCALE = 550 // px from home waters per +1 danger
 export const FOG_CELL = 280 // minimap fog-of-war resolution
 export const FOG_SIGHT = 640 // radius revealed around the ship
@@ -149,11 +151,17 @@ export interface EnemyShip {
   deaggroR: number
   wanderA: number
   wanderT: number
+  /** seconds of hunt left before breaking off — refreshed by landing or taking hits */
+  patience: number
+  /** harrier oar stamina 0..1 — sprints drain it, rest refills it */
+  row: number
   danger: number // difficulty of the waters it spawned in
   /** harriers row — fast in any wind, but small and fragile */
   kind: 'raider' | 'harrier'
   /** ship belongs to a nest and stays tethered to it */
   home?: POI
+  /** holds one of the HUNT_CAP attack slots — shadowers wait outside gun range */
+  engaged?: boolean
   /** mid-scuttle guard — the hull is going down, don't re-enter */
   scuttling?: boolean
   sunk?: boolean
@@ -179,6 +187,8 @@ export interface Bullet {
   pierceLeft: number
   hitSet: Set<unknown>
   src?: Plant
+  /** the ship that fired an enemy bullet — a shot that connects renews its patience */
+  owner?: EnemyShip
 }
 
 export type LootKind = 'wood' | 'seed' | 'water'
@@ -857,6 +867,8 @@ export class Game {
       deaggroR: kind === 'harrier' ? 820 : DEAGGRO_R,
       wanderA: rand(Math.PI * 2),
       wanderT: rand(2, 6),
+      patience: CHASE_PATIENCE,
+      row: 1,
       danger,
       kind,
       home: opts.home,
@@ -888,6 +900,7 @@ export class Game {
   aggro(e: EnemyShip) {
     if (e.mode === 'hunt') return
     e.mode = 'hunt'
+    e.patience = CHASE_PATIENCE
     // committing from afar (pod wake, long shots) mustn't fizzle the next frame
     e.deaggroR = Math.max(e.deaggroR, dist(e.pos, this.ship.pos) + 240)
     this.toastAt(e.pos, '⚔️ committed!', '#ff9d9d')
@@ -900,9 +913,27 @@ export class Game {
 
   private updateEnemies(dt: number) {
     const center = this.ship.pos
+    // only a few press the attack — the rest shadow outside gun range and wait
+    // for a slot. Slots are sticky (held until the hunter breaks off or sinks)
+    // so the pack doesn't churn; fights stay fights, not dogpiles
+    let slots = 0
+    for (const e of this.enemies) {
+      if (e.mode !== 'hunt') e.engaged = false
+      else if (e.engaged) slots++
+    }
+    if (slots < HUNT_CAP) {
+      const shadowers = this.enemies
+        .filter(e => e.mode === 'hunt' && !e.engaged)
+        .sort((a, b) => dist(a.pos, center) - dist(b.pos, center))
+      for (const s of shadowers.slice(0, HUNT_CAP - slots)) s.engaged = true
+    }
     for (const e of this.enemies) {
       e.chillT = Math.max(0, e.chillT - dt)
-      const spd = e.speed * (e.chillT > 0 ? 0.5 : 1)
+      // rowers sprint, then blow — a sustained chase dulls the harrier's edge
+      if (e.kind === 'harrier') {
+        e.row = e.mode === 'hunt' ? Math.max(0, e.row - dt / 10) : Math.min(1, e.row + dt / 15)
+      }
+      const spd = e.speed * (e.chillT > 0 ? 0.5 : 1) * (e.kind === 'harrier' ? 0.6 + 0.4 * e.row : 1)
       const dx = center.x - e.pos.x
       const dy = center.y - e.pos.y
       const d = Math.hypot(dx, dy) || 1
@@ -923,15 +954,17 @@ export class Game {
           this.aggro(e)
         }
       } else if (e.mode === 'hunt' && d > e.deaggroR) {
-        e.mode = 'roam'
-        e.deaggroR = e.kind === 'harrier' ? 820 : DEAGGRO_R // shed any pod-wake stretch
-        e.wanderT = rand(3, 8)
-        e.wanderA = Math.atan2(-uy, -ux) // sail off, unhurried, patching up
-        this.toastAt(e.pos, 'breaking off — patching up', '#9fb8c8')
+        this.breakOff(e, ux, uy, 'breaking off — patching up')
+      } else if (e.mode === 'hunt') {
+        // raiders are opportunists: a chase that lands nothing and costs nothing
+        // isn't worth the powder. Trading shots keeps them on you; running clean
+        // wears them out — that's how you flee
+        e.patience -= dt
+        if (e.patience <= 0) this.breakOff(e, ux, uy, 'not worth the powder')
       }
 
       if (e.mode === 'hunt') {
-        const standoff = e.kind === 'harrier' ? 215 : 270
+        const standoff = e.engaged ? (e.kind === 'harrier' ? 215 : 270) : 430
         // guns are fixed mounts with no traverse — instead of orbiting freely,
         // sail for the station where the cheapest battery bears on you
         const gun = this.bestGun(e, center, standoff)
@@ -1043,7 +1076,7 @@ export class Game {
         }
         p.cooldown -= dt
         const from = this.gunPos(e, g)
-        if (p.cooldown <= 0 && e.mode === 'hunt' && dist(from, center) < 360 && !this.over) {
+        if (p.cooldown <= 0 && e.mode === 'hunt' && e.engaged && dist(from, center) < 360 && !this.over) {
           // gunners hold fire until the target bears on the fixed mount
           const bearing = Math.atan2(center.y - from.y, center.x - from.x)
           if (Math.abs(angleDiff(p.aim, bearing)) < GUN_ARC) {
@@ -1062,6 +1095,16 @@ export class Game {
     for (const p of this.activePois) {
       if (p.kind === 'nest' && p.nestUp && !p.done && !this.enemies.some(e => e.home === p)) p.nestUp = false
     }
+  }
+
+  /** give up the chase and wander off to lick wounds — the way out of a hunt */
+  private breakOff(e: EnemyShip, ux: number, uy: number, msg: string) {
+    e.mode = 'roam'
+    e.engaged = false
+    e.deaggroR = e.kind === 'harrier' ? 820 : DEAGGRO_R // shed any pod-wake stretch
+    e.wanderT = rand(3, 8)
+    e.wanderA = Math.atan2(-uy, -ux) // sail off, unhurried, patching up
+    this.toastAt(e.pos, msg, '#9fb8c8')
   }
 
   /** the gun whose firing station costs the least sailing — fixed mounts can't
@@ -1093,6 +1136,7 @@ export class Game {
       life: 6,
       pierceLeft: 0,
       hitSet: new Set(),
+      owner: e,
     })
   }
 
@@ -1185,6 +1229,7 @@ export class Game {
         if (!b.hitSet.has(p) && dist(b.pos, v(tp.x, tp.y - 14)) < 15) {
           b.hitSet.add(p)
           this.aggro(e)
+          e.patience = CHASE_PATIENCE // you drew blood — now they're invested
           p.hp -= b.dmg * (b.element === 'venom' ? 1.6 : 1)
           if (b.element === 'ember') p.burnT = 3
           if (b.element === 'frost') e.chillT = 2.5
@@ -1206,6 +1251,7 @@ export class Game {
       if (!b.hitSet.has(e) && dist(b.pos, e.pos) < e.r) {
         b.hitSet.add(e)
         this.aggro(e)
+        e.patience = CHASE_PATIENCE // you drew blood — now they're invested
         this.damageEnemyHull(e, b)
         if (b.quirk === 'leech' && b.src) b.src.water = Math.min(100, b.src.water + 2)
         this.puff(b.pos, this.bulletColor(b), 2)
@@ -1227,6 +1273,7 @@ export class Game {
       if (!p) continue
       const tp = this.mountPos(m)
       if (dist(b.pos, v(tp.x, tp.y - 14)) < 15) {
+        if (b.owner && !b.owner.sunk) b.owner.patience = CHASE_PATIENCE // a shot that tells keeps them keen
         p.hp -= b.dmg * (b.element === 'venom' ? 1.6 : 1)
         if (b.element === 'ember') p.burnT = 3
         if (b.element === 'frost') this.chillT = 2.5
@@ -1237,6 +1284,7 @@ export class Game {
       }
     }
     if (this.onHull(b.pos)) {
+      if (b.owner && !b.owner.sunk) b.owner.patience = CHASE_PATIENCE // a shot that tells keeps them keen
       this.ship.hp -= b.dmg
       if (b.element === 'ember') this.burnT = 3
       if (b.element === 'frost') this.chillT = 2.5
@@ -1375,13 +1423,16 @@ export class Game {
       this.ambientT = 5.5
       this.spawnAmbientLoot()
     }
-    // keep the surrounding waters populated with roaming raiders
+    // keep the surrounding waters populated with roaming raiders — but a fleet
+    // already hunting you doesn't get reinforcements out of thin air, so a
+    // flight doesn't conjure fresh pursuers ahead of your bow
     this.spawnT -= dt
     if (this.spawnT <= 0) {
       this.spawnT = 4
+      const hunting = this.enemies.filter(e => e.mode === 'hunt').length
       const danger = this.dangerAt(this.ship.pos)
       const cap = Math.min(8, 3 + Math.floor(danger / 2))
-      if (this.enemies.length < cap) {
+      if (hunting < 2 && this.enemies.length < cap) {
         if (danger > 1.6 && Math.random() < 0.22) this.spawnPod()
         else this.spawnEnemyShip()
       }
