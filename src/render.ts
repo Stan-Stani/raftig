@@ -1,4 +1,4 @@
-import { Game, TS, RANGE, TILE_HP, FUEL_TIME, FUEL_CAP, FOG_CELL, DANGER_SCALE, Plant, Bullet, EnemyRaft } from './game'
+import { Game, TS, RANGE, TIERS, FOG_CELL, DANGER_SCALE, Plant, Bullet, EnemyShip } from './game'
 import { describe, symbols, phenotype, Genome, Pheno } from './genetics'
 import { TOOLS, toolbarLayout, seedPanelRect, seedRowRects, restartRect, SEED_VISIBLE } from './ui'
 import { POI, POI_SIGHT, POI_ICON, POI_COLOR, TRADE_COST, TRADE_RANGE } from './poi'
@@ -43,8 +43,8 @@ export function render(ctx: CanvasRenderingContext2D, g: Game) {
   for (const p of g.activePois) if (p.kind === 'calm') drawCalm(ctx, p, t)
   for (const p of g.activePois) if (p.kind !== 'calm') drawPOI(ctx, g, p, t)
   for (const l of g.loot) drawLoot(ctx, l.pos, l.kind, l.phase, l.ttl)
-  for (const e of g.enemies) drawEnemyRaft(ctx, g, e, t)
-  drawPlayerRaft(ctx, g, t)
+  for (const e of g.enemies) drawEnemyShip(ctx, g, e, t)
+  drawPlayerShip(ctx, g, t)
   for (const b of g.bullets) drawBullet(ctx, g, b)
   for (const p of g.particles) {
     ctx.globalAlpha = Math.max(0, p.life / p.maxLife)
@@ -116,7 +116,7 @@ function drawWaves(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number,
 }
 
 function drawLoot(ctx: CanvasRenderingContext2D, pos: Vec, kind: string, phase: number, ttl: number) {
-  const icons: Record<string, string> = { wood: '🪵', pot: '🏺', soil: '🟤', seed: '🌰', water: '💧' }
+  const icons: Record<string, string> = { wood: '🪵', seed: '🌰', water: '💧' }
   const bob = Math.sin(phase * 2) * 3
   ctx.globalAlpha = ttl < 6 ? 0.35 + 0.5 * Math.abs(Math.sin(ttl * 5)) : 1
   ctx.fillStyle = '#00000033'
@@ -250,96 +250,115 @@ function drawWaterBar(ctx: CanvasRenderingContext2D, x: number, y: number, p: Pl
   ctx.fill()
 }
 
-function drawPlayerRaft(ctx: CanvasRenderingContext2D, g: Game, t: number) {
-  // hull layer turns with the heading; sprites above stay upright at their
-  // (rotated) tile positions so flowers and bars remain readable
-  ctx.save()
-  ctx.translate(g.raft.pos.x, g.raft.pos.y)
-  ctx.rotate(g.raft.a)
+/** trace the boat outline at the local origin — pointed prow at +x, rounded stern */
+function hullPath(ctx: CanvasRenderingContext2D, len: number, beam: number) {
+  ctx.beginPath()
+  ctx.moveTo(len, 0)
+  ctx.quadraticCurveTo(len * 0.55, -beam, len * 0.1, -beam)
+  ctx.lineTo(-len * 0.7, -beam)
+  ctx.quadraticCurveTo(-len, -beam * 0.85, -len, 0)
+  ctx.quadraticCurveTo(-len, beam * 0.85, -len * 0.7, beam)
+  ctx.lineTo(len * 0.1, beam)
+  ctx.quadraticCurveTo(len * 0.55, beam, len, 0)
+  ctx.closePath()
+}
 
-  // build ghosts first (under tiles)
-  if (g.tool === 'build' && !g.over) {
-    const hl = g.worldToGrid(g.hover)
-    for (const c of g.buildableCells()) {
-      const hovered = Math.abs(hl.x - c.gx) < 0.5 && Math.abs(hl.y - c.gy) < 0.5
-      ctx.setLineDash([5, 4])
-      ctx.strokeStyle = g.wood >= 5 ? (hovered ? '#b8e986' : '#b8e98666') : '#ff8a6566'
-      ctx.lineWidth = 2
-      roundRect(ctx, c.gx * TS - TS / 2 + 3, c.gy * TS - TS / 2 + 3, TS - 6, TS - 6, 5)
+/** one solid hull — damage darkens her, fire licks the deck. Caller rotates the ctx */
+function drawHull(ctx: CanvasRenderingContext2D, len: number, beam: number, frac: number, hostile: boolean, burnT: number) {
+  hullPath(ctx, len, beam)
+  ctx.fillStyle = hostile ? '#4f3d2c' : '#8a6a45'
+  ctx.fill()
+  ctx.strokeStyle = hostile ? '#33271b' : '#5f4830'
+  ctx.lineWidth = 3
+  ctx.stroke()
+  // deck plank seams, lengthwise
+  ctx.strokeStyle = '#00000022'
+  ctx.lineWidth = 1
+  for (let i = -2; i <= 2; i++) {
+    const yy = (i / 3) * beam
+    ctx.beginPath()
+    ctx.moveTo(-len * 0.85, yy)
+    ctx.lineTo(len * (0.9 - Math.abs(i) * 0.18), yy)
+    ctx.stroke()
+  }
+  if (frac < 0.999) {
+    hullPath(ctx, len, beam)
+    ctx.fillStyle = `rgba(20,10,5,${(1 - frac) * 0.5})`
+    ctx.fill()
+  }
+  if (frac < 0.55) {
+    ctx.strokeStyle = '#00000055'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.moveTo(-len * 0.3, -beam * 0.6)
+    ctx.lineTo(len * 0.05, beam * 0.1)
+    ctx.lineTo(-len * 0.15, beam * 0.7)
+    ctx.stroke()
+  }
+  if (burnT > 0) {
+    hullPath(ctx, len, beam)
+    ctx.fillStyle = `rgba(255,120,40,${0.22 + 0.13 * Math.sin(burnT * 20)})`
+    ctx.fill()
+  }
+}
+
+function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
+  const tier = g.tierDef()
+  // hull layer turns with the heading; sprites above stay upright at their
+  // (rotated) mount positions so flowers and bars remain readable
+  ctx.save()
+  ctx.translate(g.ship.pos.x, g.ship.pos.y)
+  ctx.rotate(g.ship.a)
+  drawHull(ctx, tier.len, tier.beam, g.ship.hp / tier.hull, false, g.burnT)
+  // empty mount sockets read as places to sow
+  for (const m of g.mounts) {
+    ctx.fillStyle = m.plant ? '#00000018' : '#00000033'
+    ctx.beginPath()
+    ctx.arc(m.x, m.y, 13, 0, Math.PI * 2)
+    ctx.fill()
+    if (!m.plant) {
+      ctx.strokeStyle = '#ffffff22'
+      ctx.lineWidth = 1.5
+      ctx.setLineDash([4, 4])
       ctx.stroke()
       ctx.setLineDash([])
     }
   }
-
-  for (const tile of g.tiles.values()) {
-    drawPlank(ctx, tile.gx * TS, tile.gy * TS, tile.hp, TILE_HP, false, tile.burnT)
-  }
-  // the prow: a chevron on the leading edge so you always know where "forward" is
-  let prow: { gx: number; gy: number } | null = null
-  for (const tile of g.tiles.values()) {
-    if (!prow || tile.gx > prow.gx || (tile.gx === prow.gx && Math.abs(tile.gy) < Math.abs(prow.gy))) prow = tile
-  }
-  if (prow) {
-    const px = prow.gx * TS + TS / 2 - 2
-    const py = prow.gy * TS
-    ctx.fillStyle = '#e8c98a'
-    ctx.beginPath()
-    ctx.moveTo(px, py - 10)
-    ctx.lineTo(px + 14, py)
-    ctx.lineTo(px, py + 10)
-    ctx.closePath()
-    ctx.fill()
-  }
   ctx.restore()
-  // mast & sail on the plank nearest the raft's heart (empty deck preferred)
-  let mast: Vec | null = null
-  let best = Infinity
-  for (const tile of g.tiles.values()) {
-    const p = g.tilePos(tile)
-    const score = (p.x - g.cam.x) ** 2 + (p.y - g.cam.y) ** 2 + (tile.structure ? 1e6 : 0)
-    if (score < best) {
-      best = score
-      mast = p
+
+  // mast amidships
+  drawSail(ctx, g, g.ship.pos, t)
+
+  g.mounts.forEach((m, i) => {
+    const p = g.mountPos(m)
+    const plant = m.plant
+    if (!plant) return
+    drawPot(ctx, p.x, p.y)
+    // breed selection ring
+    if (g.breedFirst === i) {
+      ctx.strokeStyle = `rgba(255,210,87,${0.6 + 0.4 * Math.sin(t * 6)})`
+      ctx.lineWidth = 2.5
+      ctx.beginPath()
+      ctx.arc(p.x, p.y - 12, 20, 0, Math.PI * 2)
+      ctx.stroke()
     }
-  }
-  if (mast) drawSail(ctx, g, mast, t)
-  // structures on top
-  for (const tile of g.tiles.values()) {
-    const p = g.tilePos(tile)
-    const s = tile.structure
-    if (!s) continue
-    if (s.kind === 'boiler') {
-      drawBoiler(ctx, p.x, p.y, s.fuel, s.progress, t)
-    } else {
-      drawPot(ctx, p.x, p.y)
-      if (s.plant) {
-        // breed selection ring
-        if (g.breedFirst === gkey(tile.gx, tile.gy)) {
-          ctx.strokeStyle = `rgba(255,210,87,${0.6 + 0.4 * Math.sin(t * 6)})`
-          ctx.lineWidth = 2.5
-          ctx.beginPath()
-          ctx.arc(p.x, p.y - 12, 20, 0, Math.PI * 2)
-          ctx.stroke()
-        }
-        // fixed firing heading — faint always, bright while the 🎯 tool is up
-        if (s.plant.growth >= 1) {
-          const aiming = g.tool === 'aim'
-          const selected = aiming && g.aimFirst === gkey(tile.gx, tile.gy)
-          // hull-relative mount: the arrow swings with the ship
-          drawAim(ctx, p.x, p.y - 12, g.raft.a + s.plant.aim, aiming, selected, t)
-        }
-        drawPlant(ctx, p.x, p.y, s.plant, false, t)
-        drawWaterBar(ctx, p.x, p.y, s.plant)
-        if (s.plant.breedCd > 0) {
-          ctx.strokeStyle = '#ffffff44'
-          ctx.lineWidth = 2
-          ctx.beginPath()
-          ctx.arc(p.x, p.y - 34, 5, -Math.PI / 2, -Math.PI / 2 + (1 - s.plant.breedCd / 18) * Math.PI * 2)
-          ctx.stroke()
-        }
-      }
+    // fixed firing heading — faint always, bright while the 🎯 tool is up
+    if (plant.growth >= 1) {
+      const aiming = g.tool === 'aim'
+      const selected = aiming && g.aimFirst === i
+      // hull-relative mount: the arrow swings with the ship
+      drawAim(ctx, p.x, p.y - 12, g.ship.a + plant.aim, aiming, selected, t)
     }
-  }
+    drawPlant(ctx, p.x, p.y, plant, false, t)
+    drawWaterBar(ctx, p.x, p.y, plant)
+    if (plant.breedCd > 0) {
+      ctx.strokeStyle = '#ffffff44'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(p.x, p.y - 34, 5, -Math.PI / 2, -Math.PI / 2 + (1 - plant.breedCd / 18) * Math.PI * 2)
+      ctx.stroke()
+    }
+  })
 
   // hovering a mature plant → show range
   const hi = g.hoverInfo
@@ -354,10 +373,10 @@ function drawPlayerRaft(ctx: CanvasRenderingContext2D, g: Game, t: number) {
   }
 
   // breed line to cursor
-  if (g.tool === 'breed' && g.breedFirst) {
-    const ft = g.tiles.get(g.breedFirst)
-    if (ft) {
-      const fp = g.tilePos(ft)
+  if (g.tool === 'breed' && g.breedFirst !== null) {
+    const fm = g.mounts[g.breedFirst]
+    if (fm?.plant) {
+      const fp = g.mountPos(fm)
       ctx.strokeStyle = '#ffd25788'
       ctx.setLineDash([6, 5])
       ctx.lineWidth = 2
@@ -370,10 +389,10 @@ function drawPlayerRaft(ctx: CanvasRenderingContext2D, g: Game, t: number) {
   }
 
   // aim heading preview to cursor
-  if (g.tool === 'aim' && g.aimFirst) {
-    const ft = g.tiles.get(g.aimFirst)
-    if (ft) {
-      const fp = g.tilePos(ft)
+  if (g.tool === 'aim' && g.aimFirst !== null) {
+    const fm = g.mounts[g.aimFirst]
+    if (fm?.plant) {
+      const fp = g.mountPos(fm)
       ctx.strokeStyle = '#ffd257aa'
       ctx.setLineDash([6, 5])
       ctx.lineWidth = 2
@@ -465,68 +484,27 @@ function drawPot(ctx: CanvasRenderingContext2D, x: number, y: number) {
   ctx.fill()
 }
 
-function drawBoiler(ctx: CanvasRenderingContext2D, x: number, y: number, fuel: number, progress: number, t: number) {
-  ctx.fillStyle = '#546e7a'
-  ctx.beginPath()
-  ctx.arc(x, y - 4, 12, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.strokeStyle = '#37474f'
-  ctx.lineWidth = 2
-  ctx.stroke()
-  // spout
-  ctx.fillStyle = '#455a64'
-  ctx.fillRect(x + 8, y - 14, 5, 8)
-  if (fuel > 0) {
-    ctx.fillStyle = `rgba(255,140,66,${0.7 + 0.3 * Math.sin(t * 10)})`
+function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: number) {
+  // the hull sprite noses along its wake — cosmetic; the guns are world-fixed
+  const ha = Math.atan2(e.vel.y, e.vel.x)
+  ctx.save()
+  ctx.translate(e.pos.x, e.pos.y)
+  ctx.rotate(ha)
+  drawHull(ctx, e.r * 1.2, e.r * 0.8, e.hp / e.maxHp, true, e.burnT)
+  ctx.restore()
+  if (e.chillT > 0) {
+    ctx.fillStyle = 'rgba(127,216,255,0.14)'
     ctx.beginPath()
-    ctx.arc(x, y + 9, 5 + Math.sin(t * 12) * 1.5, 0, Math.PI * 2)
+    ctx.arc(e.pos.x, e.pos.y, e.r, 0, Math.PI * 2)
     ctx.fill()
-    // progress arc toward next 💧
-    ctx.strokeStyle = '#7fd8ff'
-    ctx.lineWidth = 2
-    ctx.beginPath()
-    ctx.arc(x, y - 4, 15, -Math.PI / 2, -Math.PI / 2 + (progress / FUEL_TIME) * Math.PI * 2)
-    ctx.stroke()
   }
-  // fuel pips
-  ctx.fillStyle = '#e8c98a'
-  for (let i = 0; i < FUEL_CAP; i++) {
-    ctx.globalAlpha = i < fuel ? 1 : 0.2
-    ctx.fillRect(x - 12 + i * 7, y + 16, 5, 3)
-  }
-  ctx.globalAlpha = 1
-}
-
-function drawEnemyRaft(ctx: CanvasRenderingContext2D, g: Game, e: EnemyRaft, t: number) {
-  for (const tile of e.tiles) {
-    const p = g.etilePos(e, tile)
-    drawPlank(ctx, p.x, p.y, tile.hp, tile.maxHp, true, tile.burnT)
-  }
-  for (const tile of e.tiles) {
-    if (!tile.plant) continue
-    const p = g.etilePos(e, tile)
+  for (const gun of e.guns) {
+    const p = g.gunPos(e, gun)
     drawPot(ctx, p.x, p.y)
     // fixed gun mounts, ship-cannon style — the red arrow is the firing line
-    drawAim(ctx, p.x, p.y - 12, tile.plant.aim, e.mode === 'hunt', false, t, '255,105,90')
-    drawPlant(ctx, p.x, p.y, tile.plant, true, t)
+    drawAim(ctx, p.x, p.y - 12, gun.plant.aim, e.mode === 'hunt', false, t, '255,105,90')
+    drawPlant(ctx, p.x, p.y, gun.plant, true, t)
   }
-  if (e.chillT > 0) {
-    ctx.fillStyle = 'rgba(127,216,255,0.12)'
-    for (const tile of e.tiles) {
-      const p = g.etilePos(e, tile)
-      roundRect(ctx, p.x - TS / 2, p.y - TS / 2, TS, TS, 5)
-      ctx.fill()
-    }
-  }
-  let cx = 0
-  let cy = 0
-  for (const tile of e.tiles) {
-    cx += tile.gx
-    cy += tile.gy
-  }
-  const n = Math.max(1, e.tiles.length)
-  const hx = e.pos.x + (cx / n) * TS
-  const hy = e.pos.y + (cy / n) * TS
   // harriers fly a red pennant — the fast ones that row through any wind
   if (e.kind === 'harrier') {
     ctx.strokeStyle = '#33271b'
@@ -544,16 +522,16 @@ function drawEnemyRaft(ctx: CanvasRenderingContext2D, g: Game, e: EnemyRaft, t: 
     ctx.closePath()
     ctx.fill()
   }
-  if (e.tiles.length && e.mode !== 'roam') {
+  if (e.mode !== 'roam') {
     ctx.font = '15px serif'
     ctx.textAlign = 'center'
     if (e.mode === 'notice') {
       // wondering — back off now and they lose interest
       ctx.fillStyle = '#ffd257'
       ctx.font = 'bold 17px ui-monospace, monospace'
-      ctx.fillText('?', hx, hy - TS * 0.95 + Math.sin(t * 8) * 2)
+      ctx.fillText('?', e.pos.x, e.pos.y - e.r - 14 + Math.sin(t * 8) * 2)
     } else {
-      ctx.fillText('⚔️', hx, hy - TS * 0.95 + Math.sin(t * 5) * 2)
+      ctx.fillText('⚔️', e.pos.x, e.pos.y - e.r - 14 + Math.sin(t * 5) * 2)
     }
   }
 }
@@ -675,8 +653,8 @@ function drawTrader(ctx: CanvasRenderingContext2D, g: Game, p: POI, t: number) {
   const bob = Math.sin(t * 1.4 + p.pos.x) * 2
   const x = p.pos.x
   const y = p.pos.y + bob
-  drawPlank(ctx, x - TS / 2, y, TILE_HP, TILE_HP, false, 0)
-  drawPlank(ctx, x + TS / 2, y, TILE_HP, TILE_HP, false, 0)
+  drawPlank(ctx, x - TS / 2, y, 1, 1, false, 0)
+  drawPlank(ctx, x + TS / 2, y, 1, 1, false, 0)
   // green-dyed sail — peaceful colors
   ctx.strokeStyle = '#5f4830'
   ctx.lineWidth = 3
@@ -754,10 +732,17 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
   let x = 12
   x += chip(ctx, x, 12, `🪵 ${g.wood}`) + 6
   x += chip(ctx, x, 12, `💧 ${g.water}`) + 6
-  x += chip(ctx, x, 12, `🏺 ${g.pots}`) + 6
-  x += chip(ctx, x, 12, `🟤 ${g.soil}`) + 6
   x += chip(ctx, x, 12, `🌰 ${g.seeds.length}`) + 6
   if (g.chillT > 0) chip(ctx, x, 12, '❄ chilled!')
+
+  // the ship herself: hull, next refit, the galley stove
+  const tier = g.tierDef()
+  const low = g.ship.hp < tier.hull * 0.3
+  let x2 = 12
+  x2 += chip(ctx, x2, 44, `${low ? '⚠ ' : ''}⛵ ${tier.name} ${Math.ceil(g.ship.hp)}/${tier.hull}`) + 6
+  const next = TIERS[g.tier + 1]
+  if (next) x2 += chip(ctx, x2, 44, `U refit → ${next.name} (${next.cost}🪵)`) + 6
+  chip(ctx, x2, 44, 'B boil 1🪵→2💧')
 
   // sea status
   const mins = Math.floor(g.stats.time / 60)
@@ -983,7 +968,7 @@ function drawMinimap(ctx: CanvasRenderingContext2D, g: Game, h: number) {
   ctx.fillText('⌂', hx, hy + 4)
 
   // you, pointing where you're going
-  const a = Math.hypot(g.raft.vel.x, g.raft.vel.y) > 4 ? Math.atan2(g.raft.vel.y, g.raft.vel.x) : g.wind.a
+  const a = Math.hypot(g.ship.vel.x, g.ship.vel.y) > 4 ? Math.atan2(g.ship.vel.y, g.ship.vel.x) : g.ship.a
   ctx.save()
   ctx.translate(mcx, mcy)
   ctx.rotate(a)
@@ -1167,8 +1152,8 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.fillText('a raft roguelike where your garden is the gun deck', w / 2, h * 0.16 + 28)
 
   const lines = [
-    'A/D — helm (turn the prow) · W — sheet in · S — back water · mouse — tools (1–8)',
-    'T — trade · P pause · M mute · H this help',
+    'A/D — helm (turn the prow) · W — sheet in · S — back water · 1–4 tools',
+    'B — boil 1🪵 → 2💧 · U — refit the hull · T — trade · P pause · M mute · H help',
     '',
     'she sails like a SHIP: the prow leads, the hull turns, momentum carries.',
     'mind the WIND (arrow up top): running with it is fast, beating into it is a crawl.',
@@ -1178,22 +1163,23 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
     '🌀 becalmed pools (rich flotsam, dead sails) · ☠️ raider nests (the wildest genes).',
     '',
     'raiders eye you first (❓) — back away and they lose interest; linger and it\'s ⚔️.',
-    'waking one raft stirs its podmates, so pick where you engage.',
+    'waking one ship stirs its podmates, so pick where you engage.',
     'fleeing works, but they patch their hulls while you run — commit, or eat the loss.',
+    '(your crew patches too, once the shooting stops — no hammering required.)',
     'red-pennant HARRIERS row through any wind: sink them or lose them in a gale.',
     'raider guns are fixed mounts too — red arrows mark their firing lines;',
     'they must sail to bring one to bear, so stay off the lines and rake them.',
     'the farther from home, the deadlier the sea — and the richer everything it holds.',
     '',
-    'plants are FIXED gun mounts (🎯 tool aims them, out of combat) bolted to the deck —',
-    'they swing with the hull, so turn the ship to bring a broadside to bear.',
-    'keep them WATERED or they wilt and die',
-    "(they gulp water in battle, only sip at rest). kill a raft's last plant",
-    'and the crew scuttles — every plank is yours. the BOILER desalts: 1🪵 → 2💧.',
+    'your plants ARE the cannon, sown into FIXED MOUNTS on the deck (🎯 re-aims,',
+    'out of combat) — mounts swing with the hull: the helm brings broadsides to bear.',
+    'keep them WATERED or they wilt (they gulp in battle, only sip at rest).',
+    "kill a ship's last gun and her crew scuttles — the wreck is yours.",
+    'wood buys REFITS (U): skiff → sloop → brig → galleon, more mounts each time.',
     'BREED (🐝) two mature plants to cross genes — dominant alleles mask recessives,',
     'and the best traits hide in carrier lines until the right cross.',
     '',
-    'the run ends when your last plank sinks.',
+    'the run ends when your hull gives out.',
   ]
   ctx.fillStyle = '#dcebf3'
   ctx.font = '14px ui-monospace, monospace'
@@ -1210,13 +1196,13 @@ function drawGameOver(ctx: CanvasRenderingContext2D, g: Game, w: number, h: numb
   ctx.textAlign = 'center'
   ctx.fillStyle = '#ff8a65'
   ctx.font = 'bold 44px ui-monospace, monospace'
-  ctx.fillText('your raft sank', w / 2, h / 2 - 70)
+  ctx.fillText('she went down', w / 2, h / 2 - 70)
   ctx.fillStyle = '#e8f1f5'
   ctx.font = '16px ui-monospace, monospace'
   const mins = Math.floor(g.stats.time / 60)
   const secs = Math.floor(g.stats.time % 60)
   ctx.fillText(
-    `rafts sunk: ${g.stats.sunk} · seeds bred: ${g.stats.bred} · farthest ${(g.stats.far / 100).toFixed(1)} leagues · ${mins}:${secs.toString().padStart(2, '0')} afloat`,
+    `ships sunk: ${g.stats.sunk} · seeds bred: ${g.stats.bred} · farthest ${(g.stats.far / 100).toFixed(1)} leagues · ${mins}:${secs.toString().padStart(2, '0')} afloat`,
     w / 2,
     h / 2 - 30
   )

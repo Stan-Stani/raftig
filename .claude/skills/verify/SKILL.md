@@ -22,9 +22,10 @@ Open `http://localhost:5199/` with the chrome-devtools MCP tools
 `window.__game` is the live `Game` instance (set in `main.ts`). Useful moves:
 
 - `g.helpOpen = false` — the help overlay blocks `update()`; close it first.
-- Teleport: `g.raft.pos.x = …` (tiles/plants are raft-relative and follow).
-- TS `private` methods are callable at runtime: `g.destroyEnemyTile(e, t)`,
-  `g.spawnEnemyRaft({at, kind, home})`, `g.aggro(e)`.
+- Teleport: `g.ship.pos.x = …` (mounts/plants are hull-relative and follow;
+  `g.ship.a` is the heading, `g.mounts` the gun slots, `g.tier` the hull).
+- TS `private` methods are callable at runtime: `g.sinkShip(e)`,
+  `g.spawnEnemyShip({at, kind, home})`, `g.aggro(e)`.
 - POIs materialize lazily around the player — hop the raft ~2000px at a time
   (with ~100ms waits) until the kind you need appears in `g.pois`.
 - Real input paths: `press_key` reaches the window keydown listener

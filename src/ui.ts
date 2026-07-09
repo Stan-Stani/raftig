@@ -1,7 +1,7 @@
 // Toolbar / seed-panel definitions and layout, shared by render (drawing)
 // and game (hit-testing).
 
-export type Tool = 'build' | 'pot' | 'plant' | 'water' | 'breed' | 'boiler' | 'remove' | 'aim'
+export type Tool = 'plant' | 'water' | 'breed' | 'aim'
 
 export interface ToolDef {
   tool: Tool
@@ -11,14 +11,10 @@ export interface ToolDef {
 }
 
 export const TOOLS: ToolDef[] = [
-  { tool: 'build', icon: '🔨', name: 'build', tip: 'click a dashed cell to extend the raft (5🪵) · click a damaged tile to repair (1🪵)' },
-  { tool: 'pot', icon: '🏺', name: 'pot', tip: 'click an empty tile to set a pot with soil (1🏺 + 1🟤)' },
-  { tool: 'plant', icon: '🌱', name: 'plant', tip: 'pick a seed on the right (Q/E or wheel), then click a pot to sow it' },
-  { tool: 'water', icon: '💧', name: 'water', tip: 'click a plant to water it (1💧) — dry plants wilt and die' },
-  { tool: 'breed', icon: '🐝', name: 'breed', tip: 'click two mature plants within 2 tiles of each other to cross them (2💧)' },
-  { tool: 'boiler', icon: '🔥', name: 'boiler', tip: 'click an empty tile to build a boiler (6🪵) · click a boiler to stoke it (1🪵 → 2💧)' },
-  { tool: 'remove', icon: '⛏️', name: 'remove', tip: 'click to dig up a plant, or reclaim a pot / boiler' },
-  { tool: 'aim', icon: '🎯', name: 'aim', tip: 'out of combat — click a plant, then click to point its fixed firing heading' },
+  { tool: 'plant', icon: '🌱', name: 'plant', tip: 'pick a seed (Q/E or wheel), click an empty mount to sow · click a planted mount to dig it up' },
+  { tool: 'water', icon: '💧', name: 'water', tip: 'click a plant to water it (1💧) — dry plants wilt and die · B boils 1🪵 → 2💧' },
+  { tool: 'breed', icon: '🐝', name: 'breed', tip: 'click two mature plants to cross them (2💧)' },
+  { tool: 'aim', icon: '🎯', name: 'aim', tip: 'out of combat — click a plant, then click to point its fixed mount' },
 ]
 
 export interface Rect {

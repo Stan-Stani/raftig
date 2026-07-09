@@ -1,23 +1,19 @@
-import { Vec, v, dist, clamp, rand, randInt, pick, gkey, angleDiff } from './util'
+import { Vec, v, dist, clamp, rand, randInt, gkey, angleDiff } from './util'
 import { Genome, Seed, Pheno, phenotype, wildGenome, breed, makeGenome } from './genetics'
 import { Tool, TOOLS, toolbarLayout, seedRowRects, seedPanelRect, restartRect, inRect } from './ui'
 import { POI, POI_CELL, POI_SIGHT, cellPOI, makePOI, TRADE_COST, TRADE_RANGE } from './poi'
 import { keys } from './input'
 import { sfx, toggleMute } from './audio'
 
-export const TS = 46 // tile size, px
+export const TS = 46 // legacy sprite scale (trader rafts, bars)
 export const RANGE = 280 // plant firing range
-export const TILE_HP = 60
 export const PLANT_HP = 40
 export const GROW_TIME = 28 // seconds to mature (while watered)
 export const WATER_PER_USE = 45 // meter points per 1💧
 export const BREED_COST = 2 // 💧
 export const BREED_CD = 18
-export const BUILD_COST = 5 // 🪵
-export const BOILER_COST = 6 // 🪵
-export const FUEL_TIME = 10 // seconds to burn 1🪵
-export const FUEL_WATER = 2 // 💧 per 🪵 burned
-export const FUEL_CAP = 4
+export const BOIL_COST = 1 // 🪵 → BOIL_WATER 💧, via the B key — the galley stove
+export const BOIL_WATER = 2
 export const WIND_MIN = 16 // px/s
 export const WIND_MAX = 60
 export const TURN_RATE = 1.7 // rad/s — the tiller answers even with no way on
@@ -28,7 +24,7 @@ export const POD_WAKE_R = 340 // committing raiders stir roaming neighbours this
 export const GUN_ARC = 0.45 // radians — raider gunners hold fire until the target bears
 export const DANGER_SCALE = 550 // px from home waters per +1 danger
 export const FOG_CELL = 280 // minimap fog-of-war resolution
-export const FOG_SIGHT = 640 // radius revealed around the raft
+export const FOG_SIGHT = 640 // radius revealed around the ship
 
 export interface Plant {
   genome: Genome
@@ -46,50 +42,108 @@ export interface Plant {
   burnT: number
   poisonT: number
   wobble: number // render phase
-  /** fixed firing heading, radians. Hull-relative on your raft (guns swing with the
-   *  prow, set via the 🎯 tool); world-fixed on raider rafts, set at launch. */
+  /** fixed firing heading, radians. Hull-relative on your ship (guns swing with the
+   *  prow, set via the 🎯 tool); world-fixed on raider ships, set at launch. */
   aim: number
 }
 
-export interface PotStructure {
-  kind: 'pot'
+/** a gun mount bolted to the deck — local coords, prow = +x */
+export interface Mount {
+  x: number
+  y: number
+  aim0: number // the mount's natural facing; new plants point this way
   plant: Plant | null
 }
-export interface BoilerStructure {
-  kind: 'boiler'
-  fuel: number
-  progress: number
-}
-export type Structure = PotStructure | BoilerStructure
 
-export interface Tile {
-  gx: number
-  gy: number
-  hp: number
-  structure: Structure | null
-  burnT: number
+export interface HullTier {
+  name: string
+  hull: number // max hull hp
+  cost: number // 🪵 to refit up into this tier
+  len: number // half-length, px
+  beam: number // half-width, px
+  mounts: { x: number; y: number; aim: number }[]
 }
 
-export interface ETile {
-  gx: number
-  gy: number
-  hp: number
-  maxHp: number
-  plant: Plant | null
-  burnT: number
+/** the shipwright's ladder: each refit keeps your plants (mount for mount) and
+ *  adds fresh ones — bow chasers first, then broadsides, then a stern chaser */
+export const TIERS: HullTier[] = [
+  {
+    name: 'skiff',
+    hull: 140,
+    cost: 0,
+    len: 54,
+    beam: 30,
+    mounts: [
+      { x: -4, y: -14, aim: -Math.PI / 2 },
+      { x: -4, y: 14, aim: Math.PI / 2 },
+    ],
+  },
+  {
+    name: 'sloop',
+    hull: 220,
+    cost: 30,
+    len: 70,
+    beam: 36,
+    mounts: [
+      { x: -12, y: -18, aim: -Math.PI / 2 },
+      { x: -12, y: 18, aim: Math.PI / 2 },
+      { x: 34, y: 0, aim: 0 },
+    ],
+  },
+  {
+    name: 'brig',
+    hull: 320,
+    cost: 70,
+    len: 88,
+    beam: 44,
+    mounts: [
+      { x: 4, y: -24, aim: -Math.PI / 2 },
+      { x: 4, y: 24, aim: Math.PI / 2 },
+      { x: 48, y: 0, aim: 0 },
+      { x: -42, y: -22, aim: -Math.PI / 2 },
+      { x: -42, y: 22, aim: Math.PI / 2 },
+    ],
+  },
+  {
+    name: 'galleon',
+    hull: 460,
+    cost: 140,
+    len: 106,
+    beam: 52,
+    mounts: [
+      { x: 18, y: -30, aim: -Math.PI / 2 },
+      { x: 18, y: 30, aim: Math.PI / 2 },
+      { x: 62, y: 0, aim: 0 },
+      { x: -32, y: -30, aim: -Math.PI / 2 },
+      { x: -32, y: 30, aim: Math.PI / 2 },
+      { x: -74, y: 0, aim: Math.PI },
+    ],
+  },
+]
+
+/** a raider gun — world-aligned local offset from the ship's center */
+export interface EGun {
+  x: number
+  y: number
+  plant: Plant
 }
 
-export interface EnemyRaft {
+export interface EnemyShip {
   pos: Vec
   vel: Vec
-  tiles: ETile[]
+  hp: number
+  maxHp: number
+  r: number // hull radius
+  size: number // loot scale (the old raft's plank count)
+  burnT: number
   chillT: number
+  guns: EGun[]
   orbitDir: number
   speed: number
   /** roam → notice (❓, turning toward you) → hunt (⚔️, committed) */
   mode: 'roam' | 'notice' | 'hunt'
   noticeT: number
-  /** distance to the player when it noticed — pod-woken rafts come look from afar */
+  /** distance to the player when it noticed — pod-woken ships come look from afar */
   noticeD: number
   aggroR: number
   deaggroR: number
@@ -98,10 +152,11 @@ export interface EnemyRaft {
   danger: number // difficulty of the waters it spawned in
   /** harriers row — fast in any wind, but small and fragile */
   kind: 'raider' | 'harrier'
-  /** raft belongs to a nest and stays tethered to it */
+  /** ship belongs to a nest and stays tethered to it */
   home?: POI
-  /** mid-scuttle guard — the hull is being torn down, don't re-enter */
+  /** mid-scuttle guard — the hull is going down, don't re-enter */
   scuttling?: boolean
+  sunk?: boolean
 }
 
 export interface Wind {
@@ -123,12 +178,10 @@ export interface Bullet {
   life: number
   pierceLeft: number
   hitSet: Set<unknown>
-  tEnemy?: EnemyRaft
-  tTile?: ETile
   src?: Plant
 }
 
-export type LootKind = 'wood' | 'pot' | 'soil' | 'seed' | 'water'
+export type LootKind = 'wood' | 'seed' | 'water'
 export interface Loot {
   kind: LootKind
   n: number
@@ -177,7 +230,7 @@ function makePlant(genome: Genome, gen: number, growth = 0): Plant {
     burnT: 0,
     poisonT: 0,
     wobble: rand(Math.PI * 2),
-    aim: -Math.PI / 2, // default: hard to port (screen-up at launch); re-point with 🎯
+    aim: -Math.PI / 2, // overwritten at sowing with the mount's facing
   }
 }
 
@@ -186,18 +239,19 @@ export class Game {
   vh = 600
   time = 0
 
-  /** a: hull heading, radians — the prow points along it and the tile grid turns with it */
-  raft = { pos: v(0, 0), vel: v(0, 0), a: 0 }
-  tiles = new Map<string, Tile>()
+  /** a: hull heading, radians — the prow points along it and every mount turns with it */
+  ship = { pos: v(0, 0), vel: v(0, 0), a: 0, hp: TIERS[0].hull }
+  tier = 0
+  mounts: Mount[] = []
+  /** the hull is alight — hp burns off until it gutters out */
+  burnT = 0
 
   wood = 0
   water = 0
-  pots = 0
-  soil = 0
   seeds: Seed[] = []
   seedId = 1
 
-  enemies: EnemyRaft[] = []
+  enemies: EnemyShip[] = []
   bullets: Bullet[] = []
   loot: Loot[] = []
   particles: Particle[] = []
@@ -212,17 +266,17 @@ export class Game {
   pois = new Map<string, POI | null>()
   /** POIs near enough to simulate / render this frame */
   activePois: POI[] = []
-  /** fog-of-war: minimap cells the raft has sailed near */
+  /** fog-of-war: minimap cells the ship has sailed near */
   seen = new Set<string>()
   fogT = 0
 
   tool: Tool = 'water'
   seedSel = 0
   seedScroll = 0
-  breedFirst: string | null = null
-  aimFirst: string | null = null // plant awaiting a heading click (🎯 tool)
+  breedFirst: number | null = null // mount index awaiting a partner (🐝 tool)
+  aimFirst: number | null = null // mount index awaiting a heading click (🎯 tool)
 
-  chillT = 0 // frost debuff on our raft
+  chillT = 0 // frost debuff on our ship
   shake = 0
   cam = v(0, 0)
   hover = v(0, 0) // world coords of pointer
@@ -241,23 +295,17 @@ export class Game {
   }
 
   reset() {
-    this.raft = { pos: v(0, 0), vel: v(0, 0), a: 0 }
-    this.tiles = new Map()
-    for (let gx = -1; gx <= 1; gx++) {
-      for (let gy = -1; gy <= 1; gy++) {
-        this.tiles.set(gkey(gx, gy), { gx, gy, hp: TILE_HP, structure: null, burnT: 0 })
-      }
-    }
-    // two pots to start; one holds a half-grown basic shooter so wave 1 is survivable
-    const potA = this.tiles.get(gkey(0, 0))!
-    const potB = this.tiles.get(gkey(1, 0))!
-    potA.structure = { kind: 'pot', plant: makePlant(makeGenome(), 0, 0.55) }
-    potB.structure = { kind: 'pot', plant: null }
+    this.tier = 0
+    this.ship = { pos: v(0, 0), vel: v(0, 0), a: 0, hp: TIERS[0].hull }
+    this.mounts = TIERS[0].mounts.map(m => ({ x: m.x, y: m.y, aim0: m.aim, plant: null }))
+    this.burnT = 0
+    // one half-grown basic shooter on the port mount so wave 1 is survivable
+    const starter = makePlant(makeGenome(), 0, 0.55)
+    starter.aim = this.mounts[0].aim0
+    this.mounts[0].plant = starter
 
     this.wood = 8
     this.water = 6
-    this.pots = 1
-    this.soil = 2
     this.seedId = 1
     // starter seeds: heterozygous lines that reward crossing (stout × brisk/twin,
     // with ember and hardy hiding in the pairs)
@@ -295,7 +343,7 @@ export class Game {
     this.helpOpen = false
     this.stats = { sunk: 0, bred: 0, time: 0, far: 0 }
     this.banner = { title: 'raftig', sub: 'hoist the sail — raiders roam these waters', t: 4 }
-    for (let i = 0; i < 3; i++) this.spawnEnemyRaft()
+    for (let i = 0; i < 3; i++) this.spawnEnemyShip()
   }
 
   resize(w: number, h: number) {
@@ -305,36 +353,37 @@ export class Game {
 
   // ---- coordinates ----
 
-  /** the tile grid is bolted to the hull: it turns with the heading (+gx is the prow) */
-  tilePos(t: { gx: number; gy: number }): Vec {
-    const c = Math.cos(this.raft.a)
-    const s = Math.sin(this.raft.a)
-    return v(this.raft.pos.x + (t.gx * c - t.gy * s) * TS, this.raft.pos.y + (t.gx * s + t.gy * c) * TS)
+  tierDef(): HullTier {
+    return TIERS[this.tier]
   }
 
-  /** world point → raft grid coords (unrounded) — the inverse of tilePos */
-  worldToGrid(w: Vec): Vec {
-    const c = Math.cos(this.raft.a)
-    const s = Math.sin(this.raft.a)
-    const dx = w.x - this.raft.pos.x
-    const dy = w.y - this.raft.pos.y
-    return v((dx * c + dy * s) / TS, (dy * c - dx * s) / TS)
+  /** mount local coords → world: the deck turns with the heading (+x is the prow) */
+  mountPos(m: { x: number; y: number }): Vec {
+    const c = Math.cos(this.ship.a)
+    const s = Math.sin(this.ship.a)
+    return v(this.ship.pos.x + m.x * c - m.y * s, this.ship.pos.y + m.x * s + m.y * c)
   }
 
-  etilePos(e: EnemyRaft, t: ETile): Vec {
-    return v(e.pos.x + t.gx * TS, e.pos.y + t.gy * TS)
+  /** world point → ship-local px — the inverse of mountPos */
+  worldToLocal(w: Vec): Vec {
+    const c = Math.cos(this.ship.a)
+    const s = Math.sin(this.ship.a)
+    const dx = w.x - this.ship.pos.x
+    const dy = w.y - this.ship.pos.y
+    return v(dx * c + dy * s, dy * c - dx * s)
   }
 
-  raftCenter(): Vec {
-    if (this.tiles.size === 0) return this.raft.pos
-    let x = 0
-    let y = 0
-    for (const t of this.tiles.values()) {
-      x += t.gx
-      y += t.gy
-    }
-    const n = this.tiles.size
-    return this.tilePos({ gx: x / n, gy: y / n })
+  /** true if a world point lies on (or within pad px of) the hull ellipse */
+  onHull(w: Vec, pad = 0): boolean {
+    const l = this.worldToLocal(w)
+    const t = this.tierDef()
+    const a = t.len + pad
+    const b = t.beam + pad
+    return (l.x * l.x) / (a * a) + (l.y * l.y) / (b * b) <= 1
+  }
+
+  gunPos(e: EnemyShip, g: EGun): Vec {
+    return v(e.pos.x + g.x, e.pos.y + g.y)
   }
 
   screenToWorld(mx: number, my: number): Vec {
@@ -362,8 +411,8 @@ export class Game {
 
   /** any watered magnet plant on deck pulls loot in */
   magnetActive(): boolean {
-    for (const t of this.tiles.values()) {
-      const p = t.structure?.kind === 'pot' ? t.structure.plant : null
+    for (const m of this.mounts) {
+      const p = m.plant
       if (p && p.growth >= 1 && p.water > 0 && p.pheno.quirk === 'magnet') return true
     }
     return false
@@ -372,7 +421,7 @@ export class Game {
   // ---- update ----
 
   update(dt: number) {
-    this.cam = this.raftCenter()
+    this.cam = this.ship.pos
     this.hover = this.screenToWorld(this.hoverScreen.x, this.hoverScreen.y)
     if (this.over || this.paused || this.helpOpen) {
       this.updateFx(dt)
@@ -385,14 +434,14 @@ export class Game {
     this.updateWind(dt)
     this.updatePOIs(dt)
     this.updateMovement(dt)
-    this.updateRaft(dt)
+    this.updateShip(dt)
     this.updateEnemies(dt)
     this.updateBullets(dt)
     this.updateLoot(dt)
     this.updateSea(dt)
     this.updateHoverInfo()
     this.updateFx(dt)
-    this.stats.far = Math.max(this.stats.far, dist(this.raftCenter(), v(0, 0)))
+    this.stats.far = Math.max(this.stats.far, dist(this.ship.pos, v(0, 0)))
   }
 
   private updateWind(dt: number) {
@@ -411,7 +460,7 @@ export class Game {
   // ---- points of interest ----
 
   private updatePOIs(dt: number) {
-    const c = this.raftCenter()
+    const c = this.ship.pos
     const R = 2600
     // materialize any cell POIs coming into simulation range
     const cx0 = Math.floor((c.x - R) / POI_CELL)
@@ -438,7 +487,7 @@ export class Game {
       if (p.kind === 'calm' && !p.seeded && d < POI_SIGHT.calm) this.seedCalm(p)
     }
 
-    // fog of war: reveal the waters around the raft
+    // fog of war: reveal the waters around the ship
     this.fogT -= dt
     if (this.fogT <= 0) {
       this.fogT = 0.35
@@ -467,9 +516,7 @@ export class Game {
       this.dropLoot('wood', n, scatter())
       left -= n
     }
-    this.dropLoot('water', 2 + Math.floor(danger / 2), scatter())
-    if (Math.random() < 0.7) this.dropLoot('pot', 1, scatter())
-    else this.dropLoot('soil', 1, scatter())
+    this.dropLoot('water', 3 + Math.floor(danger / 2), scatter())
     const nSeeds = 1 + (danger >= 4 ? 1 : 0)
     for (let i = 0; i < nSeeds; i++) {
       this.dropLoot('seed', 1, scatter(), { id: this.seedId++, genome: wildGenome(1 + danger * 0.5), gen: 0 })
@@ -487,7 +534,7 @@ export class Game {
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2 + rand(0.8)
       const at = v(p.pos.x + Math.cos(a) * rand(120, 260), p.pos.y + Math.sin(a) * rand(120, 260))
-      this.spawnEnemyRaft({ at, home: p, dangerBonus: 2 })
+      this.spawnEnemyShip({ at, home: p, dangerBonus: 2 })
     }
   }
 
@@ -515,9 +562,8 @@ export class Game {
       const a = rand(Math.PI * 2)
       const at = v(p.pos.x + Math.cos(a) * rand(0, p.r * 0.5), p.pos.y + Math.sin(a) * rand(0, p.r * 0.5))
       const roll = Math.random()
-      if (roll < 0.4) this.dropLoot('wood', randInt(2, 3), at)
-      else if (roll < 0.6) this.dropLoot('water', 2, at)
-      else if (roll < 0.75) this.dropLoot(Math.random() < 0.5 ? 'pot' : 'soil', 1, at)
+      if (roll < 0.45) this.dropLoot('wood', randInt(2, 3), at)
+      else if (roll < 0.7) this.dropLoot('water', 2, at)
       else this.dropLoot('seed', 1, at, { id: this.seedId++, genome: wildGenome(1 + danger * 0.4), gen: 0 })
     }
     for (const l of this.loot.slice(-n)) {
@@ -528,7 +574,7 @@ export class Game {
 
   /** barter with a trader raft in range (T) — wood for good seed lines */
   tryTrade() {
-    const c = this.raftCenter()
+    const c = this.ship.pos
     for (const p of this.activePois) {
       if (p.kind !== 'trader' || p.done || dist(p.pos, c) > TRADE_RANGE) continue
       if (this.wood < TRADE_COST) return this.toast(`trader wants ${TRADE_COST}🪵`)
@@ -571,82 +617,71 @@ export class Game {
     const fwd = keys.has('KeyW') || keys.has('ArrowUp')
     const back = keys.has('KeyS') || keys.has('ArrowDown')
     // the tiller: A/D swing the prow, the hull (and every gun on it) turns with it
-    if (left !== right) this.raft.a += (right ? 1 : -1) * TURN_RATE * dt
+    if (left !== right) this.ship.a += (right ? 1 : -1) * TURN_RATE * dt
     this.sailEff = null
     // becalmed pools starve the sail — rowing raiders don't care
-    const calm = this.calmAt(this.raft.pos)
-    const gust = (0.5 + 0.5 * (this.wind.speed * calm) / WIND_MAX) * (0.45 + 0.55 * calm)
+    const calm = this.calmAt(this.ship.pos)
+    const gust = (0.5 + (0.5 * (this.wind.speed * calm)) / WIND_MAX) * (0.45 + 0.55 * calm)
     if (fwd) {
       // sheet in: way comes on along the prow. Sail physics — full speed running
       // with the wind, a crawl beating into it; tack across the wind (or wait for
       // it to shift) instead of fighting it head-on
-      const eff = 0.3 + 0.7 * Math.pow((1 + Math.cos(angleDiff(this.raft.a, this.wind.a))) / 2, 1.5)
+      const eff = 0.3 + 0.7 * Math.pow((1 + Math.cos(angleDiff(this.ship.a, this.wind.a))) / 2, 1.5)
       this.sailEff = eff
       const maxSpeed = 120 * eff * gust * (this.chillT > 0 ? 0.55 : 1)
-      this.raft.vel.x += Math.cos(this.raft.a) * 260 * eff * gust * dt
-      this.raft.vel.y += Math.sin(this.raft.a) * 260 * eff * gust * dt
-      const sp = Math.hypot(this.raft.vel.x, this.raft.vel.y)
+      this.ship.vel.x += Math.cos(this.ship.a) * 260 * eff * gust * dt
+      this.ship.vel.y += Math.sin(this.ship.a) * 260 * eff * gust * dt
+      const sp = Math.hypot(this.ship.vel.x, this.ship.vel.y)
       if (sp > maxSpeed) {
-        this.raft.vel.x *= maxSpeed / sp
-        this.raft.vel.y *= maxSpeed / sp
+        this.ship.vel.x *= maxSpeed / sp
+        this.ship.vel.y *= maxSpeed / sp
       }
     } else if (back) {
       // back water: the crew rows astern — kills way fast, then slow sternway.
       // No sail involved, so calm pools and headwinds don't matter
-      this.raft.vel.x *= 1 - Math.min(1, 2.2 * dt)
-      this.raft.vel.y *= 1 - Math.min(1, 2.2 * dt)
-      const sternway = -(this.raft.vel.x * Math.cos(this.raft.a) + this.raft.vel.y * Math.sin(this.raft.a))
+      this.ship.vel.x *= 1 - Math.min(1, 2.2 * dt)
+      this.ship.vel.y *= 1 - Math.min(1, 2.2 * dt)
+      const sternway = -(this.ship.vel.x * Math.cos(this.ship.a) + this.ship.vel.y * Math.sin(this.ship.a))
       if (sternway < 42) {
-        this.raft.vel.x -= Math.cos(this.raft.a) * 100 * dt
-        this.raft.vel.y -= Math.sin(this.raft.a) * 100 * dt
+        this.ship.vel.x -= Math.cos(this.ship.a) * 100 * dt
+        this.ship.vel.y -= Math.sin(this.ship.a) * 100 * dt
       }
     }
     // the keel swings momentum in behind the prow — the hull carves, not skates
-    const sp = Math.hypot(this.raft.vel.x, this.raft.vel.y)
+    const sp = Math.hypot(this.ship.vel.x, this.ship.vel.y)
     if (sp > 4) {
-      const va = Math.atan2(this.raft.vel.y, this.raft.vel.x)
-      const target = Math.cos(angleDiff(va, this.raft.a)) >= 0 ? this.raft.a : this.raft.a + Math.PI
+      const va = Math.atan2(this.ship.vel.y, this.ship.vel.x)
+      const target = Math.cos(angleDiff(va, this.ship.a)) >= 0 ? this.ship.a : this.ship.a + Math.PI
       const na = va + clamp(angleDiff(target, va), -1.5 * dt, 1.5 * dt)
-      this.raft.vel.x = Math.cos(na) * sp
-      this.raft.vel.y = Math.sin(na) * sp
+      this.ship.vel.x = Math.cos(na) * sp
+      this.ship.vel.y = Math.sin(na) * sp
     }
-    this.raft.vel.x *= 1 - Math.min(1, 1.4 * dt)
-    this.raft.vel.y *= 1 - Math.min(1, 1.4 * dt)
-    this.raft.pos.x += this.raft.vel.x * dt
-    this.raft.pos.y += this.raft.vel.y * dt
+    this.ship.vel.x *= 1 - Math.min(1, 1.4 * dt)
+    this.ship.vel.y *= 1 - Math.min(1, 1.4 * dt)
+    this.ship.pos.x += this.ship.vel.x * dt
+    this.ship.pos.y += this.ship.vel.y * dt
   }
 
-  private updateRaft(dt: number) {
-    for (const tile of this.tiles.values()) {
-      // burning planks
-      if (tile.burnT > 0) {
-        tile.burnT -= dt
-        tile.hp -= 4 * dt
-        if (Math.random() < 6 * dt) this.puff(this.tilePos(tile), '#ff8c42', 1)
-        if (tile.hp <= 0) {
-          this.destroyPlayerTile(tile)
-          continue
-        }
+  private updateShip(dt: number) {
+    // hull afire — hp burns off until the flames gutter out
+    if (this.burnT > 0) {
+      this.burnT -= dt
+      this.ship.hp -= 5 * dt
+      if (Math.random() < 6 * dt) {
+        const t = this.tierDef()
+        this.puff(this.mountPos({ x: rand(-t.len * 0.7, t.len * 0.7), y: rand(-t.beam * 0.6, t.beam * 0.6) }), '#ff8c42', 1)
       }
+      if (this.ship.hp <= 0) return this.gameOver()
+    }
+    // out of the fight the crew patches the hull — same rule the raiders play by
+    const fighting = this.inCombat()
+    if (!fighting && this.burnT <= 0 && this.ship.hp < this.tierDef().hull) {
+      this.ship.hp = Math.min(this.tierDef().hull, this.ship.hp + 3 * dt)
+      if (Math.random() < 1.2 * dt) this.puff(this.ship.pos, '#b8e986', 1)
+    }
 
-      const s = tile.structure
-      if (!s) continue
-
-      if (s.kind === 'boiler') {
-        if (s.fuel > 0) {
-          s.progress += dt
-          if (Math.random() < 3 * dt) this.puff(v(this.tilePos(tile).x, this.tilePos(tile).y - 14), '#cfd8dc', 1)
-          if (s.progress >= FUEL_TIME) {
-            s.progress = 0
-            s.fuel--
-            this.water += FUEL_WATER
-            this.toastAt(this.tilePos(tile), `+${FUEL_WATER}💧`, '#7fd8ff')
-          }
-        }
-        continue
-      }
-
-      const p = s.plant
+    for (const m of this.mounts) {
+      const p = m.plant
       if (!p) continue
 
       // growth & thirst — plants gulp in battle, only sip at rest
@@ -670,20 +705,26 @@ export class Game {
         p.poisonT -= dt
         p.hp -= 2.5 * dt
       }
+      // the gardener splints scorched stems once the shooting stops
+      if (!fighting && p.burnT <= 0 && p.poisonT <= 0 && p.hp < p.maxHp) {
+        p.hp = Math.min(p.maxHp, p.hp + 2.5 * dt)
+      }
       if (p.hp <= 0) {
-        s.plant = null
-        this.toastAt(this.tilePos(tile), '🥀', '#c5b8a0')
-        if (this.breedFirst === gkey(tile.gx, tile.gy)) this.breedFirst = null
+        const mi = this.mounts.indexOf(m)
+        m.plant = null
+        this.toastAt(this.mountPos(m), '🥀', '#c5b8a0')
+        if (this.breedFirst === mi) this.breedFirst = null
+        if (this.aimFirst === mi) this.aimFirst = null
         continue
       }
 
       p.cooldown -= dt
       p.breedCd = Math.max(0, p.breedCd - dt)
 
-      // firing — plants shoot along a fixed heading set by the player, engaging
-      // whenever a raider drifts into range but never tracking it.
+      // firing — mounts shoot along their fixed heading, engaging whenever a
+      // raider drifts into range but never tracking it
       if (p.growth >= 1 && p.water > 0 && p.cooldown <= 0) {
-        const from = this.tilePos(tile)
+        const from = this.mountPos(m)
         if (this.enemyInRange(from)) {
           this.firePlant(p, from)
           p.cooldown = p.pheno.period * (this.chillT > 0 ? 1.35 : 1)
@@ -691,23 +732,21 @@ export class Game {
         }
       }
     }
-    if (this.tiles.size === 0 && !this.over) this.gameOver()
+    if (this.ship.hp <= 0 && !this.over) this.gameOver()
   }
 
-  /** true if any enemy tile sits within firing range of the given point */
+  /** true if any enemy hull sits within firing range of the given point */
   private enemyInRange(from: Vec): boolean {
     for (const e of this.enemies) {
-      for (const t of e.tiles) {
-        if (dist(from, this.etilePos(e, t)) < RANGE) return true
-      }
+      if (dist(from, e.pos) - e.r < RANGE) return true
     }
     return false
   }
 
-  /** true while a raider sits within any plant's firing range — locks re-aiming */
-  private inCombat(): boolean {
-    for (const t of this.tiles.values()) {
-      if (this.enemyInRange(this.tilePos(t))) return true
+  /** true while a raider sits within gun range of the ship — locks refits & re-aiming */
+  inCombat(): boolean {
+    for (const e of this.enemies) {
+      if (dist(this.ship.pos, e.pos) - e.r - this.tierDef().len < RANGE) return true
     }
     return false
   }
@@ -718,7 +757,7 @@ export class Game {
     const speed = 330
     for (let i = 0; i < p.pheno.shots; i++) {
       // aim is hull-relative: turning the ship brings the guns to bear
-      const a = this.raft.a + p.aim + (i - (p.pheno.shots - 1) / 2) * spread
+      const a = this.ship.a + p.aim + (i - (p.pheno.shots - 1) / 2) * spread
       this.bullets.push({
         pos: v(from.x + rand(-4, 4), from.y - 16 + rand(-3, 3)),
         vel: v(Math.cos(a) * speed, Math.sin(a) * speed),
@@ -737,10 +776,41 @@ export class Game {
     if (Math.random() < 0.7) sfx('shoot')
   }
 
+  /** B — the galley stove: burn wood, condense fresh water. No building required */
+  boil() {
+    if (this.over || this.paused || this.helpOpen) return
+    if (this.wood < BOIL_COST) return this.toast(`need ${BOIL_COST}🪵 to boil`)
+    this.wood -= BOIL_COST
+    this.water += BOIL_WATER
+    this.toastAt(this.ship.pos, `+${BOIL_WATER}💧`, '#7fd8ff')
+    this.puff(v(this.ship.pos.x, this.ship.pos.y - 20), '#cfd8dc', 4)
+    sfx('build')
+  }
+
+  /** U — refit to the next hull: more deck, more mounts, plants carried across */
+  upgradeHull() {
+    if (this.over || this.paused || this.helpOpen) return
+    if (this.tier >= TIERS.length - 1) return this.toast("she's a galleon already")
+    if (this.inCombat()) return this.toast('refit only out of combat')
+    const next = TIERS[this.tier + 1]
+    if (this.wood < next.cost) return this.toast(`refit needs ${next.cost}🪵`)
+    this.wood -= next.cost
+    this.tier++
+    this.ship.hp = next.hull
+    const old = this.mounts
+    this.mounts = next.mounts.map((md, i) => ({ x: md.x, y: md.y, aim0: md.aim, plant: old[i]?.plant ?? null }))
+    this.breedFirst = null
+    this.aimFirst = null
+    this.banner = { title: `${next.name}!`, sub: `${next.mounts.length} gun mounts · hull ${next.hull}`, t: 3 }
+    this.burst(this.ship.pos, '#e8c98a', 16)
+    this.shake = Math.min(8, this.shake + 3)
+    sfx('build')
+  }
+
   // ---- enemies ----
 
-  spawnEnemyRaft(opts: { at?: Vec; kind?: EnemyRaft['kind']; home?: POI; dangerBonus?: number } = {}) {
-    const c = this.raftCenter()
+  spawnEnemyShip(opts: { at?: Vec; kind?: EnemyShip['kind']; home?: POI; dangerBonus?: number } = {}) {
+    const c = this.ship.pos
     let pos = opts.at
     if (!pos) {
       const angle = rand(Math.PI * 2)
@@ -752,41 +822,32 @@ export class Game {
       opts.kind ??
       (danger > 2 && Math.random() < Math.min(0.3, 0.04 + danger * 0.035) ? 'harrier' : 'raider')
     const size = kind === 'harrier' ? 2 : randInt(2, Math.min(2 + Math.ceil(danger / 2), 6))
-    const cells: { gx: number; gy: number }[] = [{ gx: 0, gy: 0 }]
-    while (cells.length < size) {
-      const base = pick(cells)
-      const dir = pick([
-        [1, 0],
-        [-1, 0],
-        [0, 1],
-        [0, -1],
-      ])
-      const gx = base.gx + dir[0]
-      const gy = base.gy + dir[1]
-      if (!cells.some(cl => cl.gx === gx && cl.gy === gy)) cells.push({ gx, gy })
-    }
-    const maxHp = kind === 'harrier' ? 22 + danger * 5 : 30 + danger * 7
-    const tiles: ETile[] = cells.map(cl => ({ ...cl, hp: maxHp, maxHp, plant: null, burnT: 0 }))
-    let plantCount =
+    const r = 20 + size * 6
+    const maxHp = size * (kind === 'harrier' ? 20 + danger * 3.5 : 26 + danger * 5)
+    let gunCount =
       kind === 'harrier' ? 1 : 1 + (size >= 4 ? 1 : 0) + (danger >= 6 && size >= 5 ? 1 : 0) + (opts.home ? 1 : 0)
-    const shuffled = [...tiles].sort(() => Math.random() - 0.5)
-    for (const t of shuffled) {
-      if (plantCount-- <= 0) break
-      t.plant = makePlant(wildGenome((opts.home ? 1.6 : 1) + danger * 0.4), 0, 1)
-      t.plant.water = 100
-    }
+    const guns: EGun[] = []
     // guns are bolted to the hull, ship-cannon style: batteries share an axis and
-    // alternate port/starboard — the raft has to maneuver to bring one to bear
+    // alternate port/starboard — the ship has to maneuver to bring one to bear
     const gunA = rand(Math.PI * 2)
-    let battery = 0
-    for (const t of tiles) {
-      if (t.plant) t.plant.aim = gunA + (battery++ % 2) * Math.PI + rand(-0.15, 0.15)
+    for (let i = 0; i < gunCount; i++) {
+      const pa = (i / gunCount) * Math.PI * 2 + rand(0.6)
+      const pd = gunCount === 1 ? 0 : r * 0.45
+      const plant = makePlant(wildGenome((opts.home ? 1.6 : 1) + danger * 0.4), 0, 1)
+      plant.water = 100
+      plant.aim = gunA + (i % 2) * Math.PI + rand(-0.15, 0.15)
+      guns.push({ x: Math.cos(pa) * pd, y: Math.sin(pa) * pd, plant })
     }
     this.enemies.push({
       pos,
       vel: v(0, 0),
-      tiles,
+      hp: maxHp,
+      maxHp,
+      r,
+      size,
+      burnT: 0,
       chillT: 0,
+      guns,
       orbitDir: Math.random() < 0.5 ? 1 : -1,
       speed: kind === 'harrier' ? 92 + Math.min(18, danger * 2.5) : Math.min(80, 40 + danger * 3 + rand(10)),
       mode: 'roam',
@@ -804,41 +865,41 @@ export class Game {
 
   /** some sails travel in pods — waking one means waking the neighbourhood */
   private spawnPod() {
-    const c = this.raftCenter()
+    const c = this.ship.pos
     const angle = rand(Math.PI * 2)
     const away = rand(700, 1050)
     const anchor = v(c.x + Math.cos(angle) * away, c.y + Math.sin(angle) * away)
     const n = randInt(2, 3)
     for (let i = 0; i < n; i++) {
       const a = rand(Math.PI * 2)
-      this.spawnEnemyRaft({ at: v(anchor.x + Math.cos(a) * rand(90, 180), anchor.y + Math.sin(a) * rand(90, 180)) })
+      this.spawnEnemyShip({ at: v(anchor.x + Math.cos(a) * rand(90, 180), anchor.y + Math.sin(a) * rand(90, 180)) })
     }
   }
 
-  private notice(e: EnemyRaft, t = NOTICE_T) {
+  private notice(e: EnemyShip, t = NOTICE_T) {
     if (e.mode !== 'roam') return
     e.mode = 'notice'
     e.noticeT = e.kind === 'harrier' ? t * 0.6 : t
-    e.noticeD = dist(e.pos, this.raftCenter())
+    e.noticeD = dist(e.pos, this.ship.pos)
     this.toastAt(e.pos, '❓', '#ffd257')
     sfx('notice')
   }
 
-  aggro(e: EnemyRaft) {
+  aggro(e: EnemyShip) {
     if (e.mode === 'hunt') return
     e.mode = 'hunt'
     // committing from afar (pod wake, long shots) mustn't fizzle the next frame
-    e.deaggroR = Math.max(e.deaggroR, dist(e.pos, this.raftCenter()) + 240)
+    e.deaggroR = Math.max(e.deaggroR, dist(e.pos, this.ship.pos) + 240)
     this.toastAt(e.pos, '⚔️ committed!', '#ff9d9d')
     sfx('spot')
-    // stirring one raft wakes its podmates — pick where you engage
+    // stirring one ship wakes its podmates — pick where you engage
     for (const o of this.enemies) {
       if (o !== e && o.mode === 'roam' && dist(o.pos, e.pos) < POD_WAKE_R) this.notice(o, rand(0.7, 1.2))
     }
   }
 
   private updateEnemies(dt: number) {
-    const center = this.raftCenter()
+    const center = this.ship.pos
     for (const e of this.enemies) {
       e.chillT = Math.max(0, e.chillT - dt)
       const spd = e.speed * (e.chillT > 0 ? 0.5 : 1)
@@ -850,12 +911,12 @@ export class Game {
 
       // staged aggro: raiders eye you (❓) for a beat before committing (⚔️) —
       // back out of range while they wonder and nothing happens
-      if (e.mode === 'roam' && d < e.aggroR && this.tiles.size > 0) {
+      if (e.mode === 'roam' && d < e.aggroR && !this.over) {
         this.notice(e)
       } else if (e.mode === 'notice') {
         e.noticeT -= dt
         // escape means opening the gap beyond where they first noticed you
-        if (d > Math.max(e.aggroR, e.noticeD) + 90 || this.tiles.size === 0) {
+        if (d > Math.max(e.aggroR, e.noticeD) + 90 || this.over) {
           e.mode = 'roam'
           this.toastAt(e.pos, 'lost interest', '#9fb8c8')
         } else if (e.noticeT <= 0) {
@@ -889,7 +950,7 @@ export class Game {
             e.vel.y -= uy * push
           }
         } else {
-          // no guns left — checkScuttle will end this raft; just close in
+          // no guns left — checkScuttle will end this ship; just close in
           e.vel.x = ux * spd
           e.vel.y = uy * spd
         }
@@ -910,7 +971,7 @@ export class Game {
           e.wanderT = rand(3, 8)
           e.wanderA = rand(Math.PI * 2)
         }
-        // nest rafts stay tethered to their totem
+        // nest ships stay tethered to their totem
         if (e.home && dist(e.pos, e.home.pos) > 470) {
           e.wanderA = Math.atan2(e.home.pos.y - e.pos.y, e.home.pos.x - e.pos.x)
         }
@@ -927,20 +988,20 @@ export class Game {
       // so commit and sink them or eat the loss
       if (e.mode !== 'hunt') {
         let patching = false
-        for (const t of e.tiles) {
-          if (t.burnT <= 0 && t.hp < t.maxHp) {
-            t.hp = Math.min(t.maxHp, t.hp + 3.5 * dt)
-            patching = true
-          }
-          const tp = t.plant
-          if (tp && tp.burnT <= 0 && tp.poisonT <= 0 && tp.hp < tp.maxHp) {
+        if (e.burnT <= 0 && e.hp < e.maxHp) {
+          e.hp = Math.min(e.maxHp, e.hp + 6 * dt)
+          patching = true
+        }
+        for (const g of e.guns) {
+          const tp = g.plant
+          if (tp.burnT <= 0 && tp.poisonT <= 0 && tp.hp < tp.maxHp) {
             tp.hp = Math.min(tp.maxHp, tp.hp + 2.5 * dt)
             patching = true
           }
         }
         if (patching && Math.random() < 1.5 * dt) this.puff(e.pos, '#b8e986', 1)
       }
-      // separation from other rafts
+      // separation from other ships
       for (const o of this.enemies) {
         if (o === e) continue
         const ox = e.pos.x - o.pos.x
@@ -954,18 +1015,19 @@ export class Game {
       e.pos.x += e.vel.x * dt
       e.pos.y += e.vel.y * dt
 
-      for (const t of e.tiles) {
-        if (t.burnT > 0) {
-          t.burnT -= dt
-          t.hp -= 4 * dt
-          if (Math.random() < 6 * dt) this.puff(this.etilePos(e, t), '#ff8c42', 1)
-          if (t.hp <= 0) {
-            this.destroyEnemyTile(e, t)
-            continue
-          }
+      // hull afire
+      if (e.burnT > 0) {
+        e.burnT -= dt
+        e.hp -= 5 * dt
+        if (Math.random() < 6 * dt) this.puff(v(e.pos.x + rand(-e.r, e.r) * 0.6, e.pos.y + rand(-e.r, e.r) * 0.6), '#ff8c42', 1)
+        if (e.hp <= 0) {
+          this.sinkShip(e)
+          continue
         }
-        const p = t.plant
-        if (!p) continue
+      }
+
+      for (const g of [...e.guns]) {
+        const p = g.plant
         if (p.burnT > 0) {
           p.burnT -= dt
           p.hp -= 3 * dt
@@ -975,13 +1037,13 @@ export class Game {
           p.hp -= 2.5 * dt
         }
         if (p.hp <= 0) {
-          this.killEnemyPlant(e, t)
+          this.killEnemyGun(e, g)
           this.checkScuttle(e)
           continue
         }
         p.cooldown -= dt
-        const from = this.etilePos(e, t)
-        if (p.cooldown <= 0 && e.mode === 'hunt' && dist(from, center) < 360 && this.tiles.size > 0) {
+        const from = this.gunPos(e, g)
+        if (p.cooldown <= 0 && e.mode === 'hunt' && dist(from, center) < 360 && !this.over) {
           // gunners hold fire until the target bears on the fixed mount
           const bearing = Math.atan2(center.y - from.y, center.x - from.x)
           if (Math.abs(angleDiff(p.aim, bearing)) < GUN_ARC) {
@@ -992,9 +1054,9 @@ export class Game {
         }
       }
     }
-    // sunk rafts go; distant roamers slip over the horizon (fresh ones respawn nearer)
+    // sunk ships go; distant roamers slip over the horizon (fresh ones respawn nearer)
     this.enemies = this.enemies.filter(
-      e => e.tiles.length > 0 && (e.mode === 'hunt' || dist(e.pos, center) < (e.home ? 2600 : 1700))
+      e => !e.sunk && (e.mode === 'hunt' || dist(e.pos, center) < (e.home ? 2600 : 1700))
     )
     // a nest whose pod drifted out of the world re-arms for the next visit
     for (const p of this.activePois) {
@@ -1002,24 +1064,20 @@ export class Game {
     }
   }
 
-  /** the armed plant whose firing station costs the least sailing — fixed mounts
-   *  can't traverse, so the raft picks the battery that bears cheapest */
-  private bestGun(e: EnemyRaft, center: Vec, standoff: number): { p: Plant; fp: Vec } | null {
+  /** the gun whose firing station costs the least sailing — fixed mounts can't
+   *  traverse, so the ship picks the battery that bears cheapest */
+  private bestGun(e: EnemyShip, center: Vec, standoff: number): { p: Plant; fp: Vec } | null {
     let best: { p: Plant; fp: Vec; d: number } | null = null
-    for (const t of e.tiles) {
-      const p = t.plant
-      if (!p) continue
-      const fp = v(
-        center.x - Math.cos(p.aim) * standoff - t.gx * TS,
-        center.y - Math.sin(p.aim) * standoff - t.gy * TS
-      )
+    for (const g of e.guns) {
+      const p = g.plant
+      const fp = v(center.x - Math.cos(p.aim) * standoff - g.x, center.y - Math.sin(p.aim) * standoff - g.y)
       const d = dist(e.pos, fp)
       if (!best || d < best.d) best = { p, fp, d }
     }
     return best
   }
 
-  private enemyFire(e: EnemyRaft, p: Plant, from: Vec) {
+  private enemyFire(e: EnemyShip, p: Plant, from: Vec) {
     const speed = 190
     // fixed mounts fire dead along their heading — no leading, no homing:
     // read the red arrows, stay out of the lines, outsail what does come
@@ -1038,57 +1096,60 @@ export class Game {
     })
   }
 
-  private destroyEnemyTile(e: EnemyRaft, t: ETile) {
-    const pos = this.etilePos(e, t)
-    if (t.plant) this.killEnemyPlant(e, t)
-    // loot scales a touch faster than the threat — pushing one ring out is always tempting
-    const n = randInt(2 + Math.floor(e.danger / 3), 3 + Math.min(5, Math.floor(e.danger * 0.8)))
-    this.dropLoot('wood', n, pos)
-    this.burst(pos, '#8a6a45', 10)
-    sfx('break')
-    const i = e.tiles.indexOf(t)
-    if (i >= 0) e.tiles.splice(i, 1)
-    if (e.tiles.length === 0) {
-      this.stats.sunk++
-      this.shake = Math.min(10, this.shake + 5)
-      this.dropLoot(Math.random() < 0.6 ? 'pot' : 'soil', 1, v(pos.x + rand(-20, 20), pos.y + rand(-20, 20)))
-      this.dropLoot('water', 2 + Math.floor(e.danger / 2), v(pos.x + rand(-20, 20), pos.y + rand(-20, 20)))
-      if (Math.random() < e.danger * 0.05) {
-        this.dropLoot('seed', 1, v(pos.x + rand(-20, 20), pos.y + rand(-20, 20)), {
-          id: this.seedId++,
-          genome: wildGenome(1 + e.danger * 0.5),
-          gen: 0,
-        })
-      }
-      this.toastAt(pos, '☠ raft sunk!', '#ffd257')
-      sfx('sunk')
-      if (e.home && !this.enemies.some(o => o !== e && o.home === e.home && o.tiles.length > 0)) {
-        this.nestCleared(e.home)
-      }
-    }
-    this.checkScuttle(e)
+  private damageEnemyHull(e: EnemyShip, b: Bullet) {
+    e.hp -= b.dmg
+    if (b.element === 'ember') e.burnT = 3
+    if (b.element === 'frost') e.chillT = 2.5
+    if (e.hp <= 0) this.sinkShip(e)
   }
 
-  /** a raft with no plants left has no fight left — the crew scuttles it */
-  private checkScuttle(e: EnemyRaft) {
-    if (e.scuttling || e.tiles.length === 0 || e.tiles.some(t => t.plant)) return
+  private sinkShip(e: EnemyShip) {
+    if (e.sunk) return
+    e.sunk = true
+    // guns go down with the ship — their seed lines may float free
+    for (const g of [...e.guns]) this.killEnemyGun(e, g)
+    const scatter = () => v(e.pos.x + rand(-e.r, e.r), e.pos.y + rand(-e.r, e.r))
+    // loot scales a touch faster than the threat — pushing one ring out is always tempting
+    let wood = e.size * randInt(2, 3) + Math.floor(e.danger * 0.8)
+    while (wood > 0) {
+      const n = Math.min(wood, randInt(2, 4))
+      this.dropLoot('wood', n, scatter())
+      wood -= n
+    }
+    this.dropLoot('water', 2 + Math.floor(e.danger / 2), scatter())
+    if (Math.random() < e.danger * 0.05) {
+      this.dropLoot('seed', 1, scatter(), { id: this.seedId++, genome: wildGenome(1 + e.danger * 0.5), gen: 0 })
+    }
+    this.stats.sunk++
+    this.shake = Math.min(10, this.shake + 5)
+    this.burst(e.pos, '#8a6a45', 16)
+    this.toastAt(e.pos, '☠ ship sunk!', '#ffd257')
+    sfx('sunk')
+    if (e.home && !this.enemies.some(o => o !== e && o.home === e.home && !o.sunk)) {
+      this.nestCleared(e.home)
+    }
+  }
+
+  /** a ship with no guns left has no fight left — the crew scuttles it */
+  private checkScuttle(e: EnemyShip) {
+    if (e.scuttling || e.sunk || e.guns.length > 0) return
     e.scuttling = true
     this.toastAt(e.pos, 'defenseless — crew scuttles!', '#ffd257')
-    while (e.tiles.length) this.destroyEnemyTile(e, e.tiles[0])
+    this.sinkShip(e)
   }
 
-  private killEnemyPlant(e: EnemyRaft, t: ETile) {
-    const p = t.plant
-    if (!p) return
-    t.plant = null
-    const pos = this.etilePos(e, t)
+  private killEnemyGun(e: EnemyShip, g: EGun) {
+    const i = e.guns.indexOf(g)
+    if (i < 0) return
+    e.guns.splice(i, 1)
+    const pos = this.gunPos(e, g)
     this.burst(pos, '#4e9a5f', 8)
     const roll = Math.random()
     if (roll < Math.min(0.75, 0.42 + e.danger * 0.045)) {
-      this.dropLoot('seed', 1, pos, { id: this.seedId++, genome: p.genome, gen: 0 })
+      this.dropLoot('seed', 1, pos, { id: this.seedId++, genome: g.plant.genome, gen: 0 })
       this.toastAt(pos, '🌰 seed adrift!', '#b8e986')
     } else if (roll < 0.85) {
-      this.dropLoot('soil', 1, pos)
+      this.dropLoot('wood', 1, pos)
     }
   }
 
@@ -1101,19 +1162,6 @@ export class Game {
       if (b.life <= 0) {
         dead.add(b)
         continue
-      }
-      // friendly shots home gently while the target tile survives;
-      // raider shots fly straight — outsail them
-      let aim: Vec | null = null
-      if (b.friendly && b.tEnemy && b.tTile && b.tEnemy.tiles.includes(b.tTile)) {
-        aim = this.etilePos(b.tEnemy, b.tTile)
-      }
-      if (aim) {
-        const dx = aim.x - b.pos.x
-        const dy = aim.y - b.pos.y
-        const len = Math.hypot(dx, dy) || 1
-        b.vel.x = (dx / len) * b.speed
-        b.vel.y = (dy / len) * b.speed
       }
       b.pos.x += b.vel.x * dt
       b.pos.y += b.vel.y * dt
@@ -1130,10 +1178,11 @@ export class Game {
   /** returns true if the bullet is spent */
   private friendlyHit(b: Bullet): boolean {
     for (const e of this.enemies) {
-      for (const t of e.tiles) {
-        const tp = this.etilePos(e, t)
-        const p = t.plant
-        if (p && !b.hitSet.has(p) && dist(b.pos, v(tp.x, tp.y - 14)) < 15) {
+      if (e.sunk) continue
+      for (const g of [...e.guns]) {
+        const p = g.plant
+        const tp = this.gunPos(e, g)
+        if (!b.hitSet.has(p) && dist(b.pos, v(tp.x, tp.y - 14)) < 15) {
           b.hitSet.add(p)
           this.aggro(e)
           p.hp -= b.dmg * (b.element === 'venom' ? 1.6 : 1)
@@ -1144,7 +1193,7 @@ export class Game {
           this.puff(b.pos, this.bulletColor(b), 2)
           sfx('hit')
           if (p.hp <= 0) {
-            this.killEnemyPlant(e, t)
+            this.killEnemyGun(e, g)
             this.checkScuttle(e)
           }
           if (b.pierceLeft > 0) {
@@ -1153,22 +1202,19 @@ export class Game {
           }
           return true
         }
-        if (!b.hitSet.has(t) && dist(b.pos, tp) < TS * 0.55) {
-          b.hitSet.add(t)
-          this.aggro(e)
-          t.hp -= b.dmg
-          if (b.element === 'ember') t.burnT = 3
-          if (b.element === 'frost') e.chillT = 2.5
-          if (b.quirk === 'leech' && b.src) b.src.water = Math.min(100, b.src.water + 2)
-          this.puff(b.pos, this.bulletColor(b), 2)
-          sfx('hit')
-          if (t.hp <= 0) this.destroyEnemyTile(e, t)
-          if (b.pierceLeft > 0) {
-            b.pierceLeft--
-            return false
-          }
-          return true
+      }
+      if (!b.hitSet.has(e) && dist(b.pos, e.pos) < e.r) {
+        b.hitSet.add(e)
+        this.aggro(e)
+        this.damageEnemyHull(e, b)
+        if (b.quirk === 'leech' && b.src) b.src.water = Math.min(100, b.src.water + 2)
+        this.puff(b.pos, this.bulletColor(b), 2)
+        sfx('hit')
+        if (b.pierceLeft > 0) {
+          b.pierceLeft--
+          return false
         }
+        return true
       }
     }
     return false
@@ -1176,28 +1222,29 @@ export class Game {
 
   /** returns true if the bullet is spent */
   private enemyHit(b: Bullet): boolean {
-    for (const t of this.tiles.values()) {
-      const tp = this.tilePos(t)
-      const plant = t.structure?.kind === 'pot' ? t.structure.plant : null
-      if (plant && dist(b.pos, v(tp.x, tp.y - 14)) < 15) {
-        plant.hp -= b.dmg * (b.element === 'venom' ? 1.6 : 1)
-        if (b.element === 'ember') plant.burnT = 3
+    for (const m of this.mounts) {
+      const p = m.plant
+      if (!p) continue
+      const tp = this.mountPos(m)
+      if (dist(b.pos, v(tp.x, tp.y - 14)) < 15) {
+        p.hp -= b.dmg * (b.element === 'venom' ? 1.6 : 1)
+        if (b.element === 'ember') p.burnT = 3
         if (b.element === 'frost') this.chillT = 2.5
-        if (b.element === 'venom') plant.poisonT = 4
+        if (b.element === 'venom') p.poisonT = 4
         this.puff(b.pos, this.bulletColor(b), 2)
         this.shake = Math.min(8, this.shake + 1)
         return true
       }
-      if (dist(b.pos, tp) < TS * 0.55) {
-        t.hp -= b.dmg
-        if (b.element === 'ember') t.burnT = 3
-        if (b.element === 'frost') this.chillT = 2.5
-        this.puff(b.pos, this.bulletColor(b), 3)
-        this.shake = Math.min(8, this.shake + 1.5)
-        sfx('hit')
-        if (t.hp <= 0) this.destroyPlayerTile(t)
-        return true
-      }
+    }
+    if (this.onHull(b.pos)) {
+      this.ship.hp -= b.dmg
+      if (b.element === 'ember') this.burnT = 3
+      if (b.element === 'frost') this.chillT = 2.5
+      this.puff(b.pos, this.bulletColor(b), 3)
+      this.shake = Math.min(8, this.shake + 1.5)
+      sfx('hit')
+      if (this.ship.hp <= 0) this.gameOver()
+      return true
     }
     return false
   }
@@ -1215,18 +1262,11 @@ export class Game {
     }
   }
 
-  private destroyPlayerTile(tile: Tile) {
-    const pos = this.tilePos(tile)
-    this.tiles.delete(gkey(tile.gx, tile.gy))
-    if (this.breedFirst === gkey(tile.gx, tile.gy)) this.breedFirst = null
-    this.burst(pos, '#8a6a45', 12)
-    this.shake = Math.min(12, this.shake + 4)
-    sfx('break')
-    if (this.tiles.size === 0) this.gameOver()
-  }
-
   private gameOver() {
+    if (this.over) return
     this.over = true
+    this.burst(this.ship.pos, '#8a6a45', 24)
+    this.shake = Math.min(14, this.shake + 8)
     sfx('over')
   }
 
@@ -1245,8 +1285,8 @@ export class Game {
   }
 
   spawnAmbientLoot() {
-    // flotsam rides the wind past your raft — set an intercept course or let it go
-    const c = this.raftCenter()
+    // flotsam rides the wind past your ship — set an intercept course or let it go
+    const c = this.ship.pos
     const angle = this.wind.a + Math.PI + rand(-1.3, 1.3) // upwind side, so it drifts through
     const d = rand(380, 640)
     const pos = v(c.x + Math.cos(angle) * d, c.y + Math.sin(angle) * d)
@@ -1257,10 +1297,8 @@ export class Game {
     )
     const roll = Math.random()
     let loot: Loot
-    if (roll < 0.42) loot = { kind: 'wood', n: randInt(2, 3), seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
-    else if (roll < 0.58) loot = { kind: 'soil', n: 1, seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
-    else if (roll < 0.72) loot = { kind: 'pot', n: 1, seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
-    else if (roll < 0.86) loot = { kind: 'water', n: 2, seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
+    if (roll < 0.5) loot = { kind: 'wood', n: randInt(2, 3), seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
+    else if (roll < 0.82) loot = { kind: 'water', n: 2, seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
     else
       loot = {
         kind: 'seed',
@@ -1275,7 +1313,7 @@ export class Game {
   }
 
   private updateLoot(dt: number) {
-    const center = this.raftCenter()
+    const center = this.ship.pos
     const magnet = this.magnetActive()
     const taken = new Set<Loot>()
     for (const l of this.loot) {
@@ -1301,12 +1339,9 @@ export class Game {
       }
       l.pos.x += l.vel.x * dt
       l.pos.y += l.vel.y * dt
-      for (const t of this.tiles.values()) {
-        if (dist(l.pos, this.tilePos(t)) < TS * 0.8) {
-          this.collect(l)
-          taken.add(l)
-          break
-        }
+      if (this.onHull(l.pos, 18)) {
+        this.collect(l)
+        taken.add(l)
       }
     }
     this.loot = this.loot.filter(l => !taken.has(l))
@@ -1321,14 +1356,6 @@ export class Game {
       case 'water':
         this.water += l.n
         this.toastAt(l.pos, `+${l.n}💧`, '#7fd8ff')
-        break
-      case 'pot':
-        this.pots += l.n
-        this.toastAt(l.pos, '+1🏺', '#e8a87c')
-        break
-      case 'soil':
-        this.soil += l.n
-        this.toastAt(l.pos, '+1🟤', '#c5a880')
         break
       case 'seed':
         if (l.seed) {
@@ -1352,11 +1379,11 @@ export class Game {
     this.spawnT -= dt
     if (this.spawnT <= 0) {
       this.spawnT = 4
-      const danger = this.dangerAt(this.raftCenter())
+      const danger = this.dangerAt(this.ship.pos)
       const cap = Math.min(8, 3 + Math.floor(danger / 2))
       if (this.enemies.length < cap) {
         if (danger > 1.6 && Math.random() < 0.22) this.spawnPod()
-        else this.spawnEnemyRaft()
+        else this.spawnEnemyShip()
       }
     }
   }
@@ -1370,21 +1397,19 @@ export class Game {
 
   private updateHoverInfo() {
     this.hoverInfo = null
-    for (const t of this.tiles.values()) {
-      const p = t.structure?.kind === 'pot' ? t.structure.plant : null
-      if (!p) continue
-      const tp = this.tilePos(t)
+    for (const m of this.mounts) {
+      if (!m.plant) continue
+      const tp = this.mountPos(m)
       if (dist(this.hover, v(tp.x, tp.y - 12)) < 20) {
-        this.hoverInfo = { plant: p, hostile: false, pos: tp }
+        this.hoverInfo = { plant: m.plant, hostile: false, pos: tp }
         return
       }
     }
     for (const e of this.enemies) {
-      for (const t of e.tiles) {
-        if (!t.plant) continue
-        const tp = this.etilePos(e, t)
+      for (const g of e.guns) {
+        const tp = this.gunPos(e, g)
         if (dist(this.hover, v(tp.x, tp.y - 12)) < 20) {
-          this.hoverInfo = { plant: t.plant, hostile: true, pos: tp }
+          this.hoverInfo = { plant: g.plant, hostile: true, pos: tp }
           return
         }
       }
@@ -1436,7 +1461,7 @@ export class Game {
   }
 
   keydown(code: string) {
-    const idx = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8'].indexOf(code)
+    const idx = ['Digit1', 'Digit2', 'Digit3', 'Digit4'].indexOf(code)
     if (idx >= 0 && idx < TOOLS.length) {
       this.tool = TOOLS[idx].tool
       this.breedFirst = null
@@ -1452,6 +1477,12 @@ export class Game {
         break
       case 'KeyT':
         if (!this.over && !this.paused && !this.helpOpen) this.tryTrade()
+        break
+      case 'KeyB':
+        this.boil()
+        break
+      case 'KeyU':
+        this.upgradeHull()
         break
       case 'KeyH':
         this.helpOpen = !this.helpOpen
@@ -1481,134 +1512,86 @@ export class Game {
     this.texts.push({ pos: v(pos.x, pos.y - 20), text, life: 1.6, color })
   }
 
+  /** the mount under a world point, if any */
+  private mountAt(w: Vec): number | null {
+    let best: number | null = null
+    let bd = 30
+    for (let i = 0; i < this.mounts.length; i++) {
+      const d = dist(w, this.mountPos(this.mounts[i]))
+      if (d < bd) {
+        bd = d
+        best = i
+      }
+    }
+    return best
+  }
+
   private worldClick(w: Vec) {
-    const gl = this.worldToGrid(w)
-    const gx = Math.round(gl.x)
-    const gy = Math.round(gl.y)
-    const key = gkey(gx, gy)
-    const tile = this.tiles.get(key)
+    const mi = this.mountAt(w)
+    const m = mi === null ? null : this.mounts[mi]
 
     switch (this.tool) {
-      case 'build':
-        if (tile) {
-          if (tile.hp >= TILE_HP) return this.toast('tile is sound')
-          if (this.wood < 1) return this.toast('need 1🪵')
-          this.wood--
-          tile.hp = Math.min(TILE_HP, tile.hp + 30)
-          this.puff(this.tilePos(tile), '#e8c98a', 4)
-          sfx('build')
-        } else {
-          if (!this.isBuildable(gx, gy)) return
-          if (this.wood < BUILD_COST) return this.toast(`need ${BUILD_COST}🪵`)
-          this.wood -= BUILD_COST
-          this.tiles.set(key, { gx, gy, hp: TILE_HP, structure: null, burnT: 0 })
-          this.puff(this.tilePos({ gx, gy }), '#e8c98a', 6)
-          sfx('build')
-        }
-        break
-
-      case 'pot':
-        if (!tile) return
-        if (tile.structure) return this.toast('tile occupied')
-        if (this.pots < 1) return this.toast('need a pot 🏺')
-        if (this.soil < 1) return this.toast('need soil 🟤')
-        this.pots--
-        this.soil--
-        tile.structure = { kind: 'pot', plant: null }
-        sfx('build')
-        break
-
       case 'plant': {
-        if (!tile || tile.structure?.kind !== 'pot') return
-        if (tile.structure.plant) return this.toast('pot occupied')
+        if (!m) return
+        if (m.plant) {
+          // occupied — dig it up to make room for a better cultivar
+          m.plant = null
+          this.toastAt(this.mountPos(m), 'dug up 🥀', '#c5b8a0')
+          if (this.breedFirst === mi) this.breedFirst = null
+          if (this.aimFirst === mi) this.aimFirst = null
+          return
+        }
         if (!this.seeds.length) return this.toast('no seeds — breed or loot')
         const seed = this.seeds.splice(this.seedSel, 1)[0]
         this.seedSel = clamp(this.seedSel, 0, Math.max(0, this.seeds.length - 1))
         this.seedScroll = clamp(this.seedScroll, 0, Math.max(0, this.seeds.length - 8))
-        tile.structure.plant = makePlant(seed.genome, seed.gen)
-        this.toastAt(this.tilePos(tile), `🌱 ${phenotype(seed.genome).name}`, '#b8e986')
+        const plant = makePlant(seed.genome, seed.gen)
+        plant.aim = m.aim0 // sown facing the mount's natural bearing
+        m.plant = plant
+        this.toastAt(this.mountPos(m), `🌱 ${phenotype(seed.genome).name}`, '#b8e986')
         sfx('build')
         break
       }
 
       case 'water': {
-        const p = tile?.structure?.kind === 'pot' ? tile.structure.plant : null
-        if (!tile || !p) return
-        if (this.water < 1) return this.toast('no fresh water — stoke a boiler')
+        const p = m?.plant
+        if (!m || !p) return
+        if (this.water < 1) return this.toast('no fresh water — B boils 1🪵 → 2💧')
         if (p.water >= 100) return this.toast('already soaked')
         this.water--
         p.water = Math.min(100, p.water + WATER_PER_USE)
         p.dryTime = 0
-        this.puff(v(this.tilePos(tile).x, this.tilePos(tile).y - 14), '#7fd8ff', 5)
+        this.puff(v(this.mountPos(m).x, this.mountPos(m).y - 14), '#7fd8ff', 5)
         sfx('water')
         break
       }
 
       case 'breed':
-        this.breedClick(tile)
-        break
-
-      case 'boiler':
-        if (!tile) return
-        if (tile.structure?.kind === 'boiler') {
-          if (this.wood < 1) return this.toast('need 1🪵 to stoke')
-          if (tile.structure.fuel >= FUEL_CAP) return this.toast('boiler is full')
-          this.wood--
-          tile.structure.fuel++
-          this.toastAt(this.tilePos(tile), '+fuel 🔥', '#ff8c42')
-          sfx('build')
-        } else if (!tile.structure) {
-          if (this.wood < BOILER_COST) return this.toast(`need ${BOILER_COST}🪵`)
-          this.wood -= BOILER_COST
-          tile.structure = { kind: 'boiler', fuel: 0, progress: 0 }
-          sfx('build')
-        } else {
-          this.toast('tile occupied')
-        }
-        break
-
-      case 'remove':
-        if (!tile || !tile.structure) return
-        if (tile.structure.kind === 'pot') {
-          if (tile.structure.plant) {
-            tile.structure.plant = null
-            this.toastAt(this.tilePos(tile), 'dug up 🥀', '#c5b8a0')
-            if (this.breedFirst === key) this.breedFirst = null
-          } else {
-            tile.structure = null
-            this.pots++
-            this.toastAt(this.tilePos(tile), '+1🏺', '#e8a87c')
-          }
-        } else {
-          tile.structure = null
-          this.wood += 2
-          this.toastAt(this.tilePos(tile), '+2🪵', '#e8c98a')
-        }
+        this.breedClick(mi)
         break
 
       case 'aim': {
         if (this.inCombat()) return this.toast('re-aim only out of combat')
-        const p = tile?.structure?.kind === 'pot' ? tile.structure.plant : null
-        if (!this.aimFirst) {
-          if (!tile || !p) return
-          this.aimFirst = key
-          this.toastAt(this.tilePos(tile), 'aim where? 🎯', '#ffd257')
+        if (this.aimFirst === null) {
+          if (!m || !m.plant) return
+          this.aimFirst = mi
+          this.toastAt(this.mountPos(m), 'aim where? 🎯', '#ffd257')
           return
         }
         // second click sets the heading; clicking the same plant cancels
-        const firstTile = this.tiles.get(this.aimFirst)
-        const first = firstTile?.structure?.kind === 'pot' ? firstTile.structure.plant : null
-        if (!firstTile || !first) {
+        const firstM = this.mounts[this.aimFirst]
+        const first = firstM?.plant
+        if (!firstM || !first) {
           this.aimFirst = null
           return
         }
-        if (this.aimFirst === key) {
+        if (this.aimFirst === mi) {
           this.aimFirst = null
           return
         }
-        const fpos = this.tilePos(firstTile)
+        const fpos = this.mountPos(firstM)
         // stored hull-relative, so the mount stays bolted to the deck as she turns
-        first.aim = angleDiff(Math.atan2(w.y - fpos.y, w.x - fpos.x), this.raft.a)
+        first.aim = angleDiff(Math.atan2(w.y - fpos.y, w.x - fpos.x), this.ship.a)
         this.aimFirst = null
         this.puff(v(fpos.x, fpos.y - 16), '#ffd257', 4)
         this.toastAt(fpos, 'heading set 🎯', '#ffd257')
@@ -1618,58 +1601,27 @@ export class Game {
     }
   }
 
-  isBuildable(gx: number, gy: number): boolean {
-    if (this.tiles.has(gkey(gx, gy))) return false
-    return (
-      this.tiles.has(gkey(gx + 1, gy)) ||
-      this.tiles.has(gkey(gx - 1, gy)) ||
-      this.tiles.has(gkey(gx, gy + 1)) ||
-      this.tiles.has(gkey(gx, gy - 1))
-    )
-  }
-
-  buildableCells(): { gx: number; gy: number }[] {
-    const out = new Map<string, { gx: number; gy: number }>()
-    for (const t of this.tiles.values()) {
-      for (const [dx, dy] of [
-        [1, 0],
-        [-1, 0],
-        [0, 1],
-        [0, -1],
-      ]) {
-        const gx = t.gx + dx
-        const gy = t.gy + dy
-        const k = gkey(gx, gy)
-        if (!this.tiles.has(k) && !out.has(k)) out.set(k, { gx, gy })
-      }
-    }
-    return [...out.values()]
-  }
-
-  private breedClick(tile: Tile | undefined) {
-    const plant = tile?.structure?.kind === 'pot' ? tile.structure.plant : null
-    if (!tile || !plant) return
-    const key = gkey(tile.gx, tile.gy)
+  private breedClick(mi: number | null) {
+    const m = mi === null ? null : this.mounts[mi]
+    const plant = m?.plant
+    if (mi === null || !m || !plant) return
     if (plant.growth < 1) return this.toast('not mature yet')
     if (plant.breedCd > 0) return this.toast(`resting ${Math.ceil(plant.breedCd)}s`)
 
-    if (!this.breedFirst) {
-      this.breedFirst = key
-      this.toastAt(this.tilePos(tile), 'pick a partner 🐝', '#ffd257')
+    if (this.breedFirst === null) {
+      this.breedFirst = mi
+      this.toastAt(this.mountPos(m), 'pick a partner 🐝', '#ffd257')
       return
     }
-    if (this.breedFirst === key) {
+    if (this.breedFirst === mi) {
       this.breedFirst = null
       return
     }
-    const firstTile = this.tiles.get(this.breedFirst)
-    const first = firstTile?.structure?.kind === 'pot' ? firstTile.structure.plant : null
-    if (!firstTile || !first || first.growth < 1 || first.breedCd > 0) {
+    const firstM = this.mounts[this.breedFirst]
+    const first = firstM?.plant
+    if (!firstM || !first || first.growth < 1 || first.breedCd > 0) {
       this.breedFirst = null
       return
-    }
-    if (Math.max(Math.abs(firstTile.gx - tile.gx), Math.abs(firstTile.gy - tile.gy)) > 2) {
-      return this.toast('too far apart (≤2 tiles)')
     }
     if (this.water < BREED_COST) return this.toast(`need ${BREED_COST}💧`)
 
@@ -1686,9 +1638,9 @@ export class Game {
     }
     this.stats.bred++
     this.breedFirst = null
-    this.burst(this.tilePos(tile), '#ffd257', 8)
-    this.burst(this.tilePos(firstTile), '#ffd257', 8)
-    this.toastAt(this.tilePos(tile), `${msg} (F${gen})`, '#ffd257')
+    this.burst(this.mountPos(m), '#ffd257', 8)
+    this.burst(this.mountPos(firstM), '#ffd257', 8)
+    this.toastAt(this.mountPos(m), `${msg} (F${gen})`, '#ffd257')
     sfx('breed')
   }
 
