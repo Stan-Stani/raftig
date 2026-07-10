@@ -362,12 +362,19 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
       ctx.arc(p.x, p.y - 12, 20, 0, Math.PI * 2)
       ctx.stroke()
     }
-    // fixed firing heading — faint always, bright while the 🎯 tool is up
+    // burst ring: where this mortar's shells come down — gold when loaded, faint
+    // while the crew reloads. The helm walks it; the reach gene sets the distance.
     if (plant.growth >= 1) {
-      const aiming = g.tool === 'aim'
-      const selected = aiming && g.aimFirst === i
-      // hull-relative mount: the arrow swings with the ship
-      drawAim(ctx, p.x, p.y - 12, g.ship.a + plant.aim, aiming, selected, t)
+      const a = g.ship.a + plant.aim
+      drawAim(ctx, p.x, p.y - 12, a, false, false, t)
+      drawDropRing(
+        ctx,
+        p.x + Math.cos(a) * plant.pheno.range,
+        p.y + Math.sin(a) * plant.pheno.range,
+        g.plantSplash(plant),
+        plant.cooldown <= 0 && plant.water > 0,
+        t
+      )
     }
     drawPlant(ctx, p.x, p.y, plant, false, t)
     drawWaterBar(ctx, p.x, p.y, plant)
@@ -408,21 +415,21 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
     }
   }
 
-  // aim heading preview to cursor
-  if (g.tool === 'aim' && g.aimFirst !== null) {
-    const fm = g.mounts[g.aimFirst]
-    if (fm?.plant) {
-      const fp = g.mountPos(fm)
-      ctx.strokeStyle = '#ffd257aa'
-      ctx.setLineDash([6, 5])
-      ctx.lineWidth = 2
-      ctx.beginPath()
-      ctx.moveTo(fp.x, fp.y - 12)
-      ctx.lineTo(g.hover.x, g.hover.y)
-      ctx.stroke()
-      ctx.setLineDash([])
-    }
-  }
+}
+
+/** the ring a mortar's shells burst on — steer the hull to walk it over a raider */
+function drawDropRing(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, ready: boolean, t: number) {
+  ctx.strokeStyle = ready ? `rgba(255,210,87,${0.5 + 0.2 * Math.sin(t * 5)})` : 'rgba(255,255,255,0.13)'
+  ctx.lineWidth = ready ? 1.8 : 1.2
+  ctx.setLineDash([6, 6])
+  ctx.beginPath()
+  ctx.arc(x, y, r, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.setLineDash([])
+  ctx.fillStyle = ready ? 'rgba(255,210,87,0.75)' : 'rgba(255,255,255,0.22)'
+  ctx.beginPath()
+  ctx.arc(x, y, 2.2, 0, Math.PI * 2)
+  ctx.fill()
 }
 
 /** short arrow from a plant showing where it will fire */
@@ -714,6 +721,31 @@ function drawTrader(ctx: CanvasRenderingContext2D, g: Game, p: POI, t: number) {
 function drawBullet(ctx: CanvasRenderingContext2D, g: Game, b: Bullet) {
   const color = g.bulletColor(b)
   const r = clamp(2.5 + b.dmg * 0.12, 2.5, 5)
+  if (b.drop && b.flightT) {
+    // mortar shell: the shadow tracks the sea while the shell rides the arc,
+    // and the burst ring sharpens as it comes down
+    const prog = clamp(1 - b.life / b.flightT, 0, 1)
+    const hgt = (26 + b.flightT * 16) * 4 * prog * (1 - prog)
+    ctx.strokeStyle = color
+    ctx.globalAlpha = 0.15 + 0.3 * prog
+    ctx.setLineDash([4, 5])
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.arc(b.drop.x, b.drop.y, b.splash ?? 40, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.setLineDash([])
+    ctx.globalAlpha = 0.2
+    ctx.fillStyle = '#000000'
+    ctx.beginPath()
+    ctx.ellipse(b.pos.x, b.pos.y + 2, 5, 2.5, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.globalAlpha = 1
+    ctx.fillStyle = color
+    ctx.beginPath()
+    ctx.arc(b.pos.x, b.pos.y - hgt, r, 0, Math.PI * 2)
+    ctx.fill()
+    return
+  }
   ctx.strokeStyle = color
   ctx.globalAlpha = 0.35
   ctx.lineWidth = r
@@ -1197,7 +1229,7 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.fillText('a raft roguelike where your garden is the gun deck', w / 2, h * 0.16 + 28)
 
   const lines = [
-    'A/D — helm · W — sheet in · S — back water · SPACE — FIRE guns · 1–4 tools',
+    'A/D — helm · W — sheet in · S — back water · SPACE — FIRE guns · 1–3 tools',
     'B — boil 1🪵 → 2💧 · U — refit the hull · T — trade · P pause · M mute · H help',
     '',
     'she sails like a SHIP: the prow leads, the hull turns, momentum carries.',
@@ -1220,9 +1252,11 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
     'they must sail to bring one to bear, so stay off the lines and rake them.',
     'the farther from home, the deadlier the sea — and the richer everything it holds.',
     '',
-    'your plants ARE the cannon in FIXED MOUNTS (🎯 re-aims out of combat). FIRE with',
-    'SPACE: guns hold until you pull the lanyard, then reload on their rate gene — swing',
-    'the hull to bear and loose a broadside. keep them WATERED or they wilt & stop firing.',
+    'your plants ARE the mortars in FIXED MOUNTS — no aiming, no tracking: each shell',
+    'arcs over the sea and bursts exactly on its gold RING (the reach gene sets the',
+    'distance — breeding is your rangefinding). FIRE with SPACE: guns hold until you pull',
+    'the lanyard, then reload on their rate gene. steer the hull to walk the rings over',
+    'a raider, time the volley, and keep plants WATERED or they wilt & stop firing.',
     "kill a ship's last gun and her crew scuttles — the wreck is yours.",
     'wood buys REFITS (U): skiff → sloop → brig → galleon, more mounts each time.',
     'BREED (🐝) two mature plants to cross genes — dominant alleles mask recessives,',

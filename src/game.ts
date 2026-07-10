@@ -6,7 +6,8 @@ import { keys } from './input'
 import { sfx, toggleMute } from './audio'
 
 export const TS = 46 // legacy sprite scale (trader rafts, bars)
-export const RANGE = 280 // plant firing range
+export const RANGE = 280 // baseline reach, px — the inCombat() floor before scanning the deck
+export const SPLASH = 44 // mortar burst radius, px
 export const PLANT_HP = 40
 export const GROW_TIME = 28 // seconds to mature (while watered)
 export const WATER_PER_USE = 45 // meter points per 1💧
@@ -44,8 +45,8 @@ export interface Plant {
   burnT: number
   poisonT: number
   wobble: number // render phase
-  /** fixed firing heading, radians. Hull-relative on your ship (guns swing with the
-   *  prow, set via the 🎯 tool); world-fixed on raider ships, set at launch. */
+  /** fixed firing heading, radians. Hull-relative on your ship (always the mount's
+   *  natural facing — the helm is the only traverse); world-fixed on raider ships. */
   aim: number
 }
 
@@ -184,11 +185,15 @@ export interface Bullet {
   quirk: Pheno['quirk']
   friendly: boolean
   life: number
-  pierceLeft: number
-  hitSet: Set<unknown>
   src?: Plant
   /** the ship that fired an enemy bullet — a shot that connects renews its patience */
   owner?: EnemyShip
+  /** mortar shell: arcs over everything and bursts exactly here (player guns only) */
+  drop?: Vec
+  /** total flight time, s — the render arc reads progress off it */
+  flightT?: number
+  /** burst radius at the drop point, px */
+  splash?: number
 }
 
 export type LootKind = 'wood' | 'seed' | 'water'
@@ -284,7 +289,6 @@ export class Game {
   seedSel = 0
   seedScroll = 0
   breedFirst: number | null = null // mount index awaiting a partner (🐝 tool)
-  aimFirst: number | null = null // mount index awaiting a heading click (🎯 tool)
 
   firing = false // set by the fire key, consumed each frame → one broadside per press
   chillT = 0 // frost debuff on our ship
@@ -346,7 +350,6 @@ export class Game {
     this.seedSel = 0
     this.seedScroll = 0
     this.breedFirst = null
-    this.aimFirst = null
     this.chillT = 0
     this.shake = 0
     this.over = false
@@ -725,17 +728,16 @@ export class Game {
         m.plant = null
         this.toastAt(this.mountPos(m), '🥀', '#c5b8a0')
         if (this.breedFirst === mi) this.breedFirst = null
-        if (this.aimFirst === mi) this.aimFirst = null
         continue
       }
 
       p.cooldown -= dt // reload timer ticks down whether or not you fire
       p.breedCd = Math.max(0, p.breedCd - dt)
 
-      // manual fire: mounts hold along their fixed heading until YOU pull the
-      // lanyard (Space). Firing starts each gun's reload — its rate gene — and
-      // there's no range gate, so timing the volley as the hull swings a target
-      // onto the mount is the skill. No tracking, no auto-fire.
+      // manual fire: mortars hold along their mount's fixed facing until YOU pull
+      // the lanyard (Space). Each shell bursts exactly at the plant's bred reach —
+      // no aiming, no range gate: the helm walks the burst rings over a target,
+      // the reach gene picks the ring, and firing starts the rate-gene reload.
       if (this.firing && p.growth >= 1 && p.water > 0 && p.cooldown <= 0) {
         this.firePlant(p, this.mountPos(m))
         p.cooldown = p.pheno.period * (this.chillT > 0 ? 1.35 : 1)
@@ -746,15 +748,7 @@ export class Game {
     if (this.ship.hp <= 0 && !this.over) this.gameOver()
   }
 
-  /** true if any enemy hull sits within the given firing range of a point */
-  private enemyInRange(from: Vec, range: number): boolean {
-    for (const e of this.enemies) {
-      if (dist(from, e.pos) - e.r < range) return true
-    }
-    return false
-  }
-
-  /** true while a raider sits within gun range of the ship — locks refits & re-aiming */
+  /** true while a raider sits within gun range of the ship — locks refits */
   inCombat(): boolean {
     // the longest glass on deck decides when the fight has started
     let reach = RANGE
@@ -767,25 +761,35 @@ export class Game {
     return false
   }
 
+  /** burst radius of a plant's shells — the pierce quirk packs shrapnel */
+  plantSplash(p: Plant): number {
+    return SPLASH * (p.pheno.quirk === 'pierce' ? 1.45 : 1)
+  }
+
   private firePlant(p: Plant, from: Vec) {
     p.activeT = 4
-    const spread = p.pheno.spread // barrel-gene spread: wide sprays scatter at range
-    const speed = 330
+    const spread = p.pheno.spread // barrel-gene spread: extra barrels fan their bursts
+    const speed = 260 // shells hang in the air — lead a moving target
     for (let i = 0; i < p.pheno.shots; i++) {
-      // aim is hull-relative: turning the ship brings the guns to bear
+      // aim is hull-relative: turning the ship walks the burst ring
       const a = this.ship.a + p.aim + (i - (p.pheno.shots - 1) / 2) * spread
+      // the reach gene IS the rangefinder: every shell bursts at its bred distance
+      const drop = v(from.x + Math.cos(a) * p.pheno.range + rand(-7, 7), from.y + Math.sin(a) * p.pheno.range + rand(-7, 7))
+      const pos = v(from.x, from.y - 16)
+      const flightT = dist(from, drop) / speed
       this.bullets.push({
-        pos: v(from.x + rand(-4, 4), from.y - 16 + rand(-3, 3)),
-        vel: v(Math.cos(a) * speed, Math.sin(a) * speed),
+        pos,
+        vel: v((drop.x - pos.x) / flightT, (drop.y - pos.y) / flightT),
         speed,
         dmg: p.pheno.dmg,
         element: p.pheno.element,
         quirk: p.pheno.quirk,
         friendly: true,
-        life: 4,
-        pierceLeft: p.pheno.quirk === 'pierce' ? 2 : 0,
-        hitSet: new Set(),
+        life: flightT,
         src: p,
+        drop,
+        flightT,
+        splash: this.plantSplash(p),
       })
     }
     this.puff(v(from.x, from.y - 16), '#fff3c4', 2)
@@ -816,7 +820,6 @@ export class Game {
     const old = this.mounts
     this.mounts = next.mounts.map((md, i) => ({ x: md.x, y: md.y, aim0: md.aim, plant: old[i]?.plant ?? null }))
     this.breedFirst = null
-    this.aimFirst = null
     this.banner = { title: `${next.name}!`, sub: `${next.mounts.length} gun mounts · hull ${next.hull}`, t: 3 }
     this.burst(this.ship.pos, '#e8c98a', 16)
     this.shake = Math.min(8, this.shake + 3)
@@ -1163,8 +1166,6 @@ export class Game {
       quirk: 'none',
       friendly: false,
       life: 6,
-      pierceLeft: 0,
-      hitSet: new Set(),
       owner: e,
     })
   }
@@ -1232,31 +1233,35 @@ export class Game {
     const dead = new Set<Bullet>()
     for (const b of this.bullets) {
       b.life -= dt
+      // mortar shells arc over everything between the muzzle and the drop point —
+      // nothing to hit en route; they burst when the flight clock runs out
+      if (b.drop && b.life <= 0) {
+        this.shellBurst(b)
+        dead.add(b)
+        continue
+      }
       if (b.life <= 0) {
         dead.add(b)
         continue
       }
       b.pos.x += b.vel.x * dt
       b.pos.y += b.vel.y * dt
-
-      if (b.friendly) {
-        if (this.friendlyHit(b)) dead.add(b)
-      } else {
-        if (this.enemyHit(b)) dead.add(b)
-      }
+      if (!b.friendly && this.enemyHit(b)) dead.add(b)
     }
     this.bullets = this.bullets.filter(b => !dead.has(b))
   }
 
-  /** returns true if the bullet is spent */
-  private friendlyHit(b: Bullet): boolean {
+  /** a shell comes down: splash damage to every hull and gun near the drop point */
+  private shellBurst(b: Bullet) {
+    const at = b.drop!
+    const splash = b.splash ?? SPLASH
+    let hitAny = false
     for (const e of this.enemies) {
       if (e.sunk) continue
       for (const g of [...e.guns]) {
         const p = g.plant
-        const tp = this.gunPos(e, g)
-        if (!b.hitSet.has(p) && dist(b.pos, v(tp.x, tp.y - 14)) < 15) {
-          b.hitSet.add(p)
+        if (dist(at, this.gunPos(e, g)) < splash) {
+          hitAny = true
           this.aggro(e)
           e.patience = CHASE_PATIENCE // you drew blood — now they're invested
           p.hp -= b.dmg * (b.element === 'venom' ? 1.6 : 1)
@@ -1264,35 +1269,28 @@ export class Game {
           if (b.element === 'frost') e.chillT = 2.5
           if (b.element === 'venom') p.poisonT = 4
           if (b.quirk === 'leech' && b.src) b.src.water = Math.min(100, b.src.water + 2)
-          this.puff(b.pos, this.bulletColor(b), 2)
-          sfx('hit')
           if (p.hp <= 0) {
             this.killEnemyGun(e, g)
             this.checkScuttle(e)
           }
-          if (b.pierceLeft > 0) {
-            b.pierceLeft--
-            return false
-          }
-          return true
         }
       }
-      if (!b.hitSet.has(e) && dist(b.pos, e.pos) < e.r) {
-        b.hitSet.add(e)
+      if (!e.sunk && dist(at, e.pos) < e.r + splash * 0.5) {
+        hitAny = true
         this.aggro(e)
         e.patience = CHASE_PATIENCE // you drew blood — now they're invested
         this.damageEnemyHull(e, b)
         if (b.quirk === 'leech' && b.src) b.src.water = Math.min(100, b.src.water + 2)
-        this.puff(b.pos, this.bulletColor(b), 2)
-        sfx('hit')
-        if (b.pierceLeft > 0) {
-          b.pierceLeft--
-          return false
-        }
-        return true
       }
     }
-    return false
+    if (hitAny) {
+      this.burst(at, this.bulletColor(b), 10)
+      this.shake = Math.min(8, this.shake + 1)
+      sfx('hit')
+    } else {
+      // a clean miss reads as a sea plume — the feedback that tunes your next volley
+      this.puff(at, '#bfe3f2', 5)
+    }
   }
 
   /** returns true if the bullet is spent */
@@ -1509,7 +1507,6 @@ export class Game {
       if (inRect(mx, my, r)) {
         this.tool = r.tool
         this.breedFirst = null
-        this.aimFirst = null
         return
       }
     }
@@ -1531,7 +1528,6 @@ export class Game {
 
   rightClick() {
     this.breedFirst = null
-    this.aimFirst = null
   }
 
   wheel(dir: number) {
@@ -1541,11 +1537,10 @@ export class Game {
   }
 
   keydown(code: string) {
-    const idx = ['Digit1', 'Digit2', 'Digit3', 'Digit4'].indexOf(code)
+    const idx = ['Digit1', 'Digit2', 'Digit3'].indexOf(code)
     if (idx >= 0 && idx < TOOLS.length) {
       this.tool = TOOLS[idx].tool
       this.breedFirst = null
-      this.aimFirst = null
       return
     }
     switch (code) {
@@ -1582,7 +1577,6 @@ export class Game {
         break
       case 'Escape':
         this.breedFirst = null
-        this.aimFirst = null
         break
     }
   }
@@ -1622,7 +1616,6 @@ export class Game {
           m.plant = null
           this.toastAt(this.mountPos(m), 'dug up 🥀', '#c5b8a0')
           if (this.breedFirst === mi) this.breedFirst = null
-          if (this.aimFirst === mi) this.aimFirst = null
           return
         }
         if (!this.seeds.length) return this.toast('no seeds — breed or loot')
@@ -1653,35 +1646,6 @@ export class Game {
       case 'breed':
         this.breedClick(mi)
         break
-
-      case 'aim': {
-        if (this.inCombat()) return this.toast('re-aim only out of combat')
-        if (this.aimFirst === null) {
-          if (!m || !m.plant) return
-          this.aimFirst = mi
-          this.toastAt(this.mountPos(m), 'aim where? 🎯', '#ffd257')
-          return
-        }
-        // second click sets the heading; clicking the same plant cancels
-        const firstM = this.mounts[this.aimFirst]
-        const first = firstM?.plant
-        if (!firstM || !first) {
-          this.aimFirst = null
-          return
-        }
-        if (this.aimFirst === mi) {
-          this.aimFirst = null
-          return
-        }
-        const fpos = this.mountPos(firstM)
-        // stored hull-relative, so the mount stays bolted to the deck as she turns
-        first.aim = angleDiff(Math.atan2(w.y - fpos.y, w.x - fpos.x), this.ship.a)
-        this.aimFirst = null
-        this.puff(v(fpos.x, fpos.y - 16), '#ffd257', 4)
-        this.toastAt(fpos, 'heading set 🎯', '#ffd257')
-        sfx('build')
-        break
-      }
     }
   }
 

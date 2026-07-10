@@ -105,7 +105,7 @@ export interface Pheno {
   shots: number
   /** radians between barrels of a volley — wide sprays scatter at range */
   spread: number
-  /** firing range, px — the gun engages nothing beyond it */
+  /** reach, px — your mortar shells burst exactly here; raider guns engage inside it */
   range: number
   element: Element
   drain: number

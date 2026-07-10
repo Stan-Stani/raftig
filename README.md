@@ -1,7 +1,7 @@
 # 🌱 raftig
 
 A ship roguelike where your garden is the gun deck — plantig's seafaring
-cousin. Your plants are cannon sown into fixed mounts on the hull; you work
+cousin. Your plants are mortars sown into fixed mounts on the hull; you work
 the helm and keep the ecosystem afloat: sink raider ships for wood, boil wood
 into fresh water, water the plants, and breed them into stranger and deadlier
 cultivars.
@@ -41,17 +41,19 @@ npm run dev
   any wind, but rowers blow: outlast the burst and even they fall away. No
   reinforcements spawn while a pack is already on you. Crews patch their
   hulls while you run, though — flee and the loot sails off with them.
-- **Fire** — plants are **fixed gun mounts bolted to the deck**: they never
-  fire on their own and never track. **Space** pulls the lanyard — every loaded
-  gun looses a shot along its mount heading, then **reloads** on its own rate
+- **Fire** — plants are **mortars in fixed mounts bolted to the deck**: they
+  never fire on their own, never track, and never re-aim — each mount points
+  where the shipwright set it, and the helm is the only traverse. Every shell
+  arcs over the sea and **bursts exactly at the plant's bred reach**; the gold
+  ring off each gun marks where its shells come down. **Space** pulls the
+  lanyard — every loaded gun lobs a volley, then **reloads** on its own rate
   gene (an amber gauge winds up around the flower; a green ring means loaded).
-  No range gate, so timing the volley as the hull swings a target onto the fixed
-  heading is the skill — the helm is a weapon. Out of combat, the 🎯 tool
-  re-points a mount on the deck: click a plant, then click where it should
-  shoot. Headings lock while a raider is in range. Raider guns are fixed mounts too,
-  ship-cannon style: red arrows mark their firing lines, and they hold fire
-  until they've sailed a battery onto you — stay off the lines and rake them
-  while they maneuver.
+  Steering the burst rings over a raider and timing the volley is the whole
+  skill: the helm is the weapon, and the reach gene is your rangefinder —
+  breed short brawlers for the rail and spyglass snipers for standoff. Raider
+  guns stay flat-shooting ship cannon: red arrows mark their firing lines, and
+  they hold fire until they've sailed a battery onto you — stay off the lines
+  and drop shells on them while they maneuver.
 - **Salvage** — sunken ships break up into 🪵 wood and 💧 water; kill a gun
   and its seed line may float free. Kill a ship's *last* gun and her crew
   scuttles — the whole wreck is yours. Flotsam drifts by on the wind — set an
@@ -77,8 +79,8 @@ Every plant is diploid: two alleles per locus, seven loci.
 | ------- | --------------------- | --------------- | -------------- |
 | power   | mild (4 dmg)          | stout (7)       | **titan (13)** |
 | rate    | lazy (1.5s)           | brisk (1.0s)    | **rapid (0.55s)** |
-| barrel  | single                | twin (2×0.7)    | **hydra (3×0.55)** |
-| reach   | short (280)           | long (340)      | **spyglass (420)** |
+| barrel  | single                | twin (2×0.7)    | **hydra (3×0.5)** |
+| reach   | short (260)           | long (340)      | **spyglass (440)** |
 | element | plain                 | ember/frost/venom | —            |
 | thirst  | thirsty (1.8/s)       | hardy (0.9/s)   | **camel (0.35/s)** |
 | quirk   | none                  | —               | **pierce / leech / magnet** |
@@ -88,10 +90,10 @@ Every plant is diploid: two alleles per locus, seven loci.
   cross two carriers.
 - Meiosis takes one allele from each parent per locus; ~6% of inherited
   alleles mutate, and a third of mutations jackpot into a rare allele.
-- Elements ride the bullets: **ember** burns hulls over time, **frost**
+- Elements ride the shells: **ember** burns hulls over time, **frost**
   chills ships and fire rates, **venom** shreds enemy plants.
-- Quirks: **pierce** shoots through targets, **leech** waters its own plant
-  per hit, **magnet** pulls floating loot toward your ship.
+- Quirks: **pierce** packs shrapnel (wider burst), **leech** waters its own
+  plant per hit, **magnet** pulls floating loot toward your ship.
 - Kill an enemy plant and it may drop its seed — sail far from home to steal
   wild genes where rare alleles run hotter.
 - Seeds carry a pedigree badge (wild, F1, F2 …) and every genome gets a
@@ -101,9 +103,9 @@ Every plant is diploid: two alleles per locus, seven loci.
 ## Controls
 
 A/D (or ←/→) helm · W (↑) sheet in · S (↓) back water · **Space fires the
-guns** · 1–4 tools (🌱💧🐝🎯) · B boils wood into water · U refits the hull ·
+guns** · 1–3 tools (🌱💧🐝) · B boils wood into water · U refits the hull ·
 T trades with a nearby trader · Q/E or wheel picks seeds ·
-right-click/Esc cancels breeding or aiming · H help · P pause · M mute ·
+right-click/Esc cancels breeding · H help · P pause · M mute ·
 R restart after sinking.
 
 Hover any plant — yours or theirs — to read its full genotype.
