@@ -51,9 +51,10 @@ npm run dev
   Steering the burst rings over a raider and timing the volley is the whole
   skill: the helm is the weapon, and the reach gene is your rangefinder —
   breed short brawlers for the rail and spyglass snipers for standoff. Raider
-  guns stay flat-shooting ship cannon: red arrows mark their firing lines, and
-  they hold fire until they've sailed a battery onto you — stay off the lines
-  and drop shells on them while they maneuver.
+  guns are mortars too, playing by the same rules: red rings mark where their
+  shells burst, each hunter sails to put a ring on your hull (a spyglass line
+  is a proper artillery ship), and gunners hold fire until it's there — keep
+  way on and slip the drop zones while your own shells land.
 - **Salvage** — sunken ships break up into 🪵 wood and 💧 water; kill a gun
   and its seed line may float free. Kill a ship's *last* gun and her crew
   scuttles — the whole wreck is yours. Flotsam drifts by on the wind — set an

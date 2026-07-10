@@ -1,4 +1,4 @@
-import { Game, TS, RANGE, TIERS, FOG_CELL, DANGER_SCALE, Plant, Bullet, EnemyShip } from './game'
+import { Game, TS, RANGE, SPLASH, TIERS, FOG_CELL, DANGER_SCALE, Plant, Bullet, EnemyShip } from './game'
 import { describe, phenotype, Genome, Pheno } from './genetics'
 import { TOOLS, toolbarLayout, seedPanelRect, seedRowRects, restartRect, SEED_VISIBLE } from './ui'
 import { POI, POI_SIGHT, POI_ICON, POI_COLOR, TRADE_COST, TRADE_RANGE } from './poi'
@@ -417,16 +417,25 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
 
 }
 
-/** the ring a mortar's shells burst on — steer the hull to walk it over a raider */
-function drawDropRing(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, ready: boolean, t: number) {
-  ctx.strokeStyle = ready ? `rgba(255,210,87,${0.5 + 0.2 * Math.sin(t * 5)})` : 'rgba(255,255,255,0.13)'
+/** the ring a mortar's shells burst on — gold ones you walk over raiders,
+ *  red ones you keep your hull out from under */
+function drawDropRing(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+  ready: boolean,
+  t: number,
+  rgb = '255,210,87',
+) {
+  ctx.strokeStyle = ready ? `rgba(${rgb},${0.5 + 0.2 * Math.sin(t * 5)})` : `rgba(${rgb},0.16)`
   ctx.lineWidth = ready ? 1.8 : 1.2
   ctx.setLineDash([6, 6])
   ctx.beginPath()
   ctx.arc(x, y, r, 0, Math.PI * 2)
   ctx.stroke()
   ctx.setLineDash([])
-  ctx.fillStyle = ready ? 'rgba(255,210,87,0.75)' : 'rgba(255,255,255,0.22)'
+  ctx.fillStyle = ready ? `rgba(${rgb},0.75)` : `rgba(${rgb},0.25)`
   ctx.beginPath()
   ctx.arc(x, y, 2.2, 0, Math.PI * 2)
   ctx.fill()
@@ -528,8 +537,19 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
   for (const gun of e.guns) {
     const p = g.gunPos(e, gun)
     drawPot(ctx, p.x, p.y)
-    // fixed gun mounts, ship-cannon style — the red arrow is the firing line
-    drawAim(ctx, p.x, p.y - 12, gun.plant.aim, e.mode === 'hunt', false, t, '255,105,90')
+    // raider mortars play by your rules: the red ring is where this gun's shells
+    // burst — bright when a hunting gun is loaded, faint while it reloads or roams
+    const a = gun.plant.aim
+    drawAim(ctx, p.x, p.y - 12, a, false, false, t, '255,105,90')
+    drawDropRing(
+      ctx,
+      p.x + Math.cos(a) * gun.plant.pheno.range,
+      p.y + Math.sin(a) * gun.plant.pheno.range,
+      SPLASH,
+      e.mode === 'hunt' && gun.plant.cooldown <= 0,
+      t,
+      '255,105,90'
+    )
     drawPlant(ctx, p.x, p.y, gun.plant, true, t)
   }
   // harriers fly a red pennant — the fast ones that row through any wind
@@ -718,45 +738,30 @@ function drawTrader(ctx: CanvasRenderingContext2D, g: Game, p: POI, t: number) {
   }
 }
 
+/** a mortar shell in flight: the shadow tracks the sea while the shell rides
+ *  the arc, and the burst ring sharpens as it comes down */
 function drawBullet(ctx: CanvasRenderingContext2D, g: Game, b: Bullet) {
   const color = g.bulletColor(b)
   const r = clamp(2.5 + b.dmg * 0.12, 2.5, 5)
-  if (b.drop && b.flightT) {
-    // mortar shell: the shadow tracks the sea while the shell rides the arc,
-    // and the burst ring sharpens as it comes down
-    const prog = clamp(1 - b.life / b.flightT, 0, 1)
-    const hgt = (26 + b.flightT * 16) * 4 * prog * (1 - prog)
-    ctx.strokeStyle = color
-    ctx.globalAlpha = 0.15 + 0.3 * prog
-    ctx.setLineDash([4, 5])
-    ctx.lineWidth = 1.5
-    ctx.beginPath()
-    ctx.arc(b.drop.x, b.drop.y, b.splash ?? 40, 0, Math.PI * 2)
-    ctx.stroke()
-    ctx.setLineDash([])
-    ctx.globalAlpha = 0.2
-    ctx.fillStyle = '#000000'
-    ctx.beginPath()
-    ctx.ellipse(b.pos.x, b.pos.y + 2, 5, 2.5, 0, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.globalAlpha = 1
-    ctx.fillStyle = color
-    ctx.beginPath()
-    ctx.arc(b.pos.x, b.pos.y - hgt, r, 0, Math.PI * 2)
-    ctx.fill()
-    return
-  }
+  const prog = clamp(1 - b.life / b.flightT, 0, 1)
+  const hgt = (26 + b.flightT * 16) * 4 * prog * (1 - prog)
   ctx.strokeStyle = color
-  ctx.globalAlpha = 0.35
-  ctx.lineWidth = r
+  ctx.globalAlpha = 0.15 + 0.3 * prog
+  ctx.setLineDash([4, 5])
+  ctx.lineWidth = 1.5
   ctx.beginPath()
-  ctx.moveTo(b.pos.x - b.vel.x * 0.03, b.pos.y - b.vel.y * 0.03)
-  ctx.lineTo(b.pos.x, b.pos.y)
+  ctx.arc(b.drop.x, b.drop.y, b.splash, 0, Math.PI * 2)
   ctx.stroke()
+  ctx.setLineDash([])
+  ctx.globalAlpha = 0.2
+  ctx.fillStyle = '#000000'
+  ctx.beginPath()
+  ctx.ellipse(b.pos.x, b.pos.y + 2, 5, 2.5, 0, 0, Math.PI * 2)
+  ctx.fill()
   ctx.globalAlpha = 1
   ctx.fillStyle = color
   ctx.beginPath()
-  ctx.arc(b.pos.x, b.pos.y, r, 0, Math.PI * 2)
+  ctx.arc(b.pos.x, b.pos.y - hgt, r, 0, Math.PI * 2)
   ctx.fill()
   if (!b.friendly) {
     ctx.strokeStyle = '#00000055'
@@ -1248,8 +1253,8 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
     '(your crew patches too, once the shooting stops — no hammering required.)',
     'red-pennant HARRIERS sprint on oars through any wind — but rowers blow:',
     'outlast the burst and even they fall away.',
-    'raider guns are fixed mounts too — red arrows mark their firing lines;',
-    'they must sail to bring one to bear, so stay off the lines and rake them.',
+    'raider guns are mortars on fixed mounts too — red RINGS mark where their shells',
+    'burst; they must sail a ring onto your hull, so keep way on and slip the drop zones.',
     'the farther from home, the deadlier the sea — and the richer everything it holds.',
     '',
     'your plants ARE the mortars in FIXED MOUNTS — no aiming, no tracking: each shell',

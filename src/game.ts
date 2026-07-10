@@ -22,7 +22,6 @@ export const AGGRO_R = 330 // raiders notice you inside this range…
 export const DEAGGRO_R = 590 // …and give up the chase beyond this
 export const NOTICE_T = 1.0 // seconds of ❓ before a raider commits
 export const POD_WAKE_R = 340 // committing raiders stir roaming neighbours this close
-export const GUN_ARC = 0.45 // radians — raider gunners hold fire until the target bears
 export const CHASE_PATIENCE = 13 // seconds a hunter presses before you're not worth the powder
 export const HUNT_CAP = 3 // ships in full ⚔️ at once — the rest shadow outside gun range
 export const DANGER_SCALE = 550 // px from home waters per +1 danger
@@ -176,24 +175,26 @@ export interface Wind {
   shiftT: number
 }
 
+/** every shot afloat is a mortar shell: it arcs over everything between the
+ *  muzzle and the drop point, then bursts — there is nothing to hit en route */
 export interface Bullet {
   pos: Vec
   vel: Vec
-  speed: number
   dmg: number
   element: Pheno['element']
   quirk: Pheno['quirk']
   friendly: boolean
+  /** flight time remaining, s — the shell bursts when it runs out */
   life: number
-  src?: Plant
-  /** the ship that fired an enemy bullet — a shot that connects renews its patience */
-  owner?: EnemyShip
-  /** mortar shell: arcs over everything and bursts exactly here (player guns only) */
-  drop?: Vec
+  /** where the shell comes down */
+  drop: Vec
   /** total flight time, s — the render arc reads progress off it */
-  flightT?: number
+  flightT: number
   /** burst radius at the drop point, px */
-  splash?: number
+  splash: number
+  src?: Plant
+  /** the ship that fired an enemy shell — a burst that tells renews its patience */
+  owner?: EnemyShip
 }
 
 export type LootKind = 'wood' | 'seed' | 'water'
@@ -780,7 +781,6 @@ export class Game {
       this.bullets.push({
         pos,
         vel: v((drop.x - pos.x) / flightT, (drop.y - pos.y) / flightT),
-        speed,
         dmg: p.pheno.dmg,
         element: p.pheno.element,
         quirk: p.pheno.quirk,
@@ -973,11 +973,9 @@ export class Game {
       }
 
       if (e.mode === 'hunt') {
-        // raiders station a touch inside their common gun reach so short guns bear
-        const standoff = e.engaged ? (e.kind === 'harrier' ? 215 : 240) : 430
-        // guns are fixed mounts with no traverse — instead of orbiting freely,
-        // sail for the station where the cheapest battery bears on you
-        const gun = this.bestGun(e, center, standoff)
+        // guns are fixed mortars with no traverse — instead of orbiting freely,
+        // sail for the station where the cheapest battery's burst ring lands on you
+        const gun = this.bestGun(e, center, e.engaged ?? false)
         if (gun) {
           let tx = gun.fp.x
           let ty = gun.fp.y
@@ -1107,11 +1105,11 @@ export class Game {
         }
         p.cooldown -= dt
         const from = this.gunPos(e, g)
-        // raider guns respect their own genetic reach — a spyglass line snipes
-        if (p.cooldown <= 0 && e.mode === 'hunt' && e.engaged && dist(from, center) < p.pheno.range && !this.over) {
-          // gunners hold fire until the target bears on the fixed mount
-          const bearing = Math.atan2(center.y - from.y, center.x - from.x)
-          if (Math.abs(angleDiff(p.aim, bearing)) < GUN_ARC) {
+        // same mortar rules as your deck: the shell bursts at the gun's bred reach,
+        // so gunners hold fire until the burst ring sits on your hull
+        if (p.cooldown <= 0 && e.mode === 'hunt' && e.engaged && !this.over) {
+          const drop = v(from.x + Math.cos(p.aim) * p.pheno.range, from.y + Math.sin(p.aim) * p.pheno.range)
+          if (this.onHull(drop, SPLASH * 0.5)) {
             this.enemyFire(e, p, from)
             const diffMult = Math.max(0.7, 1.5 - e.danger * 0.08)
             p.cooldown = p.pheno.period * diffMult * (e.chillT > 0 ? 1.5 : 1) * rand(0.9, 1.15)
@@ -1139,12 +1137,15 @@ export class Game {
     this.toastAt(e.pos, msg, '#9fb8c8')
   }
 
-  /** the gun whose firing station costs the least sailing — fixed mounts can't
-   *  traverse, so the ship picks the battery that bears cheapest */
-  private bestGun(e: EnemyShip, center: Vec, standoff: number): { p: Plant; fp: Vec } | null {
+  /** the gun whose firing station costs the least sailing — fixed mortars can't
+   *  traverse, so the ship picks the battery whose burst ring is cheapest to walk
+   *  onto you: engaged hunters station at that gun's bred reach (a spyglass line
+   *  is a proper artillery ship), shadowers hold off at 430 */
+  private bestGun(e: EnemyShip, center: Vec, engaged: boolean): { p: Plant; fp: Vec } | null {
     let best: { p: Plant; fp: Vec; d: number } | null = null
     for (const g of e.guns) {
       const p = g.plant
+      const standoff = engaged ? p.pheno.range : 430
       const fp = v(center.x - Math.cos(p.aim) * standoff - g.x, center.y - Math.sin(p.aim) * standoff - g.y)
       const d = dist(e.pos, fp)
       if (!best || d < best.d) best = { p, fp, d }
@@ -1153,19 +1154,24 @@ export class Game {
   }
 
   private enemyFire(e: EnemyShip, p: Plant, from: Vec) {
-    const speed = 190
-    // fixed mounts fire dead along their heading — no leading, no homing:
-    // read the red arrows, stay out of the lines, outsail what does come
+    const speed = 200 // slower shells than yours — keep way on and slip the drop
+    // fixed mounts lob dead along their heading, bursting at the gun's bred reach —
+    // no leading, no homing: read the red rings and don't be there when it lands
     const a = p.aim + rand(-0.05, 0.05)
+    const drop = v(from.x + Math.cos(a) * p.pheno.range + rand(-8, 8), from.y + Math.sin(a) * p.pheno.range + rand(-8, 8))
+    const pos = v(from.x, from.y - 16)
+    const flightT = dist(from, drop) / speed
     this.bullets.push({
-      pos: v(from.x, from.y - 16),
-      vel: v(Math.cos(a) * speed, Math.sin(a) * speed),
-      speed,
+      pos,
+      vel: v((drop.x - pos.x) / flightT, (drop.y - pos.y) / flightT),
       dmg: p.pheno.dmg * (0.75 + e.danger * 0.06),
       element: p.pheno.element,
       quirk: 'none',
       friendly: false,
-      life: 6,
+      life: flightT,
+      drop,
+      flightT,
+      splash: SPLASH,
       owner: e,
     })
   }
@@ -1233,29 +1239,53 @@ export class Game {
     const dead = new Set<Bullet>()
     for (const b of this.bullets) {
       b.life -= dt
-      // mortar shells arc over everything between the muzzle and the drop point —
-      // nothing to hit en route; they burst when the flight clock runs out
-      if (b.drop && b.life <= 0) {
-        this.shellBurst(b)
-        dead.add(b)
-        continue
-      }
       if (b.life <= 0) {
+        this.shellBurst(b)
         dead.add(b)
         continue
       }
       b.pos.x += b.vel.x * dt
       b.pos.y += b.vel.y * dt
-      if (!b.friendly && this.enemyHit(b)) dead.add(b)
     }
     this.bullets = this.bullets.filter(b => !dead.has(b))
   }
 
   /** a shell comes down: splash damage to every hull and gun near the drop point */
   private shellBurst(b: Bullet) {
-    const at = b.drop!
-    const splash = b.splash ?? SPLASH
+    const at = b.drop
+    const splash = b.splash
     let hitAny = false
+    if (!b.friendly) {
+      // a raider shell over your deck — plants catch the shrapnel, the hull the blast
+      for (const m of this.mounts) {
+        const p = m.plant
+        if (!p) continue
+        if (dist(at, this.mountPos(m)) < splash) {
+          hitAny = true
+          if (b.owner && !b.owner.sunk) b.owner.patience = CHASE_PATIENCE // a burst that tells keeps them keen
+          p.hp -= b.dmg * (b.element === 'venom' ? 1.6 : 1)
+          if (b.element === 'ember') p.burnT = 3
+          if (b.element === 'frost') this.chillT = 2.5
+          if (b.element === 'venom') p.poisonT = 4
+        }
+      }
+      if (this.onHull(at, splash * 0.5)) {
+        hitAny = true
+        if (b.owner && !b.owner.sunk) b.owner.patience = CHASE_PATIENCE // a burst that tells keeps them keen
+        this.ship.hp -= b.dmg
+        if (b.element === 'ember') this.burnT = 3
+        if (b.element === 'frost') this.chillT = 2.5
+        this.shake = Math.min(8, this.shake + 1.5)
+        if (this.ship.hp <= 0) this.gameOver()
+      }
+      if (hitAny) {
+        this.burst(at, this.bulletColor(b), 10)
+        sfx('hit')
+      } else {
+        this.puff(at, '#bfe3f2', 5)
+      }
+      return
+    }
     for (const e of this.enemies) {
       if (e.sunk) continue
       for (const g of [...e.guns]) {
@@ -1291,37 +1321,6 @@ export class Game {
       // a clean miss reads as a sea plume — the feedback that tunes your next volley
       this.puff(at, '#bfe3f2', 5)
     }
-  }
-
-  /** returns true if the bullet is spent */
-  private enemyHit(b: Bullet): boolean {
-    for (const m of this.mounts) {
-      const p = m.plant
-      if (!p) continue
-      const tp = this.mountPos(m)
-      if (dist(b.pos, v(tp.x, tp.y - 14)) < 15) {
-        if (b.owner && !b.owner.sunk) b.owner.patience = CHASE_PATIENCE // a shot that tells keeps them keen
-        p.hp -= b.dmg * (b.element === 'venom' ? 1.6 : 1)
-        if (b.element === 'ember') p.burnT = 3
-        if (b.element === 'frost') this.chillT = 2.5
-        if (b.element === 'venom') p.poisonT = 4
-        this.puff(b.pos, this.bulletColor(b), 2)
-        this.shake = Math.min(8, this.shake + 1)
-        return true
-      }
-    }
-    if (this.onHull(b.pos)) {
-      if (b.owner && !b.owner.sunk) b.owner.patience = CHASE_PATIENCE // a shot that tells keeps them keen
-      this.ship.hp -= b.dmg
-      if (b.element === 'ember') this.burnT = 3
-      if (b.element === 'frost') this.chillT = 2.5
-      this.puff(b.pos, this.bulletColor(b), 3)
-      this.shake = Math.min(8, this.shake + 1.5)
-      sfx('hit')
-      if (this.ship.hp <= 0) this.gameOver()
-      return true
-    }
-    return false
   }
 
   bulletColor(b: Bullet): string {
