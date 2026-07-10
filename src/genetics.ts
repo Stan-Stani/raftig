@@ -198,6 +198,11 @@ export function phenotype(g: Genome): Pheno {
   }
 }
 
+/** true if any allele anywhere in the genome is rare — carried or expressed */
+export function carriesRare(g: Genome): boolean {
+  return LOCUS_ORDER.some(locus => g[locus].some(id => alleleDef(locus, id).rare))
+}
+
 /** "Pp Rr bb eF ww qq" — genotype at a glance, for breeding nerds */
 export function symbols(g: Genome): string {
   return LOCUS_ORDER.map(l => g[l].map(id => alleleDef(l, id).sym).join('')).join(' ')

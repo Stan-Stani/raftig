@@ -1,7 +1,7 @@
 // Toolbar / seed-panel definitions and layout, shared by render (drawing)
 // and game (hit-testing).
 
-export type Tool = 'plant' | 'water' | 'breed'
+export type Tool = 'plant' | 'water'
 
 export interface ToolDef {
   tool: Tool
@@ -13,7 +13,6 @@ export interface ToolDef {
 export const TOOLS: ToolDef[] = [
   { tool: 'plant', icon: '🌱', name: 'plant', tip: 'pick a seed (Q/E or wheel), click an empty mount to sow · click a planted mount to dig it up' },
   { tool: 'water', icon: '💧', name: 'water', tip: 'click a plant to water it (1💧) — dry plants wilt and die · B boils 1🪵 → 2💧' },
-  { tool: 'breed', icon: '🐝', name: 'breed', tip: 'click two mature plants to cross them (2💧)' },
 ]
 
 export interface Rect {

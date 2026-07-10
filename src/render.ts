@@ -354,14 +354,6 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
     const plant = m.plant
     if (!plant) return
     drawPot(ctx, p.x, p.y)
-    // breed selection ring
-    if (g.breedFirst === i) {
-      ctx.strokeStyle = `rgba(255,210,87,${0.6 + 0.4 * Math.sin(t * 6)})`
-      ctx.lineWidth = 2.5
-      ctx.beginPath()
-      ctx.arc(p.x, p.y - 12, 20, 0, Math.PI * 2)
-      ctx.stroke()
-    }
     // burst ring: where this mortar's shells come down — gold when loaded, faint
     // while the crew reloads. The helm walks it; the reach gene sets the distance.
     if (plant.growth >= 1) {
@@ -378,13 +370,6 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
     }
     drawPlant(ctx, p.x, p.y, plant, false, t)
     drawWaterBar(ctx, p.x, p.y, plant)
-    if (plant.breedCd > 0) {
-      ctx.strokeStyle = '#ffffff44'
-      ctx.lineWidth = 2
-      ctx.beginPath()
-      ctx.arc(p.x, p.y - 34, 5, -Math.PI / 2, -Math.PI / 2 + (1 - plant.breedCd / 18) * Math.PI * 2)
-      ctx.stroke()
-    }
   })
 
   // hovering a mature plant → show its genetic reach (theirs too — know the sniper)
@@ -397,22 +382,6 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
     ctx.strokeStyle = hi.hostile ? 'rgba(255,110,90,0.2)' : 'rgba(255,255,255,0.15)'
     ctx.lineWidth = 1
     ctx.stroke()
-  }
-
-  // breed line to cursor
-  if (g.tool === 'breed' && g.breedFirst !== null) {
-    const fm = g.mounts[g.breedFirst]
-    if (fm?.plant) {
-      const fp = g.mountPos(fm)
-      ctx.strokeStyle = '#ffd25788'
-      ctx.setLineDash([6, 5])
-      ctx.lineWidth = 2
-      ctx.beginPath()
-      ctx.moveTo(fp.x, fp.y - 12)
-      ctx.lineTo(g.hover.x, g.hover.y)
-      ctx.stroke()
-      ctx.setLineDash([])
-    }
   }
 
 }
@@ -1116,8 +1085,8 @@ function drawSeedPanel(ctx: CanvasRenderingContext2D, g: Game, w: number) {
   if (!g.seeds.length) {
     ctx.fillStyle = '#7d97a8'
     ctx.font = '12px ui-monospace, monospace'
-    ctx.fillText('no seeds — breed plants or', panel.x + 10, panel.y + 48)
-    ctx.fillText('shoot enemy plants for drops', panel.x + 10, panel.y + 64)
+    ctx.fillText('no seeds — the bees need two mature', panel.x + 10, panel.y + 48)
+    ctx.fillText('plants; loot or trade for your first', panel.x + 10, panel.y + 64)
     return
   }
 
@@ -1234,7 +1203,7 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.fillText('a raft roguelike where your garden is the gun deck', w / 2, h * 0.16 + 28)
 
   const lines = [
-    'A/D — helm · W — sheet in · S — back water · SPACE — FIRE guns · 1–3 tools',
+    'A/D — helm · W — sheet in · S — back water · SPACE — FIRE guns · 1–2 tools',
     'B — boil 1🪵 → 2💧 · U — refit the hull · T — trade · P pause · M mute · H help',
     '',
     'she sails like a SHIP: the prow leads, the hull turns, momentum carries.',
@@ -1264,8 +1233,10 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
     'a raider, time the volley, and keep plants WATERED or they wilt & stop firing.',
     "kill a ship's last gun and her crew scuttles — the wreck is yours.",
     'wood buys REFITS (U): skiff → sloop → brig → galleon, more mounts each time.',
-    'BREED (🐝) two mature plants to cross genes — dominant alleles mask recessives,',
-    'and the best traits hide in carrier lines until the right cross.',
+    'the BEES breed for you: two mature, watered plants quietly cross into new seeds',
+    'while you sail — what you field IS the breeding program. dominant alleles mask',
+    'recessives, so the best traits hide in carrier lines until the right pairing;',
+    'raider guns carrying a rare line may drop their seed — sow it into the pool.',
     '',
     'the run ends when your hull gives out.',
   ]

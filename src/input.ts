@@ -18,10 +18,7 @@ export function initInput(canvas: HTMLCanvasElement, game: Game) {
     ensureAudio()
     if (e.button === 0) game.click(e.clientX, e.clientY)
   })
-  canvas.addEventListener('contextmenu', e => {
-    e.preventDefault()
-    game.rightClick()
-  })
+  canvas.addEventListener('contextmenu', e => e.preventDefault())
   canvas.addEventListener('wheel', e => {
     e.preventDefault()
     game.wheel(Math.sign(e.deltaY))

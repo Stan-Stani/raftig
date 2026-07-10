@@ -1,5 +1,5 @@
 import { Vec, v, dist, clamp, rand, randInt, gkey, angleDiff } from './util'
-import { Genome, Seed, Pheno, phenotype, wildGenome, breed, makeGenome } from './genetics'
+import { Genome, Seed, Pheno, phenotype, wildGenome, breed, makeGenome, carriesRare } from './genetics'
 import { Tool, TOOLS, toolbarLayout, seedRowRects, seedPanelRect, restartRect, inRect, SEED_VISIBLE } from './ui'
 import { POI, POI_CELL, POI_SIGHT, cellPOI, makePOI, TRADE_COST, TRADE_RANGE } from './poi'
 import { keys } from './input'
@@ -11,8 +11,7 @@ export const SPLASH = 44 // mortar burst radius, px
 export const PLANT_HP = 40
 export const GROW_TIME = 28 // seconds to mature (while watered)
 export const WATER_PER_USE = 45 // meter points per 1💧
-export const BREED_COST = 2 // 💧
-export const BREED_CD = 18
+export const POUCH_CAP = 12 // the bees stop crossing when the seed pouch is this full
 export const BOIL_COST = 1 // 🪵 → BOIL_WATER 💧, via the B key — the galley stove
 export const BOIL_WATER = 2
 export const WIND_MIN = 16 // px/s
@@ -39,7 +38,6 @@ export interface Plant {
   hp: number
   maxHp: number
   cooldown: number
-  breedCd: number
   dryTime: number
   burnT: number
   poisonT: number
@@ -241,7 +239,6 @@ function makePlant(genome: Genome, gen: number, growth = 0): Plant {
     hp: PLANT_HP,
     maxHp: PLANT_HP,
     cooldown: rand(0.3, 1),
-    breedCd: 0,
     dryTime: 0,
     burnT: 0,
     poisonT: 0,
@@ -289,7 +286,7 @@ export class Game {
   tool: Tool = 'water'
   seedSel = 0
   seedScroll = 0
-  breedFirst: number | null = null // mount index awaiting a partner (🐝 tool)
+  pollenT = 20 // seconds until the bees next work the deck
 
   firing = false // set by the fire key, consumed each frame → one broadside per press
   chillT = 0 // frost debuff on our ship
@@ -323,12 +320,9 @@ export class Game {
     this.wood = 8
     this.water = 6
     this.seedId = 1
-    // starter seeds: heterozygous lines that reward crossing (stout × brisk/twin,
-    // with ember and hardy hiding in the pairs)
-    this.seeds = [
-      { id: this.seedId++, gen: 0, genome: makeGenome({ power: ['mild', 'stout'], element: ['plain', 'ember'] }) },
-      { id: this.seedId++, gen: 0, genome: makeGenome({ rate: ['lazy', 'brisk'], barrel: ['single', 'twin'], thirst: ['thirsty', 'hardy'] }) },
-    ]
+    // you set sail with one plant and an empty pouch — the first seed is out
+    // there: flotsam, a trader, a wreck, or a raider's gun line
+    this.seeds = []
 
     this.enemies = []
     this.bullets = []
@@ -350,7 +344,7 @@ export class Game {
     this.tool = 'water'
     this.seedSel = 0
     this.seedScroll = 0
-    this.breedFirst = null
+    this.pollenT = 20
     this.chillT = 0
     this.shake = 0
     this.over = false
@@ -450,6 +444,7 @@ export class Game {
     this.updatePOIs(dt)
     this.updateMovement(dt)
     this.updateShip(dt)
+    this.updatePollination(dt)
     this.updateEnemies(dt)
     this.updateBullets(dt)
     this.updateLoot(dt)
@@ -577,8 +572,8 @@ export class Game {
       const a = rand(Math.PI * 2)
       const at = v(p.pos.x + Math.cos(a) * rand(0, p.r * 0.5), p.pos.y + Math.sin(a) * rand(0, p.r * 0.5))
       const roll = Math.random()
-      if (roll < 0.45) this.dropLoot('wood', randInt(2, 3), at)
-      else if (roll < 0.7) this.dropLoot('water', 2, at)
+      if (roll < 0.5) this.dropLoot('wood', randInt(2, 3), at)
+      else if (roll < 0.88) this.dropLoot('water', 2, at)
       else this.dropLoot('seed', 1, at, { id: this.seedId++, genome: wildGenome(1 + danger * 0.4), gen: 0 })
     }
     for (const l of this.loot.slice(-n)) {
@@ -725,15 +720,12 @@ export class Game {
         p.hp = Math.min(p.maxHp, p.hp + 2.5 * dt)
       }
       if (p.hp <= 0) {
-        const mi = this.mounts.indexOf(m)
         m.plant = null
         this.toastAt(this.mountPos(m), '🥀', '#c5b8a0')
-        if (this.breedFirst === mi) this.breedFirst = null
         continue
       }
 
       p.cooldown -= dt // reload timer ticks down whether or not you fire
-      p.breedCd = Math.max(0, p.breedCd - dt)
 
       // manual fire: mortars hold along their mount's fixed facing until YOU pull
       // the lanyard (Space). Each shell bursts exactly at the plant's bred reach —
@@ -747,6 +739,37 @@ export class Game {
     }
     this.firing = false // consumed this frame; a fresh press re-arms it
     if (this.ship.hp <= 0 && !this.over) this.gameOver()
+  }
+
+  /** the bees work the deck: every so often two mature, watered plants quietly
+   *  cross into a fresh seed — no tool, no cost. What you choose to field IS the
+   *  breeding program. Bees keep to the hive under fire, and rest once the pouch
+   *  is full, so the drip never floods you */
+  private updatePollination(dt: number) {
+    if (this.inCombat()) return
+    this.pollenT -= dt
+    if (this.pollenT > 0) return
+    this.pollenT = rand(32, 48)
+    if (this.seeds.length >= POUCH_CAP) return
+    const mature = this.mounts
+      .map(m => m.plant)
+      .filter((p): p is Plant => !!p && p.growth >= 1 && p.water > 0)
+    if (mature.length < 2) return
+    const i = randInt(0, mature.length - 1)
+    const j = (i + 1 + randInt(0, mature.length - 2)) % mature.length
+    const a = mature[i]
+    const b = mature[j]
+    const gen = Math.max(a.gen, b.gen) + 1
+    const make = () => ({ id: this.seedId++, genome: breed(a.genome, b.genome), gen })
+    this.seeds.push(make())
+    let msg = `🐝 ${phenotype(this.seeds[this.seeds.length - 1].genome).name}`
+    if (Math.random() < 0.25) {
+      this.seeds.push(make())
+      msg += ' ×2'
+    }
+    this.stats.bred++
+    this.toastAt(this.ship.pos, `${msg} (F${gen})`, '#ffd257')
+    sfx('breed')
   }
 
   /** true while a raider sits within gun range of the ship — locks refits */
@@ -819,7 +842,6 @@ export class Game {
     this.ship.hp = next.hull
     const old = this.mounts
     this.mounts = next.mounts.map((md, i) => ({ x: md.x, y: md.y, aim0: md.aim, plant: old[i]?.plant ?? null }))
-    this.breedFirst = null
     this.banner = { title: `${next.name}!`, sub: `${next.mounts.length} gun mounts · hull ${next.hull}`, t: 3 }
     this.burst(this.ship.pos, '#e8c98a', 16)
     this.shake = Math.min(8, this.shake + 3)
@@ -1197,9 +1219,6 @@ export class Game {
       wood -= n
     }
     this.dropLoot('water', 2 + Math.floor(e.danger / 2), scatter())
-    if (Math.random() < e.danger * 0.05) {
-      this.dropLoot('seed', 1, scatter(), { id: this.seedId++, genome: wildGenome(1 + e.danger * 0.5), gen: 0 })
-    }
     this.stats.sunk++
     this.shake = Math.min(10, this.shake + 5)
     this.burst(e.pos, '#8a6a45', 16)
@@ -1224,11 +1243,12 @@ export class Game {
     e.guns.splice(i, 1)
     const pos = this.gunPos(e, g)
     this.burst(pos, '#4e9a5f', 8)
-    const roll = Math.random()
-    if (roll < Math.min(0.75, 0.42 + e.danger * 0.045)) {
+    // your own bees keep the pouch fed — only a line worth stealing floats free,
+    // and deeper waters carry hotter genomes, so range is still the gene hunt
+    if (carriesRare(g.plant.genome) && Math.random() < 0.5) {
       this.dropLoot('seed', 1, pos, { id: this.seedId++, genome: g.plant.genome, gen: 0 })
-      this.toastAt(pos, '🌰 seed adrift!', '#b8e986')
-    } else if (roll < 0.85) {
+      this.toastAt(pos, '🌰 rare line adrift!', '#b8e986')
+    } else if (Math.random() < 0.12) {
       this.dropLoot('wood', 1, pos)
     }
   }
@@ -1369,20 +1389,11 @@ export class Game {
       Math.cos(this.wind.a) * this.wind.speed * drift + rand(-5, 5),
       Math.sin(this.wind.a) * this.wind.speed * drift + rand(-5, 5)
     )
-    const roll = Math.random()
-    let loot: Loot
-    if (roll < 0.5) loot = { kind: 'wood', n: randInt(2, 3), seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
-    else if (roll < 0.82) loot = { kind: 'water', n: 2, seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
-    else
-      loot = {
-        kind: 'seed',
-        n: 1,
-        seed: { id: this.seedId++, genome: wildGenome(1 + this.dangerAt(c) * 0.45), gen: 0 },
-        pos,
-        vel,
-        ttl: 70,
-        phase: rand(6),
-      }
+    // flotsam is materials only — seeds come from your bees or somebody's garden
+    const loot: Loot =
+      Math.random() < 0.6
+        ? { kind: 'wood', n: randInt(2, 3), seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
+        : { kind: 'water', n: 2, seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
     this.loot.push(loot)
   }
 
@@ -1505,7 +1516,6 @@ export class Game {
     for (const r of toolbarLayout(this.vw, this.vh)) {
       if (inRect(mx, my, r)) {
         this.tool = r.tool
-        this.breedFirst = null
         return
       }
     }
@@ -1525,10 +1535,6 @@ export class Game {
     this.worldClick(this.screenToWorld(mx, my))
   }
 
-  rightClick() {
-    this.breedFirst = null
-  }
-
   wheel(dir: number) {
     if (this.tool === 'plant') {
       this.seedScroll = clamp(this.seedScroll + dir, 0, Math.max(0, this.seeds.length - SEED_VISIBLE))
@@ -1536,10 +1542,9 @@ export class Game {
   }
 
   keydown(code: string) {
-    const idx = ['Digit1', 'Digit2', 'Digit3'].indexOf(code)
+    const idx = ['Digit1', 'Digit2'].indexOf(code)
     if (idx >= 0 && idx < TOOLS.length) {
       this.tool = TOOLS[idx].tool
-      this.breedFirst = null
       return
     }
     switch (code) {
@@ -1573,9 +1578,6 @@ export class Game {
         break
       case 'KeyR':
         if (this.over) this.reset()
-        break
-      case 'Escape':
-        this.breedFirst = null
         break
     }
   }
@@ -1614,7 +1616,6 @@ export class Game {
           // occupied — dig it up to make room for a better cultivar
           m.plant = null
           this.toastAt(this.mountPos(m), 'dug up 🥀', '#c5b8a0')
-          if (this.breedFirst === mi) this.breedFirst = null
           return
         }
         if (!this.seeds.length) return this.toast('no seeds — breed or loot')
@@ -1641,54 +1642,7 @@ export class Game {
         sfx('water')
         break
       }
-
-      case 'breed':
-        this.breedClick(mi)
-        break
     }
-  }
-
-  private breedClick(mi: number | null) {
-    const m = mi === null ? null : this.mounts[mi]
-    const plant = m?.plant
-    if (mi === null || !m || !plant) return
-    if (plant.growth < 1) return this.toast('not mature yet')
-    if (plant.breedCd > 0) return this.toast(`resting ${Math.ceil(plant.breedCd)}s`)
-
-    if (this.breedFirst === null) {
-      this.breedFirst = mi
-      this.toastAt(this.mountPos(m), 'pick a partner 🐝', '#ffd257')
-      return
-    }
-    if (this.breedFirst === mi) {
-      this.breedFirst = null
-      return
-    }
-    const firstM = this.mounts[this.breedFirst]
-    const first = firstM?.plant
-    if (!firstM || !first || first.growth < 1 || first.breedCd > 0) {
-      this.breedFirst = null
-      return
-    }
-    if (this.water < BREED_COST) return this.toast(`need ${BREED_COST}💧`)
-
-    this.water -= BREED_COST
-    first.breedCd = BREED_CD
-    plant.breedCd = BREED_CD
-    const gen = Math.max(first.gen, plant.gen) + 1
-    const make = () => ({ id: this.seedId++, genome: breed(first.genome, plant.genome), gen })
-    this.seeds.push(make())
-    let msg = '🌰 new seed!'
-    if (Math.random() < 0.3) {
-      this.seeds.push(make())
-      msg = '🌰🌰 twin seeds!'
-    }
-    this.stats.bred++
-    this.breedFirst = null
-    this.burst(this.mountPos(m), '#ffd257', 8)
-    this.burst(this.mountPos(firstM), '#ffd257', 8)
-    this.toastAt(this.mountPos(m), `${msg} (F${gen})`, '#ffd257')
-    sfx('breed')
   }
 
   // ---- fx helpers ----

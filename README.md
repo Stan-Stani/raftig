@@ -56,10 +56,11 @@ npm run dev
   is a proper artillery ship), and gunners hold fire until it's there — keep
   way on and slip the drop zones while your own shells land.
 - **Salvage** — sunken ships break up into 🪵 wood and 💧 water; kill a gun
-  and its seed line may float free. Kill a ship's *last* gun and her crew
-  scuttles — the whole wreck is yours. Flotsam drifts by on the wind — set an
-  intercept course; nothing floats to you for free (unless you breed a magnet
-  plant).
+  *carrying a rare line* and its seed may float free — deeper waters run
+  hotter genomes, so range is the gene hunt. Kill a ship's *last* gun and her
+  crew scuttles — the whole wreck is yours. Flotsam drifts by on the wind —
+  set an intercept course; nothing floats to you for free (unless you field a
+  magnet plant).
 - **Refit** — wood buys hulls, not planks: **U** refits skiff → sloop → brig
   → galleon, each with more gun mounts and a stouter hull. Out of combat your
   crew patches damage on their own — no hammering required.
@@ -69,7 +70,12 @@ npm run dev
   mount to dig it up). Plants need watering or they wilt, stop shooting, and
   die — they gulp water in battle but only sip while resting, so peaceful
   sailing is cheap.
-- **Breed** — the 🐝 tool crosses two mature plants (2💧) into new seeds.
+- **Breed** — the bees do it. Every so often, out of combat, two mature
+  watered plants on deck quietly cross into a fresh seed (no tool, no cost) —
+  so *what you choose to field is the breeding program*, and your pouch
+  drifts toward the ship you're already sailing. You start with one plant and
+  no seeds; loot or trade your way to a second plant and the pollen starts
+  moving. The bees rest when the pouch is full.
 - Run ends when your hull gives out.
 
 ## Genetics (the plantig part)
@@ -87,16 +93,17 @@ Every plant is diploid: two alleles per locus, seven loci.
 | quirk   | none                  | —               | **pierce / leech / magnet** |
 
 - Dominant alleles mask recessives; the best traits are rare recessives, so
-  they hide in **carrier lines** ([bH] shows single, breeds hydra) until you
-  cross two carriers.
+  they hide in **carrier lines** ([bH] shows single, breeds hydra) until the
+  bees pair two carriers — field carriers side by side and wait for the ✦.
 - Meiosis takes one allele from each parent per locus; ~6% of inherited
   alleles mutate, and a third of mutations jackpot into a rare allele.
 - Elements ride the shells: **ember** burns hulls over time, **frost**
   chills ships and fire rates, **venom** shreds enemy plants.
 - Quirks: **pierce** packs shrapnel (wider burst), **leech** waters its own
   plant per hit, **magnet** pulls floating loot toward your ship.
-- Kill an enemy plant and it may drop its seed — sail far from home to steal
-  wild genes where rare alleles run hotter.
+- Kill an enemy plant carrying a rare allele and it may drop its seed — sail
+  far from home to steal wild genes where rare alleles run hotter, then sow
+  the stolen line and let the bees fold it into your stock.
 - Seeds carry a pedigree badge (wild, F1, F2 …) and every genome gets a
   deterministic cultivar name (Brinefang, Squallpetal, …). Shiny ✦ marks a
   plant expressing at least one rare allele.
@@ -104,9 +111,8 @@ Every plant is diploid: two alleles per locus, seven loci.
 ## Controls
 
 A/D (or ←/→) helm · W (↑) sheet in · S (↓) back water · **Space fires the
-guns** · 1–3 tools (🌱💧🐝) · B boils wood into water · U refits the hull ·
-T trades with a nearby trader · Q/E or wheel picks seeds ·
-right-click/Esc cancels breeding · H help · P pause · M mute ·
-R restart after sinking.
+guns** · 1–2 tools (🌱💧) · B boils wood into water · U refits the hull ·
+T trades with a nearby trader · Q/E or wheel picks seeds · H help ·
+P pause · M mute · R restart after sinking.
 
 Hover any plant — yours or theirs — to read its full genotype.
