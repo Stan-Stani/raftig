@@ -37,9 +37,9 @@ export function toolbarLayout(vw: number, vh: number): (Rect & { tool: Tool })[]
   return TOOLS.map((t, i) => ({ tool: t.tool, x: x0 + i * (TOOL_SIZE + TOOL_GAP), y, w: TOOL_SIZE, h: TOOL_SIZE }))
 }
 
-export const SEED_ROW_H = 46
+export const SEED_ROW_H = 54
 export const SEED_PANEL_W = 252
-export const SEED_VISIBLE = 8
+export const SEED_VISIBLE = 7
 
 export function seedPanelRect(vw: number): Rect {
   return { x: vw - SEED_PANEL_W - 12, y: 86, w: SEED_PANEL_W, h: SEED_VISIBLE * SEED_ROW_H + 34 }

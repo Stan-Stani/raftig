@@ -41,10 +41,12 @@ npm run dev
   any wind, but rowers blow: outlast the burst and even they fall away. No
   reinforcements spawn while a pack is already on you. Crews patch their
   hulls while you run, though — flee and the loot sails off with them.
-- **Aim** — plants are **fixed gun mounts bolted to the deck**: they auto-fire
-  along their mount heading whenever a raider drifts into range, never
-  tracking it — and the mounts swing with the hull, so the helm is a weapon:
-  turn the ship to bring a broadside to bear. Out of combat, the 🎯 tool
+- **Fire** — plants are **fixed gun mounts bolted to the deck**: they never
+  fire on their own and never track. **Space** pulls the lanyard — every loaded
+  gun looses a shot along its mount heading, then **reloads** on its own rate
+  gene (an amber gauge winds up around the flower; a green ring means loaded).
+  No range gate, so timing the volley as the hull swings a target onto the fixed
+  heading is the skill — the helm is a weapon. Out of combat, the 🎯 tool
   re-points a mount on the deck: click a plant, then click where it should
   shoot. Headings lock while a raider is in range. Raider guns are fixed mounts too,
   ship-cannon style: red arrows mark their firing lines, and they hold fire
@@ -98,9 +100,10 @@ Every plant is diploid: two alleles per locus, seven loci.
 
 ## Controls
 
-A/D (or ←/→) helm · W (↑) sheet in · S (↓) back water · 1–4 tools (🌱💧🐝🎯) ·
-B boils wood into water · U refits the hull · T trades with a nearby trader ·
-Q/E or wheel picks seeds · right-click/Esc cancels breeding or aiming ·
-H help · P pause · M mute · R restart after sinking.
+A/D (or ←/→) helm · W (↑) sheet in · S (↓) back water · **Space fires the
+guns** · 1–4 tools (🌱💧🐝🎯) · B boils wood into water · U refits the hull ·
+T trades with a nearby trader · Q/E or wheel picks seeds ·
+right-click/Esc cancels breeding or aiming · H help · P pause · M mute ·
+R restart after sinking.
 
 Hover any plant — yours or theirs — to read its full genotype.

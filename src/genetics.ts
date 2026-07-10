@@ -29,39 +29,57 @@ export interface AlleleDef {
   drain?: number
   quirk?: Quirk
   range?: number
+  // --- coupling knobs: an allele's expressed cost bleeds into a neighbour stat,
+  //     so no single trait is a free upgrade and genomes become archetypes ---
+  /** heavy shot → slower cycle. multiplies firing period. */
+  rateMult?: number
+  /** fast/wide fire → thirstier. multiplies water drain. */
+  drainMult?: number
+  /** raw punch vs. reach/effect. multiplies per-shot damage. */
+  dmgMult?: number
+  /** efficient stock grows slow. multiplies time-to-mature. */
+  growMult?: number
+  /** radians between barrels of a volley — wide sprays miss at range. */
+  spread?: number
 }
 
 export const LOCI: Record<LocusId, AlleleDef[]> = {
+  // power ↔ rate: the bigger the ball, the slower the gun cycles.
   power: [
-    { id: 'mild', sym: 'p', label: 'mild', dom: 1, w: 6, dmg: 4 },
-    { id: 'stout', sym: 'P', label: 'stout', dom: 2, w: 3, dmg: 7 },
-    { id: 'titan', sym: 'T', label: 'titan', dom: 0, w: 0.4, rare: true, dmg: 13 },
+    { id: 'mild', sym: 'p', label: 'mild', dom: 1, w: 6, dmg: 4, rateMult: 0.85 },
+    { id: 'stout', sym: 'P', label: 'stout', dom: 2, w: 3, dmg: 7, rateMult: 1.0 },
+    { id: 'titan', sym: 'T', label: 'titan', dom: 0, w: 0.4, rare: true, dmg: 13, rateMult: 1.45 },
   ],
+  // rate ↔ thirst: fast fire burns powder and water alike.
   rate: [
-    { id: 'lazy', sym: 'r', label: 'lazy', dom: 1, w: 6, period: 1.5 },
-    { id: 'brisk', sym: 'R', label: 'brisk', dom: 2, w: 3, period: 1.0 },
-    { id: 'rapid', sym: 'Z', label: 'rapid', dom: 0, w: 0.4, rare: true, period: 0.55 },
+    { id: 'lazy', sym: 'r', label: 'lazy', dom: 1, w: 6, period: 1.5, drainMult: 0.8 },
+    { id: 'brisk', sym: 'R', label: 'brisk', dom: 2, w: 3, period: 1.0, drainMult: 1.0 },
+    { id: 'rapid', sym: 'Z', label: 'rapid', dom: 0, w: 0.4, rare: true, period: 0.55, drainMult: 1.8 },
   ],
+  // barrel: more mouths, less per shot, wider spray (misses at range).
   barrel: [
-    { id: 'single', sym: 'b', label: 'single', dom: 2, w: 6, shots: 1, mult: 1 },
-    { id: 'twin', sym: 'B', label: 'twin', dom: 1, w: 2.5, shots: 2, mult: 0.7 },
-    { id: 'hydra', sym: 'H', label: 'hydra', dom: 0, w: 0.3, rare: true, shots: 3, mult: 0.55 },
+    { id: 'single', sym: 'b', label: 'single', dom: 2, w: 6, shots: 1, mult: 1, spread: 0 },
+    { id: 'twin', sym: 'B', label: 'twin', dom: 1, w: 2.5, shots: 2, mult: 0.7, spread: 0.12 },
+    { id: 'hydra', sym: 'H', label: 'hydra', dom: 0, w: 0.3, rare: true, shots: 3, mult: 0.5, spread: 0.26 },
   ],
+  // reach ↔ damage: a long glass throws a lighter ball.
   reach: [
-    { id: 'short', sym: 'n', label: 'short', dom: 1, w: 6, range: 280 },
-    { id: 'long', sym: 'N', label: 'long', dom: 0, w: 2, range: 340 },
-    { id: 'spyglass', sym: 'S', label: 'spyglass', dom: 0, w: 0.3, rare: true, range: 420 },
+    { id: 'short', sym: 'n', label: 'short', dom: 1, w: 6, range: 260, dmgMult: 1.15 },
+    { id: 'long', sym: 'N', label: 'long', dom: 0, w: 2, range: 340, dmgMult: 0.95 },
+    { id: 'spyglass', sym: 'S', label: 'spyglass', dom: 0, w: 0.3, rare: true, range: 440, dmgMult: 0.72 },
   ],
+  // element: plain trades the effect for a cleaner, harder-hitting shot.
   element: [
-    { id: 'plain', sym: 'e', label: 'plain', dom: 0, w: 6 },
+    { id: 'plain', sym: 'e', label: 'plain', dom: 0, w: 6, dmgMult: 1.12 },
     { id: 'ember', sym: 'F', label: 'ember', dom: 1, w: 1.5, effect: 'ember' },
     { id: 'frost', sym: 'I', label: 'frost', dom: 1, w: 1.5, effect: 'frost' },
     { id: 'venom', sym: 'V', label: 'venom', dom: 1, w: 1.5, effect: 'venom' },
   ],
+  // thirst ↔ growth: a frugal stock is slow to come online.
   thirst: [
-    { id: 'thirsty', sym: 'w', label: 'thirsty', dom: 1, w: 5, drain: 1.8 },
-    { id: 'hardy', sym: 'W', label: 'hardy', dom: 0, w: 2.5, drain: 0.9 },
-    { id: 'camel', sym: 'C', label: 'camel', dom: 0, w: 0.25, rare: true, drain: 0.35 },
+    { id: 'thirsty', sym: 'w', label: 'thirsty', dom: 1, w: 5, drain: 1.8, growMult: 0.8 },
+    { id: 'hardy', sym: 'W', label: 'hardy', dom: 0, w: 2.5, drain: 0.9, growMult: 1.0 },
+    { id: 'camel', sym: 'C', label: 'camel', dom: 0, w: 0.25, rare: true, drain: 0.35, growMult: 1.4 },
   ],
   quirk: [
     { id: 'none', sym: 'q', label: '—', dom: 1, w: 6 },
@@ -85,14 +103,20 @@ export interface Pheno {
   dmg: number
   period: number
   shots: number
+  /** radians between barrels of a volley — wide sprays scatter at range */
+  spread: number
   /** firing range, px — the gun engages nothing beyond it */
   range: number
   element: Element
   drain: number
+  /** multiplies time-to-mature (thirst coupling); 1 = baseline */
+  growMult: number
   quirk: Quirk
   /** deterministic cultivar name, plantig-style */
   name: string
   blurb: string
+  /** one-line archetype read from the expressed stats (sniper, brawler …) */
+  role: string
   /** expresses at least one rare allele → gets a sparkle */
   shiny: boolean
 }
@@ -131,6 +155,17 @@ export function cultivarName(g: Genome): string {
   return NAME_PRE[h % NAME_PRE.length] + NAME_SUF[Math.floor(h / 64) % NAME_SUF.length]
 }
 
+/** One-word archetype from the loudest expressed traits — the genome's character. */
+function roleOf(power: AlleleDef, rate: AlleleDef, barrel: AlleleDef, reach: AlleleDef): string {
+  if (reach.id === 'spyglass') return power.id === 'titan' ? 'siege sniper' : 'sniper'
+  if (barrel.id === 'hydra') return reach.id === 'short' ? 'scattergun' : 'sprayer'
+  if (power.id === 'titan') return 'siege gun'
+  if (rate.id === 'rapid') return 'autocannon'
+  if (reach.id === 'short' && power.id !== 'mild') return 'brawler'
+  if (barrel.id === 'twin') return 'raker'
+  return 'popgun'
+}
+
 export function phenotype(g: Genome): Pheno {
   const power = expressed('power', g.power)
   const rate = expressed('rate', g.rate)
@@ -139,19 +174,26 @@ export function phenotype(g: Genome): Pheno {
   const element = expressed('element', g.element)
   const thirst = expressed('thirst', g.thirst)
   const quirk = expressed('quirk', g.quirk)
+  // couplings: an allele's cost lands on a neighbour stat (see LOCI comments)
+  const dmg = power.dmg! * barrel.mult! * (reach.dmgMult ?? 1) * (element.dmgMult ?? 1)
+  const period = rate.period! * (power.rateMult ?? 1)
+  const drain = thirst.drain! * (rate.drainMult ?? 1)
   const parts = [element.effect ?? 'plain', barrel.label, power.label]
   if (reach.id !== 'short') parts.push(reach.label)
   if (quirk.quirk && quirk.quirk !== 'none') parts.push(quirk.quirk)
   return {
-    dmg: Math.round(power.dmg! * barrel.mult! * 10) / 10,
-    period: rate.period!,
+    dmg: Math.round(dmg * 10) / 10,
+    period: Math.round(period * 100) / 100,
     shots: barrel.shots!,
+    spread: barrel.spread ?? 0,
     range: reach.range!,
     element: element.effect ?? 'plain',
-    drain: thirst.drain!,
+    drain: Math.round(drain * 100) / 100,
+    growMult: thirst.growMult ?? 1,
     quirk: quirk.quirk ?? 'none',
     name: cultivarName(g),
     blurb: parts.join(' · '),
+    role: roleOf(power, rate, barrel, reach),
     shiny: [power, rate, barrel, reach, element, thirst, quirk].some(a => a.rare),
   }
 }

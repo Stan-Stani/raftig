@@ -1,6 +1,6 @@
 import { Vec, v, dist, clamp, rand, randInt, gkey, angleDiff } from './util'
 import { Genome, Seed, Pheno, phenotype, wildGenome, breed, makeGenome } from './genetics'
-import { Tool, TOOLS, toolbarLayout, seedRowRects, seedPanelRect, restartRect, inRect } from './ui'
+import { Tool, TOOLS, toolbarLayout, seedRowRects, seedPanelRect, restartRect, inRect, SEED_VISIBLE } from './ui'
 import { POI, POI_CELL, POI_SIGHT, cellPOI, makePOI, TRADE_COST, TRADE_RANGE } from './poi'
 import { keys } from './input'
 import { sfx, toggleMute } from './audio'
@@ -286,6 +286,7 @@ export class Game {
   breedFirst: number | null = null // mount index awaiting a partner (🐝 tool)
   aimFirst: number | null = null // mount index awaiting a heading click (🎯 tool)
 
+  firing = false // set by the fire key, consumed each frame → one broadside per press
   chillT = 0 // frost debuff on our ship
   shake = 0
   cam = v(0, 0)
@@ -696,7 +697,7 @@ export class Game {
 
       // growth & thirst — plants gulp in battle, only sip at rest
       if (p.water > 0) {
-        p.growth = Math.min(1, p.growth + dt / GROW_TIME)
+        p.growth = Math.min(1, p.growth + dt / (GROW_TIME * p.pheno.growMult))
         p.dryTime = 0
       } else {
         p.dryTime += dt
@@ -728,20 +729,20 @@ export class Game {
         continue
       }
 
-      p.cooldown -= dt
+      p.cooldown -= dt // reload timer ticks down whether or not you fire
       p.breedCd = Math.max(0, p.breedCd - dt)
 
-      // firing — mounts shoot along their fixed heading, engaging whenever a
-      // raider drifts inside the plant's genetic reach but never tracking it
-      if (p.growth >= 1 && p.water > 0 && p.cooldown <= 0) {
-        const from = this.mountPos(m)
-        if (this.enemyInRange(from, p.pheno.range)) {
-          this.firePlant(p, from)
-          p.cooldown = p.pheno.period * (this.chillT > 0 ? 1.35 : 1)
-          p.water = Math.max(0, p.water - 0.35)
-        }
+      // manual fire: mounts hold along their fixed heading until YOU pull the
+      // lanyard (Space). Firing starts each gun's reload — its rate gene — and
+      // there's no range gate, so timing the volley as the hull swings a target
+      // onto the mount is the skill. No tracking, no auto-fire.
+      if (this.firing && p.growth >= 1 && p.water > 0 && p.cooldown <= 0) {
+        this.firePlant(p, this.mountPos(m))
+        p.cooldown = p.pheno.period * (this.chillT > 0 ? 1.35 : 1)
+        p.water = Math.max(0, p.water - 0.35)
       }
     }
+    this.firing = false // consumed this frame; a fresh press re-arms it
     if (this.ship.hp <= 0 && !this.over) this.gameOver()
   }
 
@@ -768,7 +769,7 @@ export class Game {
 
   private firePlant(p: Plant, from: Vec) {
     p.activeT = 4
-    const spread = 0.14 // radians between barrels of a multi-shot plant
+    const spread = p.pheno.spread // barrel-gene spread: wide sprays scatter at range
     const speed = 330
     for (let i = 0; i < p.pheno.shots; i++) {
       // aim is hull-relative: turning the ship brings the guns to bear
@@ -1535,7 +1536,7 @@ export class Game {
 
   wheel(dir: number) {
     if (this.tool === 'plant') {
-      this.seedScroll = clamp(this.seedScroll + dir, 0, Math.max(0, this.seeds.length - 8))
+      this.seedScroll = clamp(this.seedScroll + dir, 0, Math.max(0, this.seeds.length - SEED_VISIBLE))
     }
   }
 
@@ -1562,6 +1563,10 @@ export class Game {
         break
       case 'KeyU':
         this.upgradeHull()
+        break
+      case 'Space':
+        // pull the lanyard: fire every loaded gun that bears next frame
+        if (!this.over && !this.paused && !this.helpOpen) this.firing = true
         break
       case 'KeyH':
         this.helpOpen = !this.helpOpen
@@ -1623,7 +1628,7 @@ export class Game {
         if (!this.seeds.length) return this.toast('no seeds — breed or loot')
         const seed = this.seeds.splice(this.seedSel, 1)[0]
         this.seedSel = clamp(this.seedSel, 0, Math.max(0, this.seeds.length - 1))
-        this.seedScroll = clamp(this.seedScroll, 0, Math.max(0, this.seeds.length - 8))
+        this.seedScroll = clamp(this.seedScroll, 0, Math.max(0, this.seeds.length - SEED_VISIBLE))
         const plant = makePlant(seed.genome, seed.gen)
         plant.aim = m.aim0 // sown facing the mount's natural bearing
         m.plant = plant

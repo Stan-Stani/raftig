@@ -1,5 +1,5 @@
 import { Game, TS, RANGE, TIERS, FOG_CELL, DANGER_SCALE, Plant, Bullet, EnemyShip } from './game'
-import { describe, symbols, phenotype, Genome, Pheno } from './genetics'
+import { describe, phenotype, Genome, Pheno } from './genetics'
 import { TOOLS, toolbarLayout, seedPanelRect, seedRowRects, restartRect, SEED_VISIBLE } from './ui'
 import { POI, POI_SIGHT, POI_ICON, POI_COLOR, TRADE_COST, TRADE_RANGE } from './poi'
 import { muted } from './audio'
@@ -210,6 +210,26 @@ function drawPlant(ctx: CanvasRenderingContext2D, x: number, y: number, p: Plant
     ctx.beginPath()
     ctx.arc(headX, headY, r, 0, Math.PI * 2)
     ctx.fill()
+  }
+
+  // reload gauge (our guns only) — manual fire means the crew reloads between
+  // volleys: an amber arc winds up as it reloads, a dim green ring = loaded & ready
+  if (!hostile && !dry && p.growth >= 1) {
+    const rr = r + 5
+    if (p.cooldown > 0) {
+      const loaded = 1 - Math.min(1, p.cooldown / p.pheno.period)
+      ctx.strokeStyle = 'rgba(255,209,87,0.9)'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(headX, headY, rr, -Math.PI / 2, -Math.PI / 2 + loaded * Math.PI * 2)
+      ctx.stroke()
+    } else {
+      ctx.strokeStyle = 'rgba(150,225,130,0.55)'
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.arc(headX, headY, rr, 0, Math.PI * 2)
+      ctx.stroke()
+    }
   }
 
   // shiny sparkle for expressed rare alleles (plantig homage)
@@ -715,13 +735,19 @@ function drawBullet(ctx: CanvasRenderingContext2D, g: Game, b: Bullet) {
 
 // ---------- HUD ----------
 
-function chip(ctx: CanvasRenderingContext2D, x: number, y: number, text: string): number {
+function chip(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, accent?: string): number {
   ctx.font = '14px ui-monospace, monospace'
   const w = ctx.measureText(text).width + 18
-  ctx.fillStyle = 'rgba(4,20,32,0.75)'
+  ctx.fillStyle = accent ? 'rgba(58,42,8,0.85)' : 'rgba(4,20,32,0.75)'
   roundRect(ctx, x, y, w, 26, 13)
   ctx.fill()
-  ctx.fillStyle = '#e8f1f5'
+  if (accent) {
+    ctx.strokeStyle = accent
+    ctx.lineWidth = 1.5
+    roundRect(ctx, x, y, w, 26, 13)
+    ctx.stroke()
+  }
+  ctx.fillStyle = accent ?? '#e8f1f5'
   ctx.textAlign = 'left'
   ctx.fillText(text, x + 9, y + 18)
   return w
@@ -742,7 +768,11 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
   x2 += chip(ctx, x2, 44, `${low ? '⚠ ' : ''}⛵ ${tier.name} ${Math.ceil(g.ship.hp)}/${tier.hull}`) + 6
   const next = TIERS[g.tier + 1]
   if (next) x2 += chip(ctx, x2, 44, `U refit → ${next.name} (${next.cost}🪵)`) + 6
-  chip(ctx, x2, 44, 'B boil 1🪵→2💧')
+  x2 += chip(ctx, x2, 44, 'B boil 1🪵→2💧') + 6
+  // manual fire: reminder chip, lit gold when a loaded gun has a target to fire on
+  const ready = g.mounts.some(m => m.plant && m.plant.growth >= 1 && m.plant.water > 0 && m.plant.cooldown <= 0)
+  const litFire = ready && g.inCombat() && 0.5 + 0.5 * Math.sin(t * 6) > 0.35
+  chip(ctx, x2, 44, '␣ SPACE fire', litFire ? '#ffd257' : undefined)
 
   // sea status
   const mins = Math.floor(g.stats.time / 60)
@@ -1069,15 +1099,19 @@ function drawSeedPanel(ctx: CanvasRenderingContext2D, g: Game, w: number) {
     const ph = phenoOf(seed.genome)
     ctx.fillStyle = ph.shiny ? '#ffe9a8' : '#e8f1f5'
     ctx.font = 'bold 13px ui-monospace, monospace'
-    ctx.fillText(`${ph.shiny ? '✦ ' : ''}${ph.name}`, row.x + 8, row.y + 17)
-    ctx.fillStyle = '#8fb3c9'
+    ctx.fillText(`${ph.shiny ? '✦ ' : ''}${ph.name}`, row.x + 8, row.y + 16)
+    // archetype word — the gun's character at a glance
+    ctx.fillStyle = ELEMENT_COLOR[ph.element]
     ctx.font = '11px ui-monospace, monospace'
-    ctx.fillText(symbols(seed.genome), row.x + 8, row.y + 33)
+    ctx.fillText(ph.role, row.x + 8, row.y + 32)
+    // the real gun: these numbers fold in every coupling, so nothing is hidden
+    ctx.fillStyle = '#9fb8c8'
+    ctx.fillText(gunLine(ph), row.x + 8, row.y + 47)
     // generation badge
     const badge = seed.gen === 0 ? 'wild' : `F${seed.gen}`
     ctx.fillStyle = seed.gen === 0 ? '#7d97a8' : '#b8e986'
     ctx.textAlign = 'right'
-    ctx.fillText(badge, row.x + row.w - 8, row.y + 17)
+    ctx.fillText(badge, row.x + row.w - 8, row.y + 16)
     ctx.textAlign = 'left'
   }
   if (g.seeds.length > SEED_VISIBLE) {
@@ -1098,23 +1132,31 @@ function phenoOf(g: Genome): Pheno {
   return p
 }
 
+// The gun as it actually fires — every trait coupling is already folded into
+// these numbers, so the cadence never lies even when the label ("titan") doesn't.
+function gunLine(p: Pheno): string {
+  return `${p.dmg}×${p.shots} · ${p.period}s · ${p.range}px · ${p.drain}💧`
+}
+
 function drawPlantTooltip(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number) {
   const hi = g.hoverInfo!
   const p = hi.plant
   const lines = describe(p.genome)
-  const title = `${p.pheno.shiny ? '✦ ' : ''}${p.pheno.name} ${p.gen > 0 ? `· F${p.gen}` : hi.hostile ? '· hostile' : '· wild'}`
+  const title = `${p.pheno.shiny ? '✦ ' : ''}${p.pheno.name} · ${p.pheno.role}${p.gen > 0 ? ` · F${p.gen}` : hi.hostile ? ' · hostile' : ' · wild'}`
   const sub = p.pheno.blurb
+  const gun = gunLine(p.pheno)
   const stat = hi.hostile
-    ? `hp ${Math.ceil(p.hp)}/${p.maxHp} · reach ${p.pheno.range}`
-    : `hp ${Math.ceil(p.hp)}/${p.maxHp} · water ${Math.ceil(p.water)} · reach ${p.pheno.range} · ${p.growth >= 1 ? 'mature' : `${Math.floor(p.growth * 100)}% grown`}`
+    ? `hp ${Math.ceil(p.hp)}/${p.maxHp}`
+    : `hp ${Math.ceil(p.hp)}/${p.maxHp} · water ${Math.ceil(p.water)} · ${p.growth >= 1 ? 'mature' : `${Math.floor(p.growth * 100)}% grown`}`
 
   ctx.font = '12px ui-monospace, monospace'
   const tw = Math.max(
     ctx.measureText(title).width,
+    ctx.measureText(gun).width,
     ...lines.map(l => ctx.measureText(l).width),
     ctx.measureText(stat).width
   ) + 24
-  const th = 66 + lines.length * 16
+  const th = 82 + lines.length * 16
   let bx = g.hoverScreen.x + 18
   let by = g.hoverScreen.y - th / 2
   bx = clamp(bx, 8, w - tw - 8)
@@ -1134,10 +1176,13 @@ function drawPlantTooltip(ctx: CanvasRenderingContext2D, g: Game, w: number, h: 
   ctx.fillStyle = ELEMENT_COLOR[p.pheno.element]
   ctx.font = '11px ui-monospace, monospace'
   ctx.fillText(sub, bx + 12, by + 36)
+  // the honest gun line, brighter than the lineage detail below it
+  ctx.fillStyle = '#e8f1f5'
+  ctx.fillText(gun, bx + 12, by + 54)
   ctx.fillStyle = '#8fb3c9'
-  lines.forEach((l, i) => ctx.fillText(l, bx + 12, by + 54 + i * 16))
+  lines.forEach((l, i) => ctx.fillText(l, bx + 12, by + 72 + i * 16))
   ctx.fillStyle = '#cfe3ee'
-  ctx.fillText(stat, bx + 12, by + 54 + lines.length * 16)
+  ctx.fillText(stat, bx + 12, by + 72 + lines.length * 16)
 }
 
 function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
@@ -1152,7 +1197,7 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.fillText('a raft roguelike where your garden is the gun deck', w / 2, h * 0.16 + 28)
 
   const lines = [
-    'A/D — helm (turn the prow) · W — sheet in · S — back water · 1–4 tools',
+    'A/D — helm · W — sheet in · S — back water · SPACE — FIRE guns · 1–4 tools',
     'B — boil 1🪵 → 2💧 · U — refit the hull · T — trade · P pause · M mute · H help',
     '',
     'she sails like a SHIP: the prow leads, the hull turns, momentum carries.',
@@ -1175,9 +1220,9 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
     'they must sail to bring one to bear, so stay off the lines and rake them.',
     'the farther from home, the deadlier the sea — and the richer everything it holds.',
     '',
-    'your plants ARE the cannon, sown into FIXED MOUNTS on the deck (🎯 re-aims,',
-    'out of combat) — mounts swing with the hull: the helm brings broadsides to bear.',
-    'keep them WATERED or they wilt (they gulp in battle, only sip at rest).',
+    'your plants ARE the cannon in FIXED MOUNTS (🎯 re-aims out of combat). FIRE with',
+    'SPACE: guns hold until you pull the lanyard, then reload on their rate gene — swing',
+    'the hull to bear and loose a broadside. keep them WATERED or they wilt & stop firing.',
     "kill a ship's last gun and her crew scuttles — the wreck is yours.",
     'wood buys REFITS (U): skiff → sloop → brig → galleon, more mounts each time.',
     'BREED (🐝) two mature plants to cross genes — dominant alleles mask recessives,',
