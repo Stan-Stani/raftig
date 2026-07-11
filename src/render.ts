@@ -1,6 +1,7 @@
 import { Game, TS, RANGE, SPLASH, TIERS, FOG_CELL, DANGER_SCALE, Plant, Bullet, EnemyShip } from './game'
 import { describe, phenotype, Genome, Pheno } from './genetics'
-import { TOOLS, toolbarLayout, seedPanelRect, seedRowRects, restartRect, SEED_VISIBLE } from './ui'
+import { TOOLS, toolbarLayout, seedPanelRect, seedRowRects, restartRect, SEED_VISIBLE, compPanelRect, compRowRects } from './ui'
+import { PALETTE, CLEAR, buildLabel } from './wand'
 import { POI, POI_SIGHT, POI_ICON, POI_COLOR, TRADE_COST, TRADE_RANGE } from './poi'
 import { muted } from './audio'
 import { Vec, v, hash01, clamp, gkey, dist } from './util'
@@ -370,6 +371,19 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
     }
     drawPlant(ctx, p.x, p.y, plant, false, t)
     drawWaterBar(ctx, p.x, p.y, plant)
+    // rigged build strip: the wand this mount fires, read left→right
+    if (m.components.length) {
+      ctx.textAlign = 'center'
+      ctx.font = '11px ui-monospace, monospace'
+      const label = buildLabel(m.components)
+      const wpx = ctx.measureText(label).width + 10
+      ctx.fillStyle = g.tool === 'rig' ? 'rgba(60,96,120,0.9)' : 'rgba(6,20,30,0.72)'
+      roundRect(ctx, p.x - wpx / 2, p.y + 13, wpx, 16, 4)
+      ctx.fill()
+      ctx.fillStyle = '#cfe3ee'
+      ctx.fillText(label, p.x, p.y + 24)
+      ctx.textAlign = 'left'
+    }
   })
 
   // hovering a mature plant → show its genetic reach (theirs too — know the sniper)
@@ -826,6 +840,7 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
 
   drawToolbar(ctx, g, w, h)
   if (g.tool === 'plant') drawSeedPanel(ctx, g, w)
+  if (g.tool === 'rig') drawComponentPanel(ctx, g, w)
   if (g.hoverInfo) drawPlantTooltip(ctx, g, w, h)
 
   if (g.helpOpen) drawHelp(ctx, w, h)
@@ -1127,6 +1142,71 @@ function drawSeedPanel(ctx: CanvasRenderingContext2D, g: Game, w: number) {
   }
 }
 
+function compKindWord(id: string, kind: string): string {
+  if (id === CLEAR.id) return 'strips a mount'
+  return kind === 'shell' ? 'shell' : kind === 'trigger' ? 'trigger' : 'modifier'
+}
+
+function compColor(id: string, kind: string): string {
+  if (id === CLEAR.id) return '#e79a9a'
+  return kind === 'shell' ? '#ffe9a8' : kind === 'trigger' ? '#ffb3f0' : '#b8e986'
+}
+
+// the rig tool's toolbox — pick a component, then click a mount to slot it
+function drawComponentPanel(ctx: CanvasRenderingContext2D, g: Game, w: number) {
+  const panel = compPanelRect(w, PALETTE.length)
+  ctx.fillStyle = 'rgba(4,20,32,0.85)'
+  roundRect(ctx, panel.x, panel.y, panel.w, panel.h, 10)
+  ctx.fill()
+  ctx.fillStyle = '#9fb8c8'
+  ctx.font = 'bold 12px ui-monospace, monospace'
+  ctx.textAlign = 'left'
+  ctx.fillText('components · Q/E · click a mount', panel.x + 10, panel.y + 19)
+
+  for (const row of compRowRects(w, PALETTE.length)) {
+    const c = PALETTE[row.idx]
+    const sel = row.idx === g.compSel
+    ctx.fillStyle = sel ? 'rgba(60,96,120,0.9)' : 'rgba(255,255,255,0.05)'
+    roundRect(ctx, row.x, row.y, row.w, row.h, 7)
+    ctx.fill()
+    if (sel) {
+      ctx.strokeStyle = '#ffd257'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+    }
+    ctx.textAlign = 'left'
+    ctx.font = '16px ui-monospace, monospace'
+    ctx.fillStyle = '#e8f1f5'
+    ctx.fillText(c.icon, row.x + 9, row.y + 25)
+    ctx.font = 'bold 12px ui-monospace, monospace'
+    ctx.fillStyle = compColor(c.id, c.kind)
+    ctx.fillText(c.name, row.x + 34, row.y + 16)
+    ctx.font = '10px ui-monospace, monospace'
+    ctx.fillStyle = '#8fb3c9'
+    ctx.fillText(compKindWord(c.id, c.kind), row.x + 34, row.y + 30)
+  }
+
+  // the selected component's full tip, wrapped under the list
+  const tip = PALETTE[g.compSel].tip
+  ctx.font = '11px ui-monospace, monospace'
+  ctx.fillStyle = '#cfe3ee'
+  const words = tip.split(' ')
+  const maxW = panel.w - 20
+  let line = ''
+  let ty = panel.y + panel.h + 16
+  for (const word of words) {
+    const test = line ? line + ' ' + word : word
+    if (ctx.measureText(test).width > maxW && line) {
+      ctx.fillText(line, panel.x + 10, ty)
+      ty += 15
+      line = word
+    } else {
+      line = test
+    }
+  }
+  if (line) ctx.fillText(line, panel.x + 10, ty)
+}
+
 // tiny cache so we don't recompute phenotypes every frame for the seed list
 const phenoCache = new WeakMap<Genome, Pheno>()
 function phenoOf(g: Genome): Pheno {
@@ -1203,7 +1283,7 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.fillText('a raft roguelike where your garden is the gun deck', w / 2, h * 0.16 + 28)
 
   const lines = [
-    'A/D — helm · W — sheet in · S — back water · SPACE — FIRE guns · 1–2 tools',
+    'A/D — helm · W — sheet in · S — back water · SPACE — FIRE guns · 1–3 tools',
     'B — boil 1🪵 → 2💧 · U — refit the hull · T — trade · P pause · M mute · H help',
     '',
     'she sails like a SHIP: the prow leads, the hull turns, momentum carries.',
@@ -1232,6 +1312,9 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
     'the lanyard, then reload on their rate gene. steer the hull to walk the rings over',
     'a raider, time the volley, and keep plants WATERED or they wilt & stop firing.',
     "kill a ship's last gun and her crew scuttles — the wreck is yours.",
+    'RIG your mounts (🔧 tool / key 3): slot components in order to build the shot —',
+    'e.g. 💥 airburst + ⬤ ball + ❄ frost + ⁘ scatter = a shell that bursts into a',
+    'chilling fan. order matters; ✕ strips a mount. (prototype: free toolbox for now.)',
     'wood buys REFITS (U): skiff → sloop → brig → galleon, more mounts each time.',
     'the BEES breed for you: two mature, watered plants quietly cross into new seeds',
     'while you sail — what you field IS the breeding program. dominant alleles mask',

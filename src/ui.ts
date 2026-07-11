@@ -1,7 +1,7 @@
 // Toolbar / seed-panel definitions and layout, shared by render (drawing)
 // and game (hit-testing).
 
-export type Tool = 'plant' | 'water'
+export type Tool = 'plant' | 'water' | 'rig'
 
 export interface ToolDef {
   tool: Tool
@@ -13,6 +13,7 @@ export interface ToolDef {
 export const TOOLS: ToolDef[] = [
   { tool: 'plant', icon: '🌱', name: 'plant', tip: 'pick a seed (Q/E or wheel), click an empty mount to sow · click a planted mount to dig it up' },
   { tool: 'water', icon: '💧', name: 'water', tip: 'click a plant to water it (1💧) — dry plants wilt and die · B boils 1🪵 → 2💧' },
+  { tool: 'rig', icon: '🔧', name: 'rig', tip: 'pick a component (Q/E or wheel), click a mount to slot it — order matters. ✕ strips a mount' },
 ]
 
 export interface Rect {
@@ -54,4 +55,20 @@ export function seedRowRects(vw: number, count: number, scroll: number): (Rect &
 
 export function restartRect(vw: number, vh: number): Rect {
   return { x: vw / 2 - 90, y: vh / 2 + 92, w: 180, h: 44 }
+}
+
+// component pouch — the rig tool's palette, same slot as the seed panel
+export const COMP_ROW_H = 42
+
+export function compPanelRect(vw: number, count: number): Rect {
+  return { x: vw - SEED_PANEL_W - 12, y: 86, w: SEED_PANEL_W, h: count * COMP_ROW_H + 34 }
+}
+
+export function compRowRects(vw: number, count: number): (Rect & { idx: number })[] {
+  const panel = compPanelRect(vw, count)
+  const rows: (Rect & { idx: number })[] = []
+  for (let i = 0; i < count; i++) {
+    rows.push({ idx: i, x: panel.x + 6, y: panel.y + 30 + i * COMP_ROW_H, w: panel.w - 12, h: COMP_ROW_H - 4 })
+  }
+  return rows
 }
