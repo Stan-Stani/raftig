@@ -1,8 +1,8 @@
 import { Game, TS, RANGE, SPLASH, TIERS, FOG_CELL, DANGER_SCALE, Plant, Bullet, EnemyShip } from './game'
-import { describe, phenotype, Genome, Pheno } from './genetics'
-import { TOOLS, toolbarLayout, seedPanelRect, seedRowRects, restartRect, SEED_VISIBLE, compPanelRect, compRowRects } from './ui'
-import { PALETTE, CLEAR, buildLabel } from './wand'
-import { POI, POI_SIGHT, POI_ICON, POI_COLOR, TRADE_COST, TRADE_RANGE } from './poi'
+import { describe, phenotype, Genome, Pheno, alleleDef } from './genetics'
+import { TOOLS, toolbarLayout, seedPanelRect, seedRowRects, restartRect, SEED_VISIBLE, boardLayout } from './ui'
+import { synergies, DOCK_RANGE } from './breeding'
+import { POI, POI_SIGHT, POI_ICON, POI_COLOR, TRADE_COST, TRADE_RANGE, BREED_COST } from './poi'
 import { muted } from './audio'
 import { Vec, v, hash01, clamp, gkey, dist } from './util'
 
@@ -371,19 +371,6 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
     }
     drawPlant(ctx, p.x, p.y, plant, false, t)
     drawWaterBar(ctx, p.x, p.y, plant)
-    // rigged build strip: the wand this mount fires, read left→right
-    if (m.components.length) {
-      ctx.textAlign = 'center'
-      ctx.font = '11px ui-monospace, monospace'
-      const label = buildLabel(m.components)
-      const wpx = ctx.measureText(label).width + 10
-      ctx.fillStyle = g.tool === 'rig' ? 'rgba(60,96,120,0.9)' : 'rgba(6,20,30,0.72)'
-      roundRect(ctx, p.x - wpx / 2, p.y + 13, wpx, 16, 4)
-      ctx.fill()
-      ctx.fillStyle = '#cfe3ee'
-      ctx.fillText(label, p.x, p.y + 24)
-      ctx.textAlign = 'left'
-    }
   })
 
   // hovering a mature plant → show its genetic reach (theirs too — know the sniper)
@@ -593,6 +580,82 @@ function drawPOI(ctx: CanvasRenderingContext2D, g: Game, p: POI, t: number) {
   if (p.kind === 'wreck') drawWreck(ctx, p, t)
   else if (p.kind === 'nest') drawNest(ctx, p, t)
   else if (p.kind === 'trader') drawTrader(ctx, g, p, t)
+  else if (p.kind === 'port') drawPort(ctx, g, p, t)
+  else if (p.kind === 'breeder') drawBreeder(ctx, g, p, t)
+}
+
+/** a small harbour: the reliable place to dock (F) and cross your lines */
+function drawPort(ctx: CanvasRenderingContext2D, g: Game, p: POI, t: number) {
+  const x = p.pos.x
+  const y = p.pos.y
+  // a spit of land
+  ctx.fillStyle = '#c7a86e'
+  ctx.beginPath()
+  ctx.ellipse(x, y + 6, 46, 26, 0, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = '#8f7a4a'
+  ctx.beginPath()
+  ctx.ellipse(x, y + 2, 30, 15, 0, 0, Math.PI * 2)
+  ctx.fill()
+  // a couple of jetty posts + a lantern
+  ctx.strokeStyle = '#5f4a2c'
+  ctx.lineWidth = 3
+  for (const dx of [-16, 16]) {
+    ctx.beginPath()
+    ctx.moveTo(x + dx, y - 2)
+    ctx.lineTo(x + dx, y - 22)
+    ctx.stroke()
+  }
+  ctx.font = '15px serif'
+  ctx.textAlign = 'center'
+  ctx.fillText('🏝️', x, y - 24 + Math.sin(t * 1.6) * 1.5)
+  drawDockPrompt(ctx, g, p, x, y, 'port')
+}
+
+/** the wandering breeder boat — a blossom-sailed sloop; dock for a premium cross */
+function drawBreeder(ctx: CanvasRenderingContext2D, g: Game, p: POI, t: number) {
+  const bob = Math.sin(t * 1.5 + p.pos.x) * 2
+  const x = p.pos.x
+  const y = p.pos.y + bob
+  drawPlank(ctx, x - TS / 2, y, 1, 1, false, 0)
+  drawPlank(ctx, x + TS / 2, y, 1, 1, false, 0)
+  ctx.strokeStyle = '#5f4830'
+  ctx.lineWidth = 3
+  ctx.beginPath()
+  ctx.moveTo(x - TS / 2, y)
+  ctx.lineTo(x - TS / 2, y - 46)
+  ctx.stroke()
+  // pink blossom sail
+  ctx.fillStyle = 'rgba(244,166,208,0.92)'
+  ctx.strokeStyle = '#c76fa0'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(x - TS / 2, y - 44)
+  ctx.quadraticCurveTo(x + 10, y - 34 + Math.sin(t * 2.4) * 2, x + 24, y - 22)
+  ctx.quadraticCurveTo(x + 2, y - 24, x - TS / 2, y - 12)
+  ctx.closePath()
+  ctx.fill()
+  ctx.stroke()
+  ctx.font = '15px serif'
+  ctx.textAlign = 'center'
+  ctx.fillText('🐝', x + TS / 2, y - 20 + Math.sin(t * 2) * 2)
+  drawDockPrompt(ctx, g, p, x, y, 'breeder')
+}
+
+/** the "F · breed" prompt shown when the ship is alongside a port/breeder */
+function drawDockPrompt(ctx: CanvasRenderingContext2D, g: Game, p: POI, x: number, y: number, kind: 'port' | 'breeder') {
+  const d = dist(p.pos, g.cam)
+  if (d > DOCK_RANGE + 90) return
+  const near = d < DOCK_RANGE
+  ctx.font = 'bold 12px ui-monospace, monospace'
+  const label = kind === 'breeder' ? `F · breeder cross (${BREED_COST}💧, premium)` : `F · breed here (${BREED_COST}💧)`
+  const lw = ctx.measureText(label).width + 16
+  ctx.fillStyle = 'rgba(4,20,32,0.8)'
+  roundRect(ctx, x - lw / 2, y - 100, lw, 20, 10)
+  ctx.fill()
+  ctx.fillStyle = near ? (kind === 'breeder' ? '#f4a6d0' : '#e6c88f') : '#7d97a8'
+  ctx.textAlign = 'center'
+  ctx.fillText(label, x, y - 86)
 }
 
 const WRECK_PLANKS = [
@@ -840,8 +903,8 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
 
   drawToolbar(ctx, g, w, h)
   if (g.tool === 'plant') drawSeedPanel(ctx, g, w)
-  if (g.tool === 'rig') drawComponentPanel(ctx, g, w)
-  if (g.hoverInfo) drawPlantTooltip(ctx, g, w, h)
+  if (g.hoverInfo && !g.board) drawPlantTooltip(ctx, g, w, h)
+  if (g.board) drawBoard(ctx, g, w, h)
 
   if (g.helpOpen) drawHelp(ctx, w, h)
   else if (g.paused && !g.over) {
@@ -1100,8 +1163,8 @@ function drawSeedPanel(ctx: CanvasRenderingContext2D, g: Game, w: number) {
   if (!g.seeds.length) {
     ctx.fillStyle = '#7d97a8'
     ctx.font = '12px ui-monospace, monospace'
-    ctx.fillText('no seeds — the bees need two mature', panel.x + 10, panel.y + 48)
-    ctx.fillText('plants; loot or trade for your first', panel.x + 10, panel.y + 64)
+    ctx.fillText('no seeds — loot or trade for a line,', panel.x + 10, panel.y + 48)
+    ctx.fillText('then cross at a port/breeder (F)', panel.x + 10, panel.y + 64)
     return
   }
 
@@ -1140,71 +1203,6 @@ function drawSeedPanel(ctx: CanvasRenderingContext2D, g: Game, w: number) {
     ctx.font = '11px ui-monospace, monospace'
     ctx.fillText(`… ${g.seedScroll + SEED_VISIBLE < g.seeds.length ? 'more below' : ''} ${g.seedScroll > 0 ? '· more above' : ''}`, panel.x + 10, panel.y + panel.h - 8)
   }
-}
-
-function compKindWord(id: string, kind: string): string {
-  if (id === CLEAR.id) return 'strips a mount'
-  return kind === 'shell' ? 'shell' : kind === 'trigger' ? 'trigger' : 'modifier'
-}
-
-function compColor(id: string, kind: string): string {
-  if (id === CLEAR.id) return '#e79a9a'
-  return kind === 'shell' ? '#ffe9a8' : kind === 'trigger' ? '#ffb3f0' : '#b8e986'
-}
-
-// the rig tool's toolbox — pick a component, then click a mount to slot it
-function drawComponentPanel(ctx: CanvasRenderingContext2D, g: Game, w: number) {
-  const panel = compPanelRect(w, PALETTE.length)
-  ctx.fillStyle = 'rgba(4,20,32,0.85)'
-  roundRect(ctx, panel.x, panel.y, panel.w, panel.h, 10)
-  ctx.fill()
-  ctx.fillStyle = '#9fb8c8'
-  ctx.font = 'bold 12px ui-monospace, monospace'
-  ctx.textAlign = 'left'
-  ctx.fillText('components · Q/E · click a mount', panel.x + 10, panel.y + 19)
-
-  for (const row of compRowRects(w, PALETTE.length)) {
-    const c = PALETTE[row.idx]
-    const sel = row.idx === g.compSel
-    ctx.fillStyle = sel ? 'rgba(60,96,120,0.9)' : 'rgba(255,255,255,0.05)'
-    roundRect(ctx, row.x, row.y, row.w, row.h, 7)
-    ctx.fill()
-    if (sel) {
-      ctx.strokeStyle = '#ffd257'
-      ctx.lineWidth = 1.5
-      ctx.stroke()
-    }
-    ctx.textAlign = 'left'
-    ctx.font = '16px ui-monospace, monospace'
-    ctx.fillStyle = '#e8f1f5'
-    ctx.fillText(c.icon, row.x + 9, row.y + 25)
-    ctx.font = 'bold 12px ui-monospace, monospace'
-    ctx.fillStyle = compColor(c.id, c.kind)
-    ctx.fillText(c.name, row.x + 34, row.y + 16)
-    ctx.font = '10px ui-monospace, monospace'
-    ctx.fillStyle = '#8fb3c9'
-    ctx.fillText(compKindWord(c.id, c.kind), row.x + 34, row.y + 30)
-  }
-
-  // the selected component's full tip, wrapped under the list
-  const tip = PALETTE[g.compSel].tip
-  ctx.font = '11px ui-monospace, monospace'
-  ctx.fillStyle = '#cfe3ee'
-  const words = tip.split(' ')
-  const maxW = panel.w - 20
-  let line = ''
-  let ty = panel.y + panel.h + 16
-  for (const word of words) {
-    const test = line ? line + ' ' + word : word
-    if (ctx.measureText(test).width > maxW && line) {
-      ctx.fillText(line, panel.x + 10, ty)
-      ty += 15
-      line = word
-    } else {
-      line = test
-    }
-  }
-  if (line) ctx.fillText(line, panel.x + 10, ty)
 }
 
 // tiny cache so we don't recompute phenotypes every frame for the seed list
@@ -1271,6 +1269,166 @@ function drawPlantTooltip(ctx: CanvasRenderingContext2D, g: Game, w: number, h: 
   ctx.fillText(stat, bx + 12, by + 72 + lines.length * 16)
 }
 
+/** the channeling board: two parents, an allele-placement grid per locus, and a
+ *  live phenotype preview. RNG is upstream (parents + wildcards); the placement
+ *  is the authorship. Layout & hit-testing come from ui.boardLayout. */
+function drawBoard(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number) {
+  const board = g.board!
+  const L = boardLayout(w, h, board)
+  const accent = board.premium ? '#f4a6d0' : '#ffd257'
+
+  ctx.fillStyle = 'rgba(2,10,18,0.8)'
+  ctx.fillRect(0, 0, w, h)
+  ctx.fillStyle = 'rgba(8,24,36,0.98)'
+  roundRect(ctx, L.panel.x, L.panel.y, L.panel.w, L.panel.h, 14)
+  ctx.fill()
+  ctx.strokeStyle = board.premium ? '#f4a6d0' : '#3c6078'
+  ctx.lineWidth = 2
+  ctx.stroke()
+
+  ctx.textAlign = 'left'
+  ctx.fillStyle = accent
+  ctx.font = 'bold 18px ui-monospace, monospace'
+  ctx.fillText(board.premium ? '🐝 breeder boat — channeling (premium)' : '🏝️ port — channeling', L.panel.x + 18, L.panel.y + 28)
+
+  // parent slots
+  for (const ps of L.parents) {
+    ctx.fillStyle = ps.focused ? 'rgba(60,96,120,0.9)' : 'rgba(255,255,255,0.05)'
+    roundRect(ctx, ps.rect.x, ps.rect.y, ps.rect.w, ps.rect.h, 8)
+    ctx.fill()
+    if (ps.focused) {
+      ctx.strokeStyle = '#ffd257'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+    }
+    ctx.fillStyle = '#7d97a8'
+    ctx.font = '10px ui-monospace, monospace'
+    ctx.fillText(ps.slot === 0 ? 'parent A' : 'parent B', ps.rect.x + 8, ps.rect.y + 15)
+    if (ps.parent) {
+      const ph = phenoOf(ps.parent.genome)
+      ctx.fillStyle = ph.shiny ? '#ffe9a8' : '#e8f1f5'
+      ctx.font = 'bold 12px ui-monospace, monospace'
+      ctx.fillText(fit(ctx, ph.name, ps.rect.w - 16), ps.rect.x + 8, ps.rect.y + 33)
+      ctx.fillStyle = '#9fb8c8'
+      ctx.font = '10px ui-monospace, monospace'
+      ctx.fillText(fit(ctx, `${ps.parent.label} · ${ph.role}`, ps.rect.w - 16), ps.rect.x + 8, ps.rect.y + 47)
+    } else {
+      ctx.fillStyle = '#5f7a8a'
+      ctx.font = '11px ui-monospace, monospace'
+      ctx.fillText('click a line ↓', ps.rect.x + 8, ps.rect.y + 36)
+    }
+  }
+
+  // stock list (clipped)
+  ctx.fillStyle = '#7d97a8'
+  ctx.font = 'bold 11px ui-monospace, monospace'
+  ctx.fillText('your lines — click to add', L.stockClip.x, L.stockClip.y - 6)
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(L.stockClip.x, L.stockClip.y, L.stockClip.w, L.stockClip.h)
+  ctx.clip()
+  for (const s of L.stock) {
+    const chosen = board.parents.some(p => p === s.entry)
+    ctx.fillStyle = chosen ? 'rgba(60,96,120,0.75)' : 'rgba(255,255,255,0.05)'
+    roundRect(ctx, s.rect.x, s.rect.y, s.rect.w, s.rect.h, 6)
+    ctx.fill()
+    const ph = phenoOf(s.entry.genome)
+    ctx.textAlign = 'left'
+    ctx.fillStyle = ph.shiny ? '#ffe9a8' : '#e8f1f5'
+    ctx.font = '11px ui-monospace, monospace'
+    ctx.fillText(fit(ctx, `${ph.shiny ? '✦ ' : ''}${ph.name}`, s.rect.w - 70), s.rect.x + 6, s.rect.y + 14)
+    ctx.fillStyle = '#8fb3c9'
+    ctx.textAlign = 'right'
+    ctx.fillText(`${s.entry.label} ${s.entry.gen ? 'F' + s.entry.gen : 'wild'}`, s.rect.x + s.rect.w - 6, s.rect.y + 14)
+    ctx.textAlign = 'left'
+  }
+  ctx.restore()
+
+  // locus rows: chips flanking the child's expressed trait
+  for (const row of L.loci) {
+    ctx.textAlign = 'left'
+    ctx.fillStyle = '#9fb8c8'
+    ctx.font = '11px ui-monospace, monospace'
+    ctx.fillText(row.locus, row.rect.x, row.rect.y + row.rect.h / 2 + 4)
+    for (const c of row.chips) drawChip(ctx, c)
+    const s0 = row.chips.filter(c => c.slot === 0)
+    const s1 = row.chips.filter(c => c.slot === 1)
+    if (L.ready && s0.length && s1.length) {
+      const cx = (Math.max(...s0.map(c => c.rect.x + c.rect.w)) + Math.min(...s1.map(c => c.rect.x))) / 2
+      ctx.textAlign = 'center'
+      ctx.fillStyle = row.expressedRare ? '#ffe9a8' : '#cfe3ee'
+      ctx.font = 'bold 11px ui-monospace, monospace'
+      ctx.fillText(fit(ctx, row.expressedLabel, 76), cx, row.rect.y + row.rect.h / 2 + 4)
+      ctx.textAlign = 'left'
+    }
+  }
+
+  // live preview line
+  ctx.textAlign = 'left'
+  if (L.child) {
+    const ph = phenotype(L.child)
+    const syn = synergies(L.child)
+    ctx.fillStyle = ph.shiny ? '#ffe9a8' : '#e8f1f5'
+    ctx.font = '12px ui-monospace, monospace'
+    ctx.fillText(`${ph.shiny ? '✦ ' : ''}${ph.name} · ${ph.role} · ${gunLine(ph)}`, L.preview.x, L.preview.y + 14)
+    if (syn.length) {
+      ctx.fillStyle = '#c9a0ff'
+      ctx.fillText(`⟡ synergy: ${syn.join(' · ')}`, L.preview.x, L.preview.y + 30)
+    }
+  } else {
+    ctx.fillStyle = '#7d97a8'
+    ctx.font = '12px ui-monospace, monospace'
+    ctx.fillText('set both parents to begin channelling', L.preview.x, L.preview.y + 14)
+  }
+
+  // buttons
+  drawBoardBtn(ctx, L.cancelBtn, 'cancel · Esc', '#e79a9a')
+  if (L.ready) {
+    drawBoardBtn(ctx, L.autoBtn, 'auto-best · F', '#b8e986')
+    drawBoardBtn(ctx, L.crossBtn, `cross · Enter (${BREED_COST}💧)`, accent)
+  }
+}
+
+function drawChip(ctx: CanvasRenderingContext2D, c: { locus: import('./genetics').LocusId; allele: string; source: 'own' | 'wild'; rect: { x: number; y: number; w: number; h: number }; chosen: boolean }) {
+  const rare = alleleDef(c.locus, c.allele).rare
+  ctx.fillStyle = c.chosen ? (c.source === 'wild' ? 'rgba(150,100,40,0.9)' : 'rgba(52,104,74,0.9)') : 'rgba(255,255,255,0.06)'
+  roundRect(ctx, c.rect.x, c.rect.y, c.rect.w, c.rect.h, 5)
+  ctx.fill()
+  if (c.chosen) {
+    ctx.strokeStyle = c.source === 'wild' ? '#ffcf7a' : '#ffd257'
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+  }
+  ctx.textAlign = 'center'
+  ctx.fillStyle = c.source === 'wild' ? '#ffd9a0' : rare ? '#ffe9a8' : '#dcebf3'
+  ctx.font = '10px ui-monospace, monospace'
+  const label = (c.source === 'wild' ? '✦' : rare ? '·' : '') + alleleDef(c.locus, c.allele).label
+  ctx.fillText(fit(ctx, label, c.rect.w - 4), c.rect.x + c.rect.w / 2, c.rect.y + c.rect.h / 2 + 4)
+  ctx.textAlign = 'left'
+}
+
+function drawBoardBtn(ctx: CanvasRenderingContext2D, r: { x: number; y: number; w: number; h: number }, label: string, color: string) {
+  ctx.fillStyle = 'rgba(255,255,255,0.06)'
+  roundRect(ctx, r.x, r.y, r.w, r.h, 8)
+  ctx.fill()
+  ctx.strokeStyle = color
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+  ctx.textAlign = 'center'
+  ctx.fillStyle = color
+  ctx.font = 'bold 12px ui-monospace, monospace'
+  ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + 4)
+  ctx.textAlign = 'left'
+}
+
+/** clip a string to fit a pixel width in the current font, adding an ellipsis */
+function fit(ctx: CanvasRenderingContext2D, s: string, maxW: number): string {
+  if (ctx.measureText(s).width <= maxW) return s
+  let out = s
+  while (out.length > 1 && ctx.measureText(out + '…').width > maxW) out = out.slice(0, -1)
+  return out + '…'
+}
+
 function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.fillStyle = 'rgba(2,12,20,0.82)'
   ctx.fillRect(0, 0, w, h)
@@ -1283,15 +1441,16 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.fillText('a raft roguelike where your garden is the gun deck', w / 2, h * 0.16 + 28)
 
   const lines = [
-    'A/D — helm · W — sheet in · S — back water · SPACE — FIRE guns · 1–3 tools',
-    'B — boil 1🪵 → 2💧 · U — refit the hull · T — trade · P pause · M mute · H help',
+    'A/D — helm · W — sheet in · S — back water · SPACE — FIRE guns · 1–2 tools',
+    'B — boil 1🪵 → 2💧 · U — refit · T — trade · F — breed (port/boat) · P pause · H help',
     '',
     'she sails like a SHIP: the prow leads, the hull turns, momentum carries.',
     'mind the WIND (arrow up top): running with it is fast, beating into it is a crawl.',
     'the MINIMAP (bottom left) charts where you sail; ⌂ points the way home.',
     '',
-    'sights dot the horizon: ⚓ smoking wrecks (fat salvage) · 🏮 traders (🪵 → seeds)',
-    '🌀 becalmed pools (rich flotsam, dead sails) · ☠️ raider nests (the wildest genes).',
+    'sights dot the horizon: ⚓ wrecks (fat salvage) · 🏮 traders (🪵 → seeds) · 🌀 becalmed',
+    'pools (rich flotsam, dead sails) · ☠️ raider nests (wildest genes) · 🏝️ ports & the',
+    '🐝 breeder boat (dock with F to cross your lines).',
     '',
     'raiders eye you first (❓) — back away and they lose interest; linger and it\'s ⚔️.',
     'waking one ship stirs its podmates, but only a few press the attack at once —',
@@ -1312,14 +1471,15 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
     'the lanyard, then reload on their rate gene. steer the hull to walk the rings over',
     'a raider, time the volley, and keep plants WATERED or they wilt & stop firing.',
     "kill a ship's last gun and her crew scuttles — the wreck is yours.",
-    'RIG your mounts (🔧 tool / key 3): slot components in order to build the shot —',
-    'e.g. 💥 airburst + ⬤ ball + ❄ frost + ⁘ scatter = a shell that bursts into a',
-    'chilling fan. order matters; ✕ strips a mount. (prototype: free toolbox for now.)',
+    'every gun trick is a GENE now: a homing quirk curves the shells, an airburst locus',
+    'scatters a cluster where they land, elements chill/burn/rot — no rig, the genome IS',
+    'the weapon. the best traits are rare recessives that hide in CARRIER LINES.',
     'wood buys REFITS (U): skiff → sloop → brig → galleon, more mounts each time.',
-    'the BEES breed for you: two mature, watered plants quietly cross into new seeds',
-    'while you sail — what you field IS the breeding program. dominant alleles mask',
-    'recessives, so the best traits hide in carrier lines until the right pairing;',
-    'raider guns carrying a rare line may drop their seed — sow it into the pool.',
+    'BREED at a 🏝️ port (one per region — a reliable anchor) or the wandering 🐝 breeder',
+    'boat (premium): press F to dock and open the CHANNELING board. set two parents, then',
+    'place one allele from each into the child — surface a carried recessive on purpose,',
+    'grab any ✦ wildcard the cross offers, and line up trait SYNERGIES. Enter to cross,',
+    'F auto-fills the best, Esc cancels. raider guns carrying a rare line may drop it.',
     '',
     'the run ends when your hull gives out.',
   ]

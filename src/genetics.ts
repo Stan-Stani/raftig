@@ -6,11 +6,13 @@
 
 import { pick, weighted } from './util'
 
-export type LocusId = 'power' | 'rate' | 'barrel' | 'reach' | 'element' | 'thirst' | 'quirk'
-export const LOCUS_ORDER: LocusId[] = ['power', 'rate', 'barrel', 'reach', 'element', 'thirst', 'quirk']
+export type LocusId = 'power' | 'rate' | 'barrel' | 'reach' | 'element' | 'thirst' | 'quirk' | 'burst'
+export const LOCUS_ORDER: LocusId[] = ['power', 'rate', 'barrel', 'reach', 'element', 'thirst', 'quirk', 'burst']
 
 export type Element = 'plain' | 'ember' | 'frost' | 'venom'
-export type Quirk = 'none' | 'pierce' | 'leech' | 'magnet'
+// projectile "tricks" — one per plant (the quirk locus). homing joins the old
+// three: the wand rig's behaviours are genes now, hiding in carrier lines.
+export type Quirk = 'none' | 'pierce' | 'leech' | 'magnet' | 'homing'
 
 export interface AlleleDef {
   id: string
@@ -86,6 +88,14 @@ export const LOCI: Record<LocusId, AlleleDef[]> = {
     { id: 'pierce', sym: 'X', label: 'pierce', dom: 0, w: 0.5, rare: true, quirk: 'pierce' },
     { id: 'leech', sym: 'L', label: 'leech', dom: 0, w: 0.5, rare: true, quirk: 'leech' },
     { id: 'magnet', sym: 'M', label: 'magnet', dom: 0, w: 0.5, rare: true, quirk: 'magnet' },
+    { id: 'homing', sym: 'G', label: 'homing', dom: 0, w: 0.5, rare: true, quirk: 'homing' },
+  ],
+  // burst: how the shell lands. direct is the common flush hit; airburst is a
+  // rare recessive that re-casts the plant's own volley where the shell bursts —
+  // a cluster-mortar you bred, not rigged. Layers on any quirk/element.
+  burst: [
+    { id: 'direct', sym: 'd', label: 'direct', dom: 1, w: 6 },
+    { id: 'airburst', sym: 'A', label: 'airburst', dom: 0, w: 0.35, rare: true },
   ],
 }
 
@@ -112,6 +122,8 @@ export interface Pheno {
   /** multiplies time-to-mature (thirst coupling); 1 = baseline */
   growMult: number
   quirk: Quirk
+  /** shell re-casts the plant's own volley at its burst point (burst locus) */
+  airburst: boolean
   /** deterministic cultivar name, plantig-style */
   name: string
   blurb: string
@@ -155,15 +167,20 @@ export function cultivarName(g: Genome): string {
   return NAME_PRE[h % NAME_PRE.length] + NAME_SUF[Math.floor(h / 64) % NAME_SUF.length]
 }
 
-/** One-word archetype from the loudest expressed traits — the genome's character. */
-function roleOf(power: AlleleDef, rate: AlleleDef, barrel: AlleleDef, reach: AlleleDef): string {
-  if (reach.id === 'spyglass') return power.id === 'titan' ? 'siege sniper' : 'sniper'
-  if (barrel.id === 'hydra') return reach.id === 'short' ? 'scattergun' : 'sprayer'
-  if (power.id === 'titan') return 'siege gun'
-  if (rate.id === 'rapid') return 'autocannon'
-  if (reach.id === 'short' && power.id !== 'mild') return 'brawler'
-  if (barrel.id === 'twin') return 'raker'
-  return 'popgun'
+/** One-word archetype from the loudest expressed traits — the genome's character.
+ *  A homing/airburst trick prefixes the base role (a bred "cluster sniper"). */
+function roleOf(power: AlleleDef, rate: AlleleDef, barrel: AlleleDef, reach: AlleleDef, quirk: AlleleDef, burst: AlleleDef): string {
+  const base = (() => {
+    if (reach.id === 'spyglass') return power.id === 'titan' ? 'siege sniper' : 'sniper'
+    if (barrel.id === 'hydra') return reach.id === 'short' ? 'scattergun' : 'sprayer'
+    if (power.id === 'titan') return 'siege gun'
+    if (rate.id === 'rapid') return 'autocannon'
+    if (reach.id === 'short' && power.id !== 'mild') return 'brawler'
+    if (barrel.id === 'twin') return 'raker'
+    return 'popgun'
+  })()
+  const prefix = burst.id === 'airburst' ? 'cluster' : quirk.quirk === 'homing' ? 'seeker' : ''
+  return prefix ? `${prefix} ${base}` : base
 }
 
 export function phenotype(g: Genome): Pheno {
@@ -174,6 +191,8 @@ export function phenotype(g: Genome): Pheno {
   const element = expressed('element', g.element)
   const thirst = expressed('thirst', g.thirst)
   const quirk = expressed('quirk', g.quirk)
+  const burst = expressed('burst', g.burst)
+  const airburst = burst.id === 'airburst'
   // couplings: an allele's cost lands on a neighbour stat (see LOCI comments)
   const dmg = power.dmg! * barrel.mult! * (reach.dmgMult ?? 1) * (element.dmgMult ?? 1)
   const period = rate.period! * (power.rateMult ?? 1)
@@ -181,6 +200,7 @@ export function phenotype(g: Genome): Pheno {
   const parts = [element.effect ?? 'plain', barrel.label, power.label]
   if (reach.id !== 'short') parts.push(reach.label)
   if (quirk.quirk && quirk.quirk !== 'none') parts.push(quirk.quirk)
+  if (airburst) parts.push('airburst')
   return {
     dmg: Math.round(dmg * 10) / 10,
     period: Math.round(period * 100) / 100,
@@ -191,10 +211,11 @@ export function phenotype(g: Genome): Pheno {
     drain: Math.round(drain * 100) / 100,
     growMult: thirst.growMult ?? 1,
     quirk: quirk.quirk ?? 'none',
+    airburst,
     name: cultivarName(g),
     blurb: parts.join(' · '),
-    role: roleOf(power, rate, barrel, reach),
-    shiny: [power, rate, barrel, reach, element, thirst, quirk].some(a => a.rare),
+    role: roleOf(power, rate, barrel, reach, quirk, burst),
+    shiny: [power, rate, barrel, reach, element, thirst, quirk, burst].some(a => a.rare),
   }
 }
 
@@ -238,12 +259,18 @@ export const MUTATION_RATE = 0.06
 /** Of those mutations, chance it jackpots into a rare allele of that locus. */
 const JACKPOT_RATE = 0.35
 
-function meiosis(g: Genome, locus: LocusId): string {
-  const inherited = g[locus][Math.random() < 0.5 ? 0 : 1]
-  if (Math.random() >= MUTATION_RATE) return inherited
+/** A mutation result at a locus — jackpot-weighted toward that locus's rares.
+ *  Shared by meiosis (drift) and the channeling board (wildcard tiles). */
+export function mutationAllele(locus: LocusId): string {
   const rares = LOCI[locus].filter(a => a.rare)
   if (rares.length && Math.random() < JACKPOT_RATE) return pick(rares).id
   return pick(LOCI[locus]).id
+}
+
+function meiosis(g: Genome, locus: LocusId): string {
+  const inherited = g[locus][Math.random() < 0.5 ? 0 : 1]
+  if (Math.random() >= MUTATION_RATE) return inherited
+  return mutationAllele(locus)
 }
 
 /** Cross two genomes: one allele from each parent per locus, plus mutation. */
@@ -265,5 +292,6 @@ export function makeGenome(spec: Partial<Record<LocusId, [string, string]>> = {}
     element: spec.element ?? ['plain', 'plain'],
     thirst: spec.thirst ?? ['thirsty', 'thirsty'],
     quirk: spec.quirk ?? ['none', 'none'],
+    burst: spec.burst ?? ['direct', 'direct'],
   }
 }

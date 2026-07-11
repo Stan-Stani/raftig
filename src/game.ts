@@ -1,8 +1,8 @@
 import { Vec, v, dist, clamp, rand, randInt, gkey, angleDiff } from './util'
-import { Genome, Seed, Pheno, phenotype, wildGenome, breed, makeGenome, carriesRare } from './genetics'
-import { Tool, TOOLS, toolbarLayout, seedRowRects, seedPanelRect, restartRect, inRect, SEED_VISIBLE, compPanelRect, compRowRects } from './ui'
-import { CompDef, Shot, PALETTE, CLEAR, MAX_SLOTS, compile, buildLabel, flattenShots } from './wand'
-import { POI, POI_CELL, POI_SIGHT, cellPOI, makePOI, TRADE_COST, TRADE_RANGE } from './poi'
+import { Genome, Seed, Pheno, phenotype, wildGenome, makeGenome, carriesRare } from './genetics'
+import { Tool, TOOLS, toolbarLayout, seedRowRects, seedPanelRect, restartRect, inRect, SEED_VISIBLE, boardLayout } from './ui'
+import { Board, BoardParent, openBoard, boardCommit, boardFocus, boardChoose, boardPlace, boardAuto, DOCK_RANGE } from './breeding'
+import { POI, POI_CELL, POI_SIGHT, cellPOI, makePOI, TRADE_COST, TRADE_RANGE, BREED_COST } from './poi'
 import { keys } from './input'
 import { sfx, toggleMute } from './audio'
 
@@ -27,6 +27,7 @@ export const HUNT_CAP = 3 // ships in full ⚔️ at once — the rest shadow ou
 export const DANGER_SCALE = 550 // px from home waters per +1 danger
 export const FOG_CELL = 280 // minimap fog-of-war resolution
 export const FOG_SIGHT = 640 // radius revealed around the ship
+export const BREEDER_SPEED = 24 // px/s the wandering breeder boat drifts
 
 export interface Plant {
   genome: Genome
@@ -54,8 +55,6 @@ export interface Mount {
   y: number
   aim0: number // the mount's natural facing; new plants point this way
   plant: Plant | null
-  /** rigged components (Noita-style wand slots); [] = fires the plant's bare gun */
-  components: CompDef[]
 }
 
 export interface HullTier {
@@ -196,12 +195,12 @@ export interface Bullet {
   src?: Plant
   /** the ship that fired an enemy shell — a burst that tells renews its patience */
   owner?: EnemyShip
-  /** rigged: shell curves toward the nearest raider in flight */
+  /** inherited (homing quirk): shell curves toward the nearest raider in flight */
   homing?: boolean
-  /** rigged: firing heading, so a trigger's payload radiates from the burst */
+  /** firing heading, so an airburst's cluster radiates from the burst point */
   heading?: number
-  /** rigged: shots cast at this shell's burst point (airburst trigger) */
-  payload?: Shot[]
+  /** inherited (burst locus): shell scatters a cluster volley where it bursts */
+  airburst?: boolean
 }
 
 export type LootKind = 'wood' | 'seed' | 'water'
@@ -288,6 +287,8 @@ export class Game {
   pois = new Map<string, POI | null>()
   /** POIs near enough to simulate / render this frame */
   activePois: POI[] = []
+  /** the wandering breeder boat — a single mover, not tied to any cell */
+  breeder: POI | null = null
   /** fog-of-war: minimap cells the ship has sailed near */
   seen = new Set<string>()
   fogT = 0
@@ -295,8 +296,8 @@ export class Game {
   tool: Tool = 'water'
   seedSel = 0
   seedScroll = 0
-  compSel = 1 // selected component in the rig palette (0 = ✕ clear)
-  pollenT = 20 // seconds until the bees next work the deck
+  /** the channeling board — non-null while docked at a port/breeder, breeding */
+  board: Board | null = null
 
   firing = false // set by the fire key, consumed each frame → one broadside per press
   chillT = 0 // frost debuff on our ship
@@ -320,7 +321,7 @@ export class Game {
   reset() {
     this.tier = 0
     this.ship = { pos: v(0, 0), vel: v(0, 0), a: 0, hp: TIERS[0].hull }
-    this.mounts = TIERS[0].mounts.map(m => ({ x: m.x, y: m.y, aim0: m.aim, plant: null, components: [] }))
+    this.mounts = TIERS[0].mounts.map(m => ({ x: m.x, y: m.y, aim0: m.aim, plant: null }))
     this.burnT = 0
     // one half-grown basic shooter on the port mount so wave 1 is survivable
     const starter = makePlant(makeGenome(), 0, 0.55)
@@ -346,6 +347,10 @@ export class Game {
     this.spawnT = 3
     this.pois = new Map()
     this.activePois = []
+    // a breeder boat wanders the far horizon from the start — find it for a
+    // premium cross; ports are the reliable anchor in between
+    this.breeder = makePOI('breeder', v(Math.cos(wa + 2.3) * 1500, Math.sin(wa + 2.3) * 1500))
+    this.breeder.heading = wa + 2.3 + Math.PI
     this.seen = new Set()
     this.fogT = 0
     // a guaranteed first sight: smoke on the horizon in a random direction
@@ -354,8 +359,7 @@ export class Game {
     this.tool = 'water'
     this.seedSel = 0
     this.seedScroll = 0
-    this.compSel = 1
-    this.pollenT = 20
+    this.board = null
     this.chillT = 0
     this.shake = 0
     this.over = false
@@ -443,7 +447,7 @@ export class Game {
   update(dt: number) {
     this.cam = this.ship.pos
     this.hover = this.screenToWorld(this.hoverScreen.x, this.hoverScreen.y)
-    if (this.over || this.paused || this.helpOpen) {
+    if (this.over || this.paused || this.helpOpen || this.board) {
       this.updateFx(dt)
       return
     }
@@ -455,7 +459,6 @@ export class Game {
     this.updatePOIs(dt)
     this.updateMovement(dt)
     this.updateShip(dt)
-    this.updatePollination(dt)
     this.updateEnemies(dt)
     this.updateBullets(dt)
     this.updateLoot(dt)
@@ -497,6 +500,24 @@ export class Game {
     this.activePois = []
     for (const p of this.pois.values()) {
       if (p && dist(p.pos, c) < R) this.activePois.push(p)
+    }
+
+    // the breeder boat is a lone mover: it meanders on its heading and, if it
+    // slips too far, reappears over the horizon somewhere new — so there is
+    // always one out there to hunt for
+    const br = this.breeder
+    if (br) {
+      const bh = br.heading ?? 0
+      br.pos.x += Math.cos(bh) * BREEDER_SPEED * dt
+      br.pos.y += Math.sin(bh) * BREEDER_SPEED * dt
+      br.heading = bh + Math.sin(this.time * 0.17) * 0.5 * dt
+      if (dist(br.pos, c) > 3400) {
+        const a = rand(Math.PI * 2)
+        br.pos = v(c.x + Math.cos(a) * 2500, c.y + Math.sin(a) * 2500)
+        br.heading = a + Math.PI + rand(-0.5, 0.5)
+        br.discovered = false
+      }
+      this.activePois.push(br)
     }
 
     for (const p of this.activePois) {
@@ -743,8 +764,8 @@ export class Game {
       // no aiming, no range gate: the helm walks the burst rings over a target,
       // the reach gene picks the ring, and firing starts the rate-gene reload.
       if (this.firing && p.growth >= 1 && p.water > 0 && p.cooldown <= 0) {
-        const slow = this.firePlant(m, this.mountPos(m))
-        p.cooldown = p.pheno.period * slow * (this.chillT > 0 ? 1.35 : 1)
+        this.firePlant(m, this.mountPos(m))
+        p.cooldown = p.pheno.period * (this.chillT > 0 ? 1.35 : 1)
         p.water = Math.max(0, p.water - 0.35)
       }
     }
@@ -752,35 +773,56 @@ export class Game {
     if (this.ship.hp <= 0 && !this.over) this.gameOver()
   }
 
-  /** the bees work the deck: every so often two mature, watered plants quietly
-   *  cross into a fresh seed — no tool, no cost. What you choose to field IS the
-   *  breeding program. Bees keep to the hive under fire, and rest once the pouch
-   *  is full, so the drip never floods you */
-  private updatePollination(dt: number) {
-    if (this.inCombat()) return
-    this.pollenT -= dt
-    if (this.pollenT > 0) return
-    this.pollenT = rand(32, 48)
-    if (this.seeds.length >= POUCH_CAP) return
-    const mature = this.mounts
-      .map(m => m.plant)
-      .filter((p): p is Plant => !!p && p.growth >= 1 && p.water > 0)
-    if (mature.length < 2) return
-    const i = randInt(0, mature.length - 1)
-    const j = (i + 1 + randInt(0, mature.length - 2)) % mature.length
-    const a = mature[i]
-    const b = mature[j]
-    const gen = Math.max(a.gen, b.gen) + 1
-    const make = () => ({ id: this.seedId++, genome: breed(a.genome, b.genome), gen })
-    this.seeds.push(make())
-    let msg = `🐝 ${phenotype(this.seeds[this.seeds.length - 1].genome).name}`
-    if (Math.random() < 0.25) {
-      this.seeds.push(make())
-      msg += ' ×2'
+  /** the eligible parents for a cross at a port/breeder: every mature, watered
+   *  deck plant plus every seed in the pouch. Breeding reads a genome, it never
+   *  consumes the parent — so fielding a line is joining it to your program. */
+  breedingStock(): BoardParent[] {
+    const stock: BoardParent[] = []
+    for (const m of this.mounts) {
+      const p = m.plant
+      if (p && p.growth >= 1 && p.water > 0) {
+        stock.push({ genome: p.genome, gen: p.gen, label: 'deck', name: p.pheno.name })
+      }
     }
+    for (const s of this.seeds) {
+      stock.push({ genome: s.genome, gen: s.gen, label: 'pouch', name: phenotype(s.genome).name })
+    }
+    return stock
+  }
+
+  /** F — dock at a port or the breeder boat in range and open the channeling
+   *  board. The breeder boat wins ties: it's the premium cross. */
+  tryDock() {
+    if (this.board || this.over || this.paused || this.helpOpen) return
+    const c = this.ship.pos
+    let premium = false
+    if (this.breeder && dist(this.breeder.pos, c) <= DOCK_RANGE) {
+      premium = true
+    } else if (!this.activePois.some(p => p.kind === 'port' && !p.done && dist(p.pos, c) <= DOCK_RANGE)) {
+      return this.toast('no port or breeder boat in range')
+    }
+    const stock = this.breedingStock()
+    if (stock.length < 2) return this.toast('need two mature plants or seeds to cross')
+    this.board = openBoard(premium, stock)
+    sfx('build')
+  }
+
+  /** commit the current board: mint the crossed seed into the pouch */
+  private commitBoard() {
+    const b = this.board
+    if (!b) return
+    if (this.seeds.length >= POUCH_CAP) return this.toast('pouch is full')
+    if (this.water < BREED_COST) return this.toast(`a cross costs ${BREED_COST}💧`)
+    const genome = boardCommit(b)
+    if (!genome) return this.toast('set both parents first')
+    this.water -= BREED_COST
+    const gen = b.childGen
+    this.seeds.push({ id: this.seedId++, genome, gen })
     this.stats.bred++
-    this.toastAt(this.ship.pos, `${msg} (F${gen})`, '#ffd257')
+    const ph = phenotype(genome)
+    this.toastAt(this.ship.pos, `🌸 ${ph.name} (F${gen})${ph.shiny ? ' ✦' : ''}`, '#ffd257')
     sfx('breed')
+    this.board = null
   }
 
   /** true while a raider sits within gun range of the ship — locks refits */
@@ -801,76 +843,76 @@ export class Game {
     return SPLASH * (p.pheno.quirk === 'pierce' ? 1.45 : 1)
   }
 
-  /** pull the lanyard on one mount. A rigged mount runs its compiled component
-   *  stack; a bare mount fires the plant's own gene-gun (the old behaviour).
-   *  Returns the cycle-time multiplier — heavier / busier builds reload slower. */
-  private firePlant(m: Mount, from: Vec): number {
+  /** pull the lanyard on one mount: fire the plant's gene-gun. Every projectile
+   *  behaviour now rides the genome — barrels fan, the reach gene sets the burst
+   *  ring, a homing quirk curves the shells, an airburst locus scatters a cluster
+   *  where they land. No rig: the phenotype IS the weapon. */
+  private firePlant(m: Mount, from: Vec) {
     const p = m.plant!
     p.activeT = 4
     const heading = this.ship.a + p.aim // hull-relative: turning walks the burst
-    const shots = m.components.length ? compile(m.components) : []
-    if (shots.length) {
-      const base = { range: p.pheno.range, dmg: p.pheno.dmg, splash: SPLASH, element: p.pheno.element, speed: 260 }
-      for (const shot of shots) this.spawnShot(shot, from, heading, base, true, p, true)
-      this.puff(v(from.x, from.y - 16), '#fff3c4', 2)
-      if (Math.random() < 0.7) sfx('shoot')
-      const flat = flattenShots(shots)
-      const maxSlow = flat.reduce((s, sh) => Math.max(s, sh.slow), 1)
-      return maxSlow * (1 + 0.12 * Math.max(0, flat.length - 1)) // more shells → longer reload
-    }
-    const spread = p.pheno.spread // barrel-gene spread: extra barrels fan their bursts
+    this.fireVolley(from, heading, p, true, 1, true)
+    this.puff(v(from.x, from.y - 16), '#fff3c4', 2)
+    if (Math.random() < 0.7) sfx('shoot')
+  }
+
+  /** launch a plant's fanned volley of mortar shells from `from` along `heading`.
+   *  Each shell bursts at the plant's bred reach; homing/airburst ride along.
+   *  `muzzle` lifts the spawn to the deck; airburst cluster sub-shells pass
+   *  muzzle=false so they radiate from the burst point at ground level. */
+  private fireVolley(from: Vec, heading: number, p: Plant, friendly: boolean, dmgScale: number, muzzle: boolean) {
     const speed = 260 // shells hang in the air — lead a moving target
+    const homing = p.pheno.quirk === 'homing'
     for (let i = 0; i < p.pheno.shots; i++) {
-      const a = heading + (i - (p.pheno.shots - 1) / 2) * spread
+      const a = heading + (i - (p.pheno.shots - 1) / 2) * p.pheno.spread
       // the reach gene IS the rangefinder: every shell bursts at its bred distance
       const drop = v(from.x + Math.cos(a) * p.pheno.range + rand(-7, 7), from.y + Math.sin(a) * p.pheno.range + rand(-7, 7))
-      const pos = v(from.x, from.y - 16)
-      const flightT = dist(from, drop) / speed
+      const pos = muzzle ? v(from.x, from.y - 16) : v(from.x, from.y)
+      const flightT = Math.max(0.05, dist(pos, drop) / speed)
       this.bullets.push({
         pos,
         vel: v((drop.x - pos.x) / flightT, (drop.y - pos.y) / flightT),
-        dmg: p.pheno.dmg,
+        dmg: p.pheno.dmg * dmgScale,
         element: p.pheno.element,
         quirk: p.pheno.quirk,
-        friendly: true,
+        friendly,
         life: flightT,
         src: p,
         drop,
         flightT,
         splash: this.plantSplash(p),
+        homing,
+        heading: a,
+        airburst: muzzle && p.pheno.airburst, // only the primary shell airbursts
       })
     }
-    this.puff(v(from.x, from.y - 16), '#fff3c4', 2)
-    if (Math.random() < 0.7) sfx('shoot')
-    return 1
   }
 
-  /** launch one compiled shot: a shell (maybe fanned) that may carry a payload
-   *  cast at its burst point. Shared by the initial pull and airburst payloads. */
-  private spawnShot(shot: Shot, from: Vec, heading: number, base: { range: number; dmg: number; splash: number; element: Pheno['element']; speed: number }, friendly: boolean, src: Plant | undefined, muzzle: boolean) {
-    const range = base.range * shot.rangeMult
-    for (let k = 0; k < shot.fan; k++) {
-      const a = heading + (k - (shot.fan - 1) / 2) * shot.spread
-      const drop = v(from.x + Math.cos(a) * range + rand(-7, 7), from.y + Math.sin(a) * range + rand(-7, 7))
-      const pos = muzzle ? v(from.x, from.y - 16) : v(from.x, from.y)
-      const flightT = Math.max(0.05, dist(pos, drop) / base.speed)
+  /** an airburst shell comes apart over the drop: scatter a short cluster of
+   *  sub-shells around the point, each a fraction of the plant's punch. */
+  private airburstCluster(p: Plant, at: Vec, friendly: boolean) {
+    const n = 3
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + rand(0.6)
+      const rr = SPLASH * rand(0.9, 1.7)
+      const drop = v(at.x + Math.cos(a) * rr, at.y + Math.sin(a) * rr)
+      const pos = v(at.x, at.y)
+      const flightT = Math.max(0.05, dist(pos, drop) / 170)
       this.bullets.push({
         pos,
         vel: v((drop.x - pos.x) / flightT, (drop.y - pos.y) / flightT),
-        dmg: base.dmg * shot.dmgMult,
-        element: shot.element ?? base.element,
-        quirk: shot.pierce ? 'pierce' : 'none',
+        dmg: p.pheno.dmg * 0.45,
+        element: p.pheno.element,
+        quirk: p.pheno.quirk === 'leech' ? 'leech' : 'none',
         friendly,
         life: flightT,
-        src,
+        src: p,
         drop,
         flightT,
-        splash: base.splash * shot.splashMult,
-        homing: shot.homing,
-        heading: a,
-        payload: shot.payload.length ? shot.payload : undefined,
+        splash: SPLASH * 0.8,
       })
     }
+    this.puff(at, '#ffe08a', 6)
   }
 
   /** B — the galley stove: burn wood, condense fresh water. No building required */
@@ -895,7 +937,7 @@ export class Game {
     this.tier++
     this.ship.hp = next.hull
     const old = this.mounts
-    this.mounts = next.mounts.map((md, i) => ({ x: md.x, y: md.y, aim0: md.aim, plant: old[i]?.plant ?? null, components: old[i]?.components ?? [] }))
+    this.mounts = next.mounts.map((md, i) => ({ x: md.x, y: md.y, aim0: md.aim, plant: old[i]?.plant ?? null }))
     this.banner = { title: `${next.name}!`, sub: `${next.mounts.length} gun mounts · hull ${next.hull}`, t: 3 }
     this.burst(this.ship.pos, '#e8c98a', 16)
     this.shake = Math.min(8, this.shake + 3)
@@ -1419,13 +1461,8 @@ export class Game {
       // a clean miss reads as a sea plume — the feedback that tunes your next volley
       this.puff(at, '#bfe3f2', 5)
     }
-    // airburst trigger: cast the rest of the stack from this burst point
-    if (b.payload && b.src) {
-      const p = b.src
-      const base = { range: p.pheno.range, dmg: p.pheno.dmg, splash: SPLASH, element: p.pheno.element, speed: 240 }
-      for (const shot of b.payload) this.spawnShot(shot, at, b.heading ?? 0, base, b.friendly, p, false)
-      this.puff(at, '#ffe08a', 6)
-    }
+    // airburst locus: the shell comes apart and scatters a cluster where it bursts
+    if (b.airburst && b.src) this.airburstCluster(b.src, at, b.friendly)
   }
 
   bulletColor(b: Bullet): string {
@@ -1598,6 +1635,10 @@ export class Game {
       this.helpOpen = false
       return
     }
+    if (this.board) {
+      this.boardClick(mx, my)
+      return
+    }
     for (const r of toolbarLayout(this.vw, this.vh)) {
       if (inRect(mx, my, r)) {
         this.tool = r.tool
@@ -1616,47 +1657,78 @@ export class Game {
         return
       }
     }
-    if (this.tool === 'rig') {
-      const panel = compPanelRect(this.vw, PALETTE.length)
-      if (inRect(mx, my, panel)) {
-        for (const row of compRowRects(this.vw, PALETTE.length)) {
-          if (inRect(mx, my, row)) {
-            this.compSel = row.idx
-            return
-          }
-        }
-        return
-      }
-    }
     if (this.paused) return
     this.worldClick(this.screenToWorld(mx, my))
   }
 
+  /** route a click on the open channeling board to its hit targets */
+  private boardClick(mx: number, my: number) {
+    const b = this.board!
+    const hit = boardLayout(this.vw, this.vh, b).hitTest(mx, my)
+    if (!hit) return
+    switch (hit.kind) {
+      case 'cancel':
+        this.board = null
+        sfx('deny')
+        return
+      case 'auto':
+        boardAuto(b)
+        return
+      case 'cross':
+        this.commitBoard()
+        return
+      case 'focus':
+        boardFocus(b, hit.slot)
+        return
+      case 'stock':
+        boardChoose(b, hit.idx)
+        return
+      case 'allele':
+        boardPlace(b, hit.locus, hit.slot, hit.allele)
+        return
+    }
+  }
+
   wheel(dir: number) {
+    if (this.board) {
+      this.board.scroll = clamp(this.board.scroll + dir, 0, 99)
+      return
+    }
     if (this.tool === 'plant') {
       this.seedScroll = clamp(this.seedScroll + dir, 0, Math.max(0, this.seeds.length - SEED_VISIBLE))
-    } else if (this.tool === 'rig') {
-      this.compSel = (this.compSel + dir + PALETTE.length) % PALETTE.length
     }
   }
 
   keydown(code: string) {
-    const idx = ['Digit1', 'Digit2', 'Digit3'].indexOf(code)
+    // the channeling board owns the keyboard while it's open
+    if (this.board) {
+      if (code === 'Escape') {
+        this.board = null
+        sfx('deny')
+      } else if (code === 'Enter') {
+        this.commitBoard()
+      } else if (code === 'KeyF') {
+        boardAuto(this.board)
+      }
+      return
+    }
+    const idx = ['Digit1', 'Digit2'].indexOf(code)
     if (idx >= 0 && idx < TOOLS.length) {
       this.tool = TOOLS[idx].tool
       return
     }
     switch (code) {
       case 'KeyQ':
-        if (this.tool === 'rig') this.compSel = (this.compSel + PALETTE.length - 1) % PALETTE.length
-        else if (this.seeds.length) this.seedSel = (this.seedSel + this.seeds.length - 1) % this.seeds.length
+        if (this.seeds.length) this.seedSel = (this.seedSel + this.seeds.length - 1) % this.seeds.length
         break
       case 'KeyE':
-        if (this.tool === 'rig') this.compSel = (this.compSel + 1) % PALETTE.length
-        else if (this.seeds.length) this.seedSel = (this.seedSel + 1) % this.seeds.length
+        if (this.seeds.length) this.seedSel = (this.seedSel + 1) % this.seeds.length
         break
       case 'KeyT':
         if (!this.over && !this.paused && !this.helpOpen) this.tryTrade()
+        break
+      case 'KeyF':
+        this.tryDock()
         break
       case 'KeyB':
         this.boil()
@@ -1727,23 +1799,6 @@ export class Game {
         plant.aim = m.aim0 // sown facing the mount's natural bearing
         m.plant = plant
         this.toastAt(this.mountPos(m), `🌱 ${phenotype(seed.genome).name}`, '#b8e986')
-        sfx('build')
-        break
-      }
-
-      case 'rig': {
-        if (!m) return
-        const comp = PALETTE[this.compSel]
-        if (comp.id === CLEAR.id) {
-          if (!m.components.length) return
-          m.components = []
-          this.toastAt(this.mountPos(m), 'stripped 🔧', '#c5b8a0')
-          sfx('build')
-          return
-        }
-        if (m.components.length >= MAX_SLOTS) return this.toast(`mount is full (${MAX_SLOTS} slots) — ✕ to strip`)
-        m.components = [...m.components, comp]
-        this.toastAt(this.mountPos(m), buildLabel(m.components), '#b8e986')
         sfx('build')
         break
       }
