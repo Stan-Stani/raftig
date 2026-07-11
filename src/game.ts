@@ -1,4 +1,4 @@
-import { Vec, v, dist, clamp, rand, randInt, gkey, angleDiff } from './util'
+import { Vec, v, dist, clamp, rand, randInt, gkey, angleDiff, weighted } from './util'
 import { Genome, Seed, Pheno, phenotype, wildGenome, makeGenome, carriesRare } from './genetics'
 import { Tool, TOOLS, toolbarLayout, seedRowRects, seedPanelRect, restartRect, inRect, SEED_VISIBLE, boardLayout } from './ui'
 import {
@@ -169,11 +169,15 @@ export interface EnemyShip {
   wanderT: number
   /** seconds of hunt left before breaking off — refreshed by landing or taking hits */
   patience: number
+  /** the class's full patience — what refreshes restore */
+  patience0: number
   /** harrier oar stamina 0..1 — sprints drain it, rest refills it */
   row: number
   danger: number // difficulty of the waters it spawned in
-  /** harriers row — fast in any wind, but small and fragile */
-  kind: 'raider' | 'harrier'
+  /** the fleet's classes, each a doctrine: raiders brawl · harriers row & sprint ·
+   *  sloops snipe long and flee the brawl · galleons tank and out-gun ·
+   *  fireships rush the hull and burn with it */
+  kind: 'raider' | 'harrier' | 'sloop' | 'galleon' | 'fireship'
   /** ship belongs to a nest and stays tethered to it */
   home?: POI
   /** holds one of the HUNT_CAP attack slots — shadowers wait outside gun range */
@@ -252,6 +256,11 @@ export interface HoverInfo {
   pos: Vec
 }
 
+/** how far a hunter presses before the chase fizzles — sloops and fireships range widest */
+function baseDeaggro(kind: EnemyShip['kind']): number {
+  return kind === 'harrier' ? 820 : kind === 'sloop' ? 900 : kind === 'fireship' ? 950 : DEAGGRO_R
+}
+
 function makePlant(genome: Genome, gen: number): Plant {
   return {
     genome,
@@ -322,6 +331,8 @@ export class Game {
   firing = false // set by the fire key, consumed each frame → one broadside per press
   /** battery elevation, ELEV_MIN..1 — scales every gun's burst distance; Z lowers, X raises */
   elev = 1
+  /** last time a leech proc floated its +💧 — throttles the toast, not the effect */
+  private leechToastT = -9
   chillT = 0 // frost debuff on our ship
   shake = 0
   cam = v(0, 0)
@@ -385,6 +396,7 @@ export class Game {
     this.seedScroll = 0
     this.board = null
     this.elev = 1
+    this.leechToastT = -9
     this.chillT = 0
     this.shake = 0
     this.over = false
@@ -583,7 +595,7 @@ export class Game {
       this.dropLoot('wood', n, scatter())
       left -= n
     }
-    this.dropLoot('water', 2 + Math.floor(danger / 3), scatter())
+    this.dropLoot('water', 1 + Math.floor(danger / 4), scatter())
     const nSeeds = 1 + (danger >= 4 ? 1 : 0)
     for (let i = 0; i < nSeeds; i++) {
       this.dropLoot('seed', 1, scatter(), { id: this.seedId++, genome: wildGenome(1 + danger * 0.5), gen: 0 })
@@ -614,7 +626,7 @@ export class Game {
       this.dropLoot('seed', 1, scatter(), { id: this.seedId++, genome: wildGenome(2 + danger * 0.5), gen: 0 })
     }
     this.dropLoot('wood', randInt(5, 8), scatter())
-    this.dropLoot('water', 2, scatter())
+    this.dropLoot('water', 1, scatter())
     this.banner = { title: 'nest cleared!', sub: 'their hoarded lines drift free — gather the seeds', t: 3.5 }
     this.burst(p.pos, '#ff6b6b', 16)
     sfx('sunk')
@@ -629,8 +641,8 @@ export class Game {
       const a = rand(Math.PI * 2)
       const at = v(p.pos.x + Math.cos(a) * rand(0, p.r * 0.5), p.pos.y + Math.sin(a) * rand(0, p.r * 0.5))
       const roll = Math.random()
-      if (roll < 0.5) this.dropLoot('wood', randInt(2, 3), at)
-      else if (roll < 0.88) this.dropLoot('water', 1, at)
+      if (roll < 0.58) this.dropLoot('wood', randInt(2, 3), at)
+      else if (roll < 0.86) this.dropLoot('water', 1, at)
       else this.dropLoot('seed', 1, at, { id: this.seedId++, genome: wildGenome(1 + danger * 0.4), gen: 0 })
     }
     for (const l of this.loot.slice(-n)) {
@@ -765,7 +777,7 @@ export class Game {
         if (p.dryTime > 6) p.hp -= 2 * dt
       }
       p.activeT = Math.max(0, p.activeT - dt)
-      const thirst = p.activeT > 0 ? 0.5 : 0.08
+      const thirst = p.activeT > 0 ? 0.3 : 0.04
       p.water = Math.max(0, p.water - p.pheno.drain * thirst * dt)
 
       // damage over time
@@ -796,7 +808,7 @@ export class Game {
       if (this.firing && p.water > 0 && p.cooldown <= 0) {
         this.firePlant(m, this.mountPos(m))
         p.cooldown = p.pheno.period * (this.chillT > 0 ? 1.35 : 1)
-        p.water = Math.max(0, p.water - 0.15)
+        p.water = Math.max(0, p.water - 0.1)
       }
     }
     this.firing = false // consumed this frame; a fresh press re-arms it
@@ -998,6 +1010,18 @@ export class Game {
 
   // ---- enemies ----
 
+  /** what the deeper sea sends: specialists join the stock raiders as danger climbs */
+  private rollKind(danger: number): EnemyShip['kind'] {
+    const table: { kind: EnemyShip['kind']; w: number }[] = [
+      { kind: 'raider', w: 10 },
+      { kind: 'harrier', w: danger > 2 ? Math.min(3.5, danger * 0.4) : 0 },
+      { kind: 'sloop', w: danger > 1.5 ? 2.2 : 0 },
+      { kind: 'fireship', w: danger > 2.5 ? Math.min(2.5, 0.8 + (danger - 2.5) * 0.5) : 0 },
+      { kind: 'galleon', w: danger > 4 ? Math.min(2.2, 0.7 + (danger - 4) * 0.4) : 0 },
+    ]
+    return weighted(table, t => t.w).kind
+  }
+
   spawnEnemyShip(opts: { at?: Vec; kind?: EnemyShip['kind']; home?: POI; dangerBonus?: number } = {}) {
     const c = this.ship.pos
     let pos = opts.at
@@ -1007,14 +1031,37 @@ export class Game {
       pos = v(c.x + Math.cos(angle) * away, c.y + Math.sin(angle) * away)
     }
     const danger = this.dangerAt(pos) + (opts.dangerBonus ?? 0)
-    const kind =
-      opts.kind ??
-      (danger > 2 && Math.random() < Math.min(0.3, 0.04 + danger * 0.035) ? 'harrier' : 'raider')
-    const size = kind === 'harrier' ? 2 : randInt(2, Math.min(2 + Math.ceil(danger / 2), 6))
+    const kind = opts.kind ?? this.rollKind(danger)
+    const size =
+      kind === 'harrier' || kind === 'fireship'
+        ? 2
+        : kind === 'sloop'
+          ? randInt(2, 3)
+          : kind === 'galleon'
+            ? randInt(5, Math.min(5 + Math.ceil(danger / 3), 7))
+            : randInt(2, Math.min(2 + Math.ceil(danger / 2), 6))
     const r = 20 + size * 6
-    const maxHp = size * (kind === 'harrier' ? 20 + danger * 3.5 : 26 + danger * 5)
+    const maxHp =
+      kind === 'harrier'
+        ? size * (20 + danger * 3.5)
+        : kind === 'sloop'
+          ? size * (18 + danger * 3)
+          : kind === 'galleon'
+            ? size * (34 + danger * 6)
+            : kind === 'fireship'
+              ? 36 + danger * 7
+              : size * (26 + danger * 5)
+    // fireships mount no guns — the hull is the shell
     let gunCount =
-      kind === 'harrier' ? 1 : 1 + (size >= 4 ? 1 : 0) + (danger >= 6 && size >= 5 ? 1 : 0) + (opts.home ? 1 : 0)
+      kind === 'harrier'
+        ? 1
+        : kind === 'fireship'
+          ? 0
+          : kind === 'sloop'
+            ? 1 + (danger >= 5 ? 1 : 0)
+            : kind === 'galleon'
+              ? 3 + (size >= 6 ? 1 : 0) + (danger >= 7 ? 1 : 0)
+              : 1 + (size >= 4 ? 1 : 0) + (danger >= 6 && size >= 5 ? 1 : 0) + (opts.home ? 1 : 0)
     const guns: EGun[] = []
     // guns are bolted to the hull, ship-cannon style: batteries share an axis and
     // alternate port/starboard — the ship has to maneuver to bring one to bear
@@ -1022,11 +1069,17 @@ export class Game {
     for (let i = 0; i < gunCount; i++) {
       const pa = (i / gunCount) * Math.PI * 2 + rand(0.6)
       const pd = gunCount === 1 ? 0 : r * 0.45
-      const plant = makePlant(wildGenome((opts.home ? 1.6 : 1) + danger * 0.4), 0)
+      const genome = wildGenome((opts.home ? 1.6 : 1) + danger * 0.4)
+      // class doctrine bred into the guns: sloops carry long glass, galleons heavy shot
+      if (kind === 'sloop') genome.reach = [Math.random() < 0.25 ? 'spyglass' : 'long', 'long']
+      if (kind === 'galleon') genome.power = [Math.random() < 0.2 ? 'titan' : 'stout', 'stout']
+      const plant = makePlant(genome, 0)
       plant.water = 100
       plant.aim = gunA + (i % 2) * Math.PI + rand(-0.15, 0.15)
       guns.push({ x: Math.cos(pa) * pd, y: Math.sin(pa) * pd, plant })
     }
+    const patience0 =
+      kind === 'sloop' ? 16 : kind === 'galleon' ? 20 : kind === 'fireship' ? 45 : CHASE_PATIENCE
     this.enemies.push({
       pos,
       vel: v(0, 0),
@@ -1038,15 +1091,25 @@ export class Game {
       chillT: 0,
       guns,
       orbitDir: Math.random() < 0.5 ? 1 : -1,
-      speed: kind === 'harrier' ? 92 + Math.min(18, danger * 2.5) : Math.min(80, 40 + danger * 3 + rand(10)),
+      speed:
+        kind === 'harrier'
+          ? 92 + Math.min(18, danger * 2.5)
+          : kind === 'fireship'
+            ? 100 + Math.min(25, danger * 3)
+            : kind === 'sloop'
+              ? Math.min(88, 55 + danger * 3)
+              : kind === 'galleon'
+                ? Math.min(46, 30 + danger * 1.5)
+                : Math.min(80, 40 + danger * 3 + rand(10)),
       mode: 'roam',
       noticeT: 0,
       noticeD: 0,
-      aggroR: kind === 'harrier' ? 380 : AGGRO_R,
-      deaggroR: kind === 'harrier' ? 820 : DEAGGRO_R,
+      aggroR: kind === 'harrier' ? 380 : kind === 'sloop' ? 430 : kind === 'fireship' ? 400 : AGGRO_R,
+      deaggroR: baseDeaggro(kind),
       wanderA: rand(Math.PI * 2),
       wanderT: rand(2, 6),
-      patience: CHASE_PATIENCE,
+      patience: patience0,
+      patience0,
       row: 1,
       danger,
       kind,
@@ -1070,7 +1133,8 @@ export class Game {
   private notice(e: EnemyShip, t = NOTICE_T) {
     if (e.mode !== 'roam') return
     e.mode = 'notice'
-    e.noticeT = e.kind === 'harrier' ? t * 0.6 : t
+    // the eager classes commit fast: rowers smell blood, fireships exist to burn
+    e.noticeT = e.kind === 'harrier' || e.kind === 'fireship' ? t * 0.6 : t
     e.noticeD = dist(e.pos, this.ship.pos)
     this.toastAt(e.pos, '❓', '#ffd257')
     sfx('notice')
@@ -1079,7 +1143,7 @@ export class Game {
   aggro(e: EnemyShip) {
     if (e.mode === 'hunt') return
     e.mode = 'hunt'
-    e.patience = CHASE_PATIENCE
+    e.patience = e.patience0
     // committing from afar (pod wake, long shots) mustn't fizzle the next frame
     e.deaggroR = Math.max(e.deaggroR, dist(e.pos, this.ship.pos) + 240)
     this.toastAt(e.pos, '⚔️ committed!', '#ff9d9d')
@@ -1142,7 +1206,24 @@ export class Game {
         if (e.patience <= 0) this.breakOff(e, ux, uy, 'not worth the powder')
       }
 
-      if (e.mode === 'hunt') {
+      if (e.mode === 'hunt' && e.kind === 'fireship') {
+        // the fireship IS the shell: charge flat out and burn together on contact.
+        // Its flame wake says exactly where it's pointed — don't be there
+        e.vel.x = ux * spd
+        e.vel.y = uy * spd
+        if (Math.random() < 9 * dt) {
+          this.puff(v(e.pos.x + rand(-e.r * 0.5, e.r * 0.5), e.pos.y + rand(-e.r * 0.5, e.r * 0.5)), '#ff8c42', 1)
+        }
+        if (this.onHull(e.pos, e.r * 0.7)) {
+          this.fireshipBlast(e)
+          continue
+        }
+      } else if (e.mode === 'hunt' && e.kind === 'sloop' && d < this.sloopStandoff(e)) {
+        // a sloop refuses the brawl: close inside its glass and it sheets away,
+        // curving off to re-open the range — chase it down or let it go
+        e.vel.x = -ux * spd - uy * e.orbitDir * spd * 0.3
+        e.vel.y = -uy * spd + ux * e.orbitDir * spd * 0.3
+      } else if (e.mode === 'hunt') {
         // guns are fixed mortars with no traverse — instead of orbiting freely,
         // sail for the station where the cheapest battery's burst ring lands on you
         const gun = this.bestGun(e, center, e.engaged ?? false)
@@ -1186,12 +1267,6 @@ export class Game {
           e.vel.x = ux * spd
           e.vel.y = uy * spd
         }
-        if (e.kind === 'raider') {
-          // raiders feel the wind too, just less than your square rig — flee downwind
-          const wEff = 0.8 + 0.2 * ((1 + Math.cos(angleDiff(Math.atan2(e.vel.y, e.vel.x), this.wind.a))) / 2)
-          e.vel.x *= wEff
-          e.vel.y *= wEff
-        }
       } else if (e.mode === 'notice') {
         // turn toward you and creep closer while making up their mind
         e.vel.x = ux * spd * 0.35
@@ -1210,8 +1285,14 @@ export class Game {
         e.vel.x = Math.cos(e.wanderA) * spd * 0.3 + Math.cos(this.wind.a) * this.wind.speed * 0.25
         e.vel.y = Math.sin(e.wanderA) * spd * 0.3 + Math.sin(this.wind.a) * this.wind.speed * 0.25
       }
-      // becalmed pools slow sailing raiders; harriers row through
-      if (e.kind === 'raider') {
+      // every class under canvas feels the wind and the dead pools — less than
+      // your square rig; harrier oars and the fireship's doomed crew don't care
+      if (e.kind !== 'harrier' && e.kind !== 'fireship') {
+        if (e.mode === 'hunt') {
+          const wEff = 0.8 + 0.2 * ((1 + Math.cos(angleDiff(Math.atan2(e.vel.y, e.vel.x), this.wind.a))) / 2)
+          e.vel.x *= wEff
+          e.vel.y *= wEff
+        }
         const cf = 0.55 + 0.45 * this.calmAt(e.pos)
         e.vel.x *= cf
         e.vel.y *= cf
@@ -1297,11 +1378,39 @@ export class Game {
     }
   }
 
+  /** the range a sloop refuses to fight inside — well under its longest glass,
+   *  with hysteresis against its stationing distance so it doesn't dither */
+  private sloopStandoff(e: EnemyShip): number {
+    let reach = 300
+    for (const g of e.guns) reach = Math.max(reach, g.plant.pheno.range)
+    return reach * 0.62
+  }
+
+  /** contact: the fireship goes up against your hull — blast, flames, gone.
+   *  No loot; everything it carried is burning with it. */
+  private fireshipBlast(e: EnemyShip) {
+    if (e.sunk) return
+    e.sunk = true
+    this.ship.hp -= 24 + e.danger * 5
+    this.burnT = Math.max(this.burnT, 5)
+    // flames wash over the nearby mounts too
+    for (const m of this.mounts) {
+      const p = m.plant
+      if (p && dist(e.pos, this.mountPos(m)) < e.r + 55) p.burnT = 4
+    }
+    this.burst(e.pos, '#ff8c42', 24)
+    this.burst(e.pos, '#ffd257', 10)
+    this.shake = Math.min(14, this.shake + 8)
+    this.toastAt(e.pos, '🔥 fireship!', '#ff9d5c')
+    sfx('sunk')
+    if (this.ship.hp <= 0) this.gameOver()
+  }
+
   /** give up the chase and wander off to lick wounds — the way out of a hunt */
   private breakOff(e: EnemyShip, ux: number, uy: number, msg: string) {
     e.mode = 'roam'
     e.engaged = false
-    e.deaggroR = e.kind === 'harrier' ? 820 : DEAGGRO_R // shed any pod-wake stretch
+    e.deaggroR = baseDeaggro(e.kind) // shed any pod-wake stretch
     e.wanderT = rand(3, 8)
     e.wanderA = Math.atan2(-uy, -ux) // sail off, unhurried, patching up
     this.toastAt(e.pos, msg, '#9fb8c8')
@@ -1366,7 +1475,7 @@ export class Game {
       this.dropLoot('wood', n, scatter())
       wood -= n
     }
-    this.dropLoot('water', 1 + Math.floor(e.danger / 3), scatter())
+    if (Math.random() < 0.6) this.dropLoot('water', 1 + Math.floor(e.danger / 6), scatter())
     this.stats.sunk++
     this.shake = Math.min(10, this.shake + 5)
     this.burst(e.pos, '#8a6a45', 16)
@@ -1454,7 +1563,7 @@ export class Game {
         if (!p) continue
         if (dist(at, this.mountPos(m)) < splash) {
           hitAny = true
-          if (b.owner && !b.owner.sunk) b.owner.patience = CHASE_PATIENCE // a burst that tells keeps them keen
+          if (b.owner && !b.owner.sunk) b.owner.patience = b.owner.patience0 // a burst that tells keeps them keen
           p.hp -= b.dmg * (b.element === 'venom' ? 1.6 : 1)
           if (b.element === 'ember') p.burnT = 3
           if (b.element === 'frost') this.chillT = 2.5
@@ -1463,7 +1572,7 @@ export class Game {
       }
       if (this.onHull(at, splash * 0.5)) {
         hitAny = true
-        if (b.owner && !b.owner.sunk) b.owner.patience = CHASE_PATIENCE // a burst that tells keeps them keen
+        if (b.owner && !b.owner.sunk) b.owner.patience = b.owner.patience0 // a burst that tells keeps them keen
         this.ship.hp -= b.dmg
         if (b.element === 'ember') this.burnT = 3
         if (b.element === 'frost') this.chillT = 2.5
@@ -1485,12 +1594,12 @@ export class Game {
         if (dist(at, this.gunPos(e, g)) < splash) {
           hitAny = true
           this.aggro(e)
-          e.patience = CHASE_PATIENCE // you drew blood — now they're invested
+          e.patience = e.patience0 // you drew blood — now they're invested
           p.hp -= b.dmg * (b.element === 'venom' ? 1.6 : 1)
           if (b.element === 'ember') p.burnT = 3
           if (b.element === 'frost') e.chillT = 2.5
           if (b.element === 'venom') p.poisonT = 4
-          if (b.quirk === 'leech' && b.src) b.src.water = Math.min(100, b.src.water + 2)
+          if (b.quirk === 'leech' && b.src) this.leechProc(b.src, at)
           if (p.hp <= 0) {
             this.killEnemyGun(e, g)
             this.checkScuttle(e)
@@ -1500,9 +1609,9 @@ export class Game {
       if (!e.sunk && dist(at, e.pos) < e.r + splash * 0.5) {
         hitAny = true
         this.aggro(e)
-        e.patience = CHASE_PATIENCE // you drew blood — now they're invested
+        e.patience = e.patience0 // you drew blood — now they're invested
         this.damageEnemyHull(e, b)
-        if (b.quirk === 'leech' && b.src) b.src.water = Math.min(100, b.src.water + 2)
+        if (b.quirk === 'leech' && b.src) this.leechProc(b.src, at)
       }
     }
     if (hitAny) {
@@ -1515,6 +1624,33 @@ export class Game {
     }
     // airburst locus: the shell comes apart and scatters a cluster where it bursts
     if (b.airburst && b.src) this.airburstCluster(b.src, at, b.friendly)
+  }
+
+  /** the leech quirk pays off: siphoned droplets stream from the burst back to
+   *  the plant — the visible "drink" — as its water meter tops up */
+  private leechProc(src: Plant, from: Vec) {
+    src.water = Math.min(100, src.water + 2)
+    const m = this.mounts.find(mm => mm.plant === src)
+    if (!m) return
+    const to = this.mountPos(m)
+    for (let i = 0; i < 6; i++) {
+      const jx = rand(-14, 14)
+      const jy = rand(-14, 14)
+      const flight = rand(0.35, 0.55)
+      this.particles.push({
+        pos: v(from.x + jx, from.y + jy),
+        // aim past the plant a touch — updateFx damps velocity in flight
+        vel: v(((to.x - from.x - jx) / flight) * 1.3, ((to.y - from.y - jy) / flight) * 1.3),
+        life: flight,
+        maxLife: flight,
+        size: rand(1.5, 2.8),
+        color: '#8ef0b0',
+      })
+    }
+    if (this.time - this.leechToastT > 0.9) {
+      this.leechToastT = this.time
+      this.toastAt(to, '+💧', '#8ef0b0')
+    }
   }
 
   bulletColor(b: Bullet): string {
@@ -1565,7 +1701,7 @@ export class Game {
     )
     // flotsam is materials only — seeds come from your bees or somebody's garden
     const loot: Loot =
-      Math.random() < 0.6
+      Math.random() < 0.75
         ? { kind: 'wood', n: randInt(2, 3), seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
         : { kind: 'water', n: 1, seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
     this.loot.push(loot)

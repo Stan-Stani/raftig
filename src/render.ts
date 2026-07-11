@@ -488,8 +488,52 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
   ctx.save()
   ctx.translate(e.pos.x, e.pos.y)
   ctx.rotate(ha)
-  drawHull(ctx, e.r * 1.2, e.r * 0.8, e.hp / e.maxHp, true, e.burnT)
+  const frac = e.hp / e.maxHp
+  // class silhouettes: sloops run slim and long, galleons broad with a gilded
+  // sterncastle, fireships low with braziers alight; raiders keep the stock hull
+  if (e.kind === 'sloop') {
+    drawHull(ctx, e.r * 1.45, e.r * 0.55, frac, true, e.burnT)
+    // a fore-and-aft sail amidships — the cut that lets her flee any brawl
+    ctx.fillStyle = 'rgba(238,229,205,0.85)'
+    ctx.beginPath()
+    ctx.moveTo(e.r * 0.95, 0)
+    ctx.quadraticCurveTo(e.r * 0.1, -e.r * 0.42, -e.r * 0.55, 0)
+    ctx.quadraticCurveTo(e.r * 0.1, e.r * 0.12, e.r * 0.95, 0)
+    ctx.fill()
+  } else if (e.kind === 'galleon') {
+    drawHull(ctx, e.r * 1.25, e.r * 0.95, frac, true, e.burnT)
+    // sterncastle and gold strakes — money and menace
+    ctx.fillStyle = '#3a2c1e'
+    roundRect(ctx, -e.r * 0.95, -e.r * 0.5, e.r * 0.55, e.r, 3)
+    ctx.fill()
+    ctx.strokeStyle = '#c9a24b'
+    ctx.lineWidth = 2
+    for (const side of [-1, 1]) {
+      ctx.beginPath()
+      ctx.moveTo(-e.r * 0.85, side * e.r * 0.6)
+      ctx.lineTo(e.r * 0.75, side * e.r * 0.36)
+      ctx.stroke()
+    }
+  } else if (e.kind === 'fireship') {
+    drawHull(ctx, e.r * 1.1, e.r * 0.7, frac, true, e.burnT)
+    // braziers banked along the deck, ready to blow
+    for (const bx of [-0.5, 0, 0.5]) {
+      ctx.fillStyle = `rgba(255,176,87,${0.7 + 0.3 * Math.sin(t * 9 + bx * 5)})`
+      ctx.beginPath()
+      ctx.arc(bx * e.r, 0, 3.2, 0, Math.PI * 2)
+      ctx.fill()
+    }
+  } else {
+    drawHull(ctx, e.r * 1.2, e.r * 0.8, frac, true, e.burnT)
+  }
   ctx.restore()
+  // the fireship's glow reads at a distance — sink it before it closes
+  if (e.kind === 'fireship') {
+    ctx.fillStyle = `rgba(255,140,66,${0.1 + 0.06 * Math.sin(t * 11)})`
+    ctx.beginPath()
+    ctx.arc(e.pos.x, e.pos.y, e.r + 9, 0, Math.PI * 2)
+    ctx.fill()
+  }
   if (e.chillT > 0) {
     ctx.fillStyle = 'rgba(127,216,255,0.14)'
     ctx.beginPath()
@@ -1482,6 +1526,9 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
     '(your crew patches too, once the shooting stops — no hammering required.)',
     'red-pennant HARRIERS sprint on oars through any wind — but rowers blow:',
     'outlast the burst and even they fall away.',
+    'the deep sea sends specialists: slim SLOOPS snipe from a long glass and sheet',
+    'away when you close · gilded GALLEONS tank, out-gun, and out-wait you · glowing',
+    'FIRESHIPS rush your hull and go up with it — sink them at range, or move.',
     'raider guns are mortars on fixed mounts too — red RINGS mark where their shells',
     'burst; they must sail a ring onto your hull, so keep way on and slip the drop zones.',
     'the farther from home, the deadlier the sea — and the richer everything it holds.',
