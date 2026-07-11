@@ -4,11 +4,35 @@
 // child's two slots, reading a live phenotype preview as you go. The RNG is
 // upstream — which parents you fielded, and which wildcards the cross offers —
 // and the authorship is the placement. No rig: the genome IS the gun.
+//
+// Scarcity keeps the placement from being a wishlist (BREEDING_REDESIGN §3/§4):
+// common alleles are free to arrange, but placing a RARE recessive you didn't
+// have to take costs POLLEN — a currency you earn one token per cross (two at a
+// breeder boat, where rares are also half price: the "steering service"). So the
+// good genomes are bred across several crosses, not assembled in one. A pity
+// floor drips pollen on dry streaks, and wildcards dupe-protect toward rares your
+// lines don't already carry.
 
 import { Genome, LocusId, LOCUS_ORDER, LOCI, alleleDef, expressed, mutationAllele } from './genetics'
+import { pick } from './util'
 
 /** how close to a port / breeder boat you must be to dock (F) */
 export const DOCK_RANGE = 210
+
+/** pollen to place one rare recessive you could have skipped (per child slot) */
+export const RARE_COST = 2
+/** breeder boat halves it — its premium is cheaper steering, not just more wilds */
+export const RARE_COST_PREMIUM = 1
+/** pollen you start a run with — enough for one rare at a port on cross one */
+export const POLLEN_START = 2
+/** pollen earned per committed cross */
+export const POLLEN_PER_CROSS = 1
+/** extra pollen for crossing at a breeder boat */
+export const POLLEN_PREMIUM_BONUS = 1
+/** crosses that surface no rare before the pity floor pays out */
+export const PITY_N = 3
+/** pollen the pity floor drips once a dry streak hits PITY_N */
+export const PITY_BONUS = 2
 
 export interface BoardParent {
   genome: Genome
@@ -40,10 +64,59 @@ export interface Board {
   /** the child's chosen alleles per locus — [from-A slot, from-B slot] */
   picks: Genome | null
   childGen: number
+  /** pollen the player can spend on rare placements this cross (snapshot at open) */
+  pollen: number
 }
 
-export function openBoard(premium: boolean, stock: BoardParent[]): Board {
-  return { premium, stock, scroll: 0, parents: [null, null], focus: 0, offer: null, picks: null, childGen: 1 }
+export function openBoard(premium: boolean, stock: BoardParent[], pollen: number): Board {
+  return { premium, stock, scroll: 0, parents: [null, null], focus: 0, offer: null, picks: null, childGen: 1, pollen }
+}
+
+/** the pollen price of putting `allele` into a child slot: rares you chose over
+ *  an available common allele cost; forced rares (no common option) and commons
+ *  are free. Breeder boats halve the price. */
+export function slotRareCost(locus: LocusId, offer: LocusOffer, slot: 0 | 1, allele: string, premium: boolean): number {
+  if (!alleleDef(locus, allele).rare) return 0
+  const hasCommon = slotChoices(offer, slot).some(id => !alleleDef(locus, id).rare)
+  if (!hasCommon) return 0
+  return premium ? RARE_COST_PREMIUM : RARE_COST
+}
+
+/** total pollen the current picks would spend */
+export function picksCost(board: Board): number {
+  if (!board.offer || !board.picks) return 0
+  let sum = 0
+  for (const locus of LOCUS_ORDER)
+    for (const slot of [0, 1] as const)
+      sum += slotRareCost(locus, board.offer[locus], slot, board.picks[locus][slot], board.premium)
+  return sum
+}
+
+/** a slot's cheapest legal allele — a common one if the parent carries any, else
+ *  the forced (free) rare */
+function cheapestChoice(locus: LocusId, offer: LocusOffer, slot: 0 | 1): string {
+  const choices = slotChoices(offer, slot)
+  const common = choices.find(id => !alleleDef(locus, id).rare)
+  return common ?? choices[0]
+}
+
+/** rare allele ids already carried anywhere in the player's lines — for
+ *  dupe-protecting wildcards toward genes the fleet doesn't already hold */
+function ownedRares(stock: BoardParent[]): Set<string> {
+  const owned = new Set<string>()
+  for (const s of stock)
+    for (const locus of LOCUS_ORDER)
+      for (const id of s.genome[locus]) if (alleleDef(locus, id).rare) owned.add(locus + ':' + id)
+  return owned
+}
+
+/** a wildcard for the cross, dupe-protected: if the roll lands a rare the lines
+ *  already carry, reroll toward one they don't (so exploration finds new genes) */
+function wildFor(locus: LocusId, owned: Set<string>): string {
+  const a = mutationAllele(locus)
+  if (!alleleDef(locus, a).rare || !owned.has(locus + ':' + a)) return a
+  const fresh = LOCI[locus].filter(x => x.rare && !owned.has(locus + ':' + x.id))
+  return fresh.length ? pick(fresh).id : a
 }
 
 /** focus a parent slot so the next stock pick fills it */
@@ -72,16 +145,19 @@ function regenerate(board: Board) {
   const offer = {} as Offer
   const picks = {} as Genome
   const wildChance = board.premium ? 0.3 : 0.12
+  const owned = ownedRares(board.stock)
   for (const locus of LOCUS_ORDER) {
     const a: [string, string] = [pa.genome[locus][0], pa.genome[locus][1]]
     const b: [string, string] = [pb.genome[locus][0], pb.genome[locus][1]]
-    const wild = Math.random() < wildChance ? mutationAllele(locus) : null
+    const wild = Math.random() < wildChance ? wildFor(locus, owned) : null
     offer[locus] = { a, b, wild }
-    // default: a natural draw (one random allele from each parent), which the
-    // player then edits — leaving it be just crosses them the ordinary way
-    picks[locus] = [a[Math.random() < 0.5 ? 0 : 1], b[Math.random() < 0.5 ? 0 : 1]]
+    picks[locus] = ['', '']
   }
   board.offer = offer
+  // default to the cheapest (all-common where possible) cross, so a fresh board
+  // spends no pollen and every rare on it is a deliberate, paid upgrade
+  for (const locus of LOCUS_ORDER)
+    for (const slot of [0, 1] as const) picks[locus][slot] = cheapestChoice(locus, offer[locus], slot)
   board.picks = picks
   board.childGen = Math.max(pa.gen, pb.gen) + 1
 }
@@ -95,24 +171,46 @@ export function slotChoices(offer: LocusOffer, slot: 0 | 1): string[] {
   return out
 }
 
-/** place an allele into a child slot (validated against the offer) */
-export function boardPlace(board: Board, locus: LocusId, slot: 0 | 1, allele: string) {
-  if (!board.offer || !board.picks) return
-  if (!slotChoices(board.offer[locus], slot).includes(allele)) return
+/** place an allele into a child slot. Validated against the offer, and — for a
+ *  rare that costs pollen — rejected (returns false) if the cross can't afford it. */
+export function boardPlace(board: Board, locus: LocusId, slot: 0 | 1, allele: string): boolean {
+  if (!board.offer || !board.picks) return false
+  if (!slotChoices(board.offer[locus], slot).includes(allele)) return false
+  const prev = board.picks[locus][slot]
+  if (prev === allele) return true
   board.picks[locus][slot] = allele
+  if (picksCost(board) > board.pollen) {
+    board.picks[locus][slot] = prev // can't afford this rare — revert
+    return false
+  }
+  return true
 }
 
-/** auto-fill: channel toward the strongest genome the cross allows — for each
- *  slot, take the rarest (lowest population weight) allele on offer, so carried
- *  recessives surface and wildcards get placed */
+/** auto-fill: channel toward the strongest genome the pollen allows. Start from
+ *  the free all-common cross, then buy rare upgrades rarest-first until pollen
+ *  runs out — so carried recessives and wildcards surface within budget. */
 export function boardAuto(board: Board) {
   if (!board.offer || !board.picks) return
-  for (const locus of LOCUS_ORDER) {
-    const offer = board.offer[locus]
-    for (const slot of [0, 1] as const) {
-      const best = slotChoices(offer, slot).reduce((lo, id) => (alleleDef(locus, id).w < alleleDef(locus, lo).w ? id : lo))
-      board.picks[locus][slot] = best
-    }
+  const offer = board.offer
+  const picks = board.picks
+  for (const locus of LOCUS_ORDER)
+    for (const slot of [0, 1] as const) picks[locus][slot] = cheapestChoice(locus, offer[locus], slot)
+  const upgrades: { locus: LocusId; slot: 0 | 1; allele: string; cost: number; w: number }[] = []
+  for (const locus of LOCUS_ORDER)
+    for (const slot of [0, 1] as const)
+      for (const allele of slotChoices(offer[locus], slot)) {
+        const cost = slotRareCost(locus, offer[locus], slot, allele, board.premium)
+        if (cost > 0) upgrades.push({ locus, slot, allele, cost, w: alleleDef(locus, allele).w })
+      }
+  upgrades.sort((x, y) => x.w - y.w) // rarest (lowest population weight) first
+  let budget = board.pollen
+  const taken = new Set<string>()
+  for (const u of upgrades) {
+    const key = u.locus + u.slot
+    if (taken.has(key) || u.cost > budget) continue
+    picks[u.locus][u.slot] = u.allele
+    budget -= u.cost
+    taken.add(key)
   }
 }
 

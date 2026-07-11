@@ -1,7 +1,7 @@
 // Toolbar / seed-panel definitions and the channeling-board layout, shared by
 // render (drawing) and game (hit-testing) so the two never drift.
 
-import { Board, BoardParent, slotChoices } from './breeding'
+import { Board, BoardParent, slotChoices, slotRareCost, picksCost } from './breeding'
 import { Genome, LocusId, LOCUS_ORDER, expressed, alleleDef } from './genetics'
 
 export type Tool = 'plant' | 'water'
@@ -76,6 +76,10 @@ export interface BoardChip {
   source: 'own' | 'wild'
   rect: Rect
   chosen: boolean
+  /** pollen this rare placement costs (0 for commons / forced rares) */
+  cost: number
+  /** a rare you can't currently afford to switch to — drawn dimmed, click denied */
+  locked: boolean
 }
 export interface BoardParentSlot {
   slot: 0 | 1
@@ -154,6 +158,9 @@ export function boardLayout(vw: number, vh: number, board: Board): BoardLayout {
   const slotAreaW = (mainW - labelW - centerW) / 2
   const chipGap = 5
   const ready = !!board.offer && !!board.picks
+  // pollen already committed by the current picks — a rare chip is affordable if
+  // swapping it in (dropping this slot's current price) still fits the balance
+  const committed = ready ? picksCost(board) : 0
 
   const loci: BoardLociRow[] = LOCUS_ORDER.map((locus, r) => {
     const y = contentY + r * lrH
@@ -171,14 +178,19 @@ export function boardLayout(vw: number, vh: number, board: Board): BoardLayout {
         const choices = slotChoices(off, slot)
         const areaX = slot === 0 ? mainX + labelW : mainX + labelW + slotAreaW + centerW
         const chipW = Math.min(56, (slotAreaW - chipGap * (choices.length - 1)) / Math.max(1, choices.length))
+        const curCost = slotRareCost(locus, off, slot, picks[slot], board.premium)
         choices.forEach((allele, ci) => {
+          const cost = slotRareCost(locus, off, slot, allele, board.premium)
+          const chosen = picks[slot] === allele
           chips.push({
             locus,
             slot,
             allele,
             source: off.wild === allele && !off[slot === 0 ? 'a' : 'b'].includes(allele) ? 'wild' : 'own',
             rect: { x: areaX + ci * (chipW + chipGap), y: y + 4, w: chipW, h: lrH - 12 },
-            chosen: picks[slot] === allele,
+            chosen,
+            cost,
+            locked: !chosen && committed - curCost + cost > board.pollen,
           })
         })
       }

@@ -1,7 +1,23 @@
 import { Vec, v, dist, clamp, rand, randInt, gkey, angleDiff } from './util'
 import { Genome, Seed, Pheno, phenotype, wildGenome, makeGenome, carriesRare } from './genetics'
 import { Tool, TOOLS, toolbarLayout, seedRowRects, seedPanelRect, restartRect, inRect, SEED_VISIBLE, boardLayout } from './ui'
-import { Board, BoardParent, openBoard, boardCommit, boardFocus, boardChoose, boardPlace, boardAuto, DOCK_RANGE } from './breeding'
+import {
+  Board,
+  BoardParent,
+  openBoard,
+  boardCommit,
+  boardFocus,
+  boardChoose,
+  boardPlace,
+  boardAuto,
+  picksCost,
+  DOCK_RANGE,
+  POLLEN_START,
+  POLLEN_PER_CROSS,
+  POLLEN_PREMIUM_BONUS,
+  PITY_N,
+  PITY_BONUS,
+} from './breeding'
 import { POI, POI_CELL, POI_SIGHT, cellPOI, makePOI, TRADE_COST, TRADE_RANGE, BREED_COST } from './poi'
 import { keys } from './input'
 import { sfx, toggleMute } from './audio'
@@ -10,7 +26,8 @@ export const TS = 46 // legacy sprite scale (trader rafts, bars)
 export const RANGE = 280 // baseline reach, px — the inCombat() floor before scanning the deck
 export const SPLASH = 44 // mortar burst radius, px
 export const PLANT_HP = 40
-export const GROW_TIME = 28 // seconds to mature (while watered)
+export const ELEV_MIN = 0.5 // lowest battery elevation — rings pull in to half reach
+export const ELEV_RATE = 0.45 // elevation change per second while Z/X is held
 export const WATER_PER_USE = 45 // meter points per 1💧
 export const POUCH_CAP = 12 // the bees stop crossing when the seed pouch is this full
 export const BOIL_COST = 1 // 🪵 → BOIL_WATER 💧, via the B key — the galley stove
@@ -33,7 +50,6 @@ export interface Plant {
   genome: Genome
   gen: number
   pheno: Pheno
-  growth: number // 0..1, shoots & breeds at 1
   water: number // 0..100
   /** seconds since last shot that still count as "in action" — full thirst */
   activeT: number
@@ -236,12 +252,11 @@ export interface HoverInfo {
   pos: Vec
 }
 
-function makePlant(genome: Genome, gen: number, growth = 0): Plant {
+function makePlant(genome: Genome, gen: number): Plant {
   return {
     genome,
     gen,
     pheno: phenotype(genome),
-    growth,
     water: 70,
     activeT: 0,
     hp: PLANT_HP,
@@ -272,6 +287,11 @@ export class Game {
   seeds: Seed[] = []
   seedId = 1
 
+  /** pollen — the currency that buys rare-allele placements on the channeling board */
+  pollen = POLLEN_START
+  /** crosses in a row that surfaced no rare — feeds the pity floor */
+  barren = 0
+
   enemies: EnemyShip[] = []
   bullets: Bullet[] = []
   loot: Loot[] = []
@@ -300,6 +320,8 @@ export class Game {
   board: Board | null = null
 
   firing = false // set by the fire key, consumed each frame → one broadside per press
+  /** battery elevation, ELEV_MIN..1 — scales every gun's burst distance; Z lowers, X raises */
+  elev = 1
   chillT = 0 // frost debuff on our ship
   shake = 0
   cam = v(0, 0)
@@ -323,13 +345,15 @@ export class Game {
     this.ship = { pos: v(0, 0), vel: v(0, 0), a: 0, hp: TIERS[0].hull }
     this.mounts = TIERS[0].mounts.map(m => ({ x: m.x, y: m.y, aim0: m.aim, plant: null }))
     this.burnT = 0
-    // one half-grown basic shooter on the port mount so wave 1 is survivable
-    const starter = makePlant(makeGenome(), 0, 0.55)
+    // one basic shooter on the port mount so wave 1 is survivable
+    const starter = makePlant(makeGenome(), 0)
     starter.aim = this.mounts[0].aim0
     this.mounts[0].plant = starter
 
     this.wood = 8
     this.water = 6
+    this.pollen = POLLEN_START
+    this.barren = 0
     this.seedId = 1
     // you set sail with one plant and an empty pouch — the first seed is out
     // there: flotsam, a trader, a wreck, or a raider's gun line
@@ -360,6 +384,7 @@ export class Game {
     this.seedSel = 0
     this.seedScroll = 0
     this.board = null
+    this.elev = 1
     this.chillT = 0
     this.shake = 0
     this.over = false
@@ -437,7 +462,7 @@ export class Game {
   magnetActive(): boolean {
     for (const m of this.mounts) {
       const p = m.plant
-      if (p && p.growth >= 1 && p.water > 0 && p.pheno.quirk === 'magnet') return true
+      if (p && p.water > 0 && p.pheno.quirk === 'magnet') return true
     }
     return false
   }
@@ -558,7 +583,7 @@ export class Game {
       this.dropLoot('wood', n, scatter())
       left -= n
     }
-    this.dropLoot('water', 3 + Math.floor(danger / 2), scatter())
+    this.dropLoot('water', 2 + Math.floor(danger / 3), scatter())
     const nSeeds = 1 + (danger >= 4 ? 1 : 0)
     for (let i = 0; i < nSeeds; i++) {
       this.dropLoot('seed', 1, scatter(), { id: this.seedId++, genome: wildGenome(1 + danger * 0.5), gen: 0 })
@@ -589,7 +614,7 @@ export class Game {
       this.dropLoot('seed', 1, scatter(), { id: this.seedId++, genome: wildGenome(2 + danger * 0.5), gen: 0 })
     }
     this.dropLoot('wood', randInt(5, 8), scatter())
-    this.dropLoot('water', 3, scatter())
+    this.dropLoot('water', 2, scatter())
     this.banner = { title: 'nest cleared!', sub: 'their hoarded lines drift free — gather the seeds', t: 3.5 }
     this.burst(p.pos, '#ff6b6b', 16)
     sfx('sunk')
@@ -605,7 +630,7 @@ export class Game {
       const at = v(p.pos.x + Math.cos(a) * rand(0, p.r * 0.5), p.pos.y + Math.sin(a) * rand(0, p.r * 0.5))
       const roll = Math.random()
       if (roll < 0.5) this.dropLoot('wood', randInt(2, 3), at)
-      else if (roll < 0.88) this.dropLoot('water', 2, at)
+      else if (roll < 0.88) this.dropLoot('water', 1, at)
       else this.dropLoot('seed', 1, at, { id: this.seedId++, genome: wildGenome(1 + danger * 0.4), gen: 0 })
     }
     for (const l of this.loot.slice(-n)) {
@@ -705,6 +730,12 @@ export class Game {
   }
 
   private updateShip(dt: number) {
+    // gunnery elevation: hold Z to lower the whole battery (rings pull in),
+    // X to raise it back toward each gun's full bred reach — live mid-fight
+    const lower = keys.has('KeyZ')
+    const raise = keys.has('KeyX')
+    if (lower !== raise) this.elev = clamp(this.elev + (raise ? 1 : -1) * ELEV_RATE * dt, ELEV_MIN, 1)
+
     // hull afire — hp burns off until the flames gutter out
     if (this.burnT > 0) {
       this.burnT -= dt
@@ -726,16 +757,15 @@ export class Game {
       const p = m.plant
       if (!p) continue
 
-      // growth & thirst — plants gulp in battle, only sip at rest
+      // thirst — plants gulp in battle, only sip at rest
       if (p.water > 0) {
-        p.growth = Math.min(1, p.growth + dt / (GROW_TIME * p.pheno.growMult))
         p.dryTime = 0
       } else {
         p.dryTime += dt
         if (p.dryTime > 6) p.hp -= 2 * dt
       }
       p.activeT = Math.max(0, p.activeT - dt)
-      const thirst = p.growth < 1 ? 0.6 : p.activeT > 0 ? 1 : 0.2
+      const thirst = p.activeT > 0 ? 0.5 : 0.08
       p.water = Math.max(0, p.water - p.pheno.drain * thirst * dt)
 
       // damage over time
@@ -760,27 +790,27 @@ export class Game {
       p.cooldown -= dt // reload timer ticks down whether or not you fire
 
       // manual fire: mortars hold along their mount's fixed facing until YOU pull
-      // the lanyard (Space). Each shell bursts exactly at the plant's bred reach —
-      // no aiming, no range gate: the helm walks the burst rings over a target,
-      // the reach gene picks the ring, and firing starts the rate-gene reload.
-      if (this.firing && p.growth >= 1 && p.water > 0 && p.cooldown <= 0) {
+      // the lanyard (Space). Each shell bursts at the plant's bred reach scaled by
+      // the battery elevation — the helm walks the burst rings over a target, the
+      // reach gene caps the ring, Z/X pull it in, and firing starts the reload.
+      if (this.firing && p.water > 0 && p.cooldown <= 0) {
         this.firePlant(m, this.mountPos(m))
         p.cooldown = p.pheno.period * (this.chillT > 0 ? 1.35 : 1)
-        p.water = Math.max(0, p.water - 0.35)
+        p.water = Math.max(0, p.water - 0.15)
       }
     }
     this.firing = false // consumed this frame; a fresh press re-arms it
     if (this.ship.hp <= 0 && !this.over) this.gameOver()
   }
 
-  /** the eligible parents for a cross at a port/breeder: every mature, watered
-   *  deck plant plus every seed in the pouch. Breeding reads a genome, it never
+  /** the eligible parents for a cross at a port/breeder: every watered deck
+   *  plant plus every seed in the pouch. Breeding reads a genome, it never
    *  consumes the parent — so fielding a line is joining it to your program. */
   breedingStock(): BoardParent[] {
     const stock: BoardParent[] = []
     for (const m of this.mounts) {
       const p = m.plant
-      if (p && p.growth >= 1 && p.water > 0) {
+      if (p && p.water > 0) {
         stock.push({ genome: p.genome, gen: p.gen, label: 'deck', name: p.pheno.name })
       }
     }
@@ -802,8 +832,8 @@ export class Game {
       return this.toast('no port or breeder boat in range')
     }
     const stock = this.breedingStock()
-    if (stock.length < 2) return this.toast('need two mature plants or seeds to cross')
-    this.board = openBoard(premium, stock)
+    if (stock.length < 2) return this.toast('need two watered plants or seeds to cross')
+    this.board = openBoard(premium, stock, this.pollen)
     sfx('build')
   }
 
@@ -813,14 +843,29 @@ export class Game {
     if (!b) return
     if (this.seeds.length >= POUCH_CAP) return this.toast('pouch is full')
     if (this.water < BREED_COST) return this.toast(`a cross costs ${BREED_COST}💧`)
+    const spend = picksCost(b)
+    if (spend > this.pollen) return this.toast(`not enough pollen (need ${spend}🌼)`)
     const genome = boardCommit(b)
     if (!genome) return this.toast('set both parents first')
     this.water -= BREED_COST
+    this.pollen -= spend
+    // earn a token per cross (more at a breeder boat), and let a dry streak with
+    // no rare surfacing drip the pity floor so a bad run still converges
+    let earn = POLLEN_PER_CROSS + (b.premium ? POLLEN_PREMIUM_BONUS : 0)
+    let pity = false
+    if (carriesRare(genome)) this.barren = 0
+    else if (++this.barren >= PITY_N) {
+      earn += PITY_BONUS
+      this.barren = 0
+      pity = true
+    }
+    this.pollen += earn
     const gen = b.childGen
     this.seeds.push({ id: this.seedId++, genome, gen })
     this.stats.bred++
     const ph = phenotype(genome)
     this.toastAt(this.ship.pos, `🌸 ${ph.name} (F${gen})${ph.shiny ? ' ✦' : ''}`, '#ffd257')
+    if (pity) this.toast(`pity bloom — +${PITY_BONUS}🌼 pollen`)
     sfx('breed')
     this.board = null
   }
@@ -843,6 +888,12 @@ export class Game {
     return SPLASH * (p.pheno.quirk === 'pierce' ? 1.45 : 1)
   }
 
+  /** where one of OUR guns actually drops its shells: bred reach × battery
+   *  elevation. Raider guns always fire at full bred reach. */
+  plantRange(p: Plant): number {
+    return p.pheno.range * this.elev
+  }
+
   /** pull the lanyard on one mount: fire the plant's gene-gun. Every projectile
    *  behaviour now rides the genome — barrels fan, the reach gene sets the burst
    *  ring, a homing quirk curves the shells, an airburst locus scatters a cluster
@@ -863,10 +914,11 @@ export class Game {
   private fireVolley(from: Vec, heading: number, p: Plant, friendly: boolean, dmgScale: number, muzzle: boolean) {
     const speed = 260 // shells hang in the air — lead a moving target
     const homing = p.pheno.quirk === 'homing'
+    // the reach gene is the rangefinder; friendly guns fire at the battery elevation
+    const reach = friendly ? this.plantRange(p) : p.pheno.range
     for (let i = 0; i < p.pheno.shots; i++) {
       const a = heading + (i - (p.pheno.shots - 1) / 2) * p.pheno.spread
-      // the reach gene IS the rangefinder: every shell bursts at its bred distance
-      const drop = v(from.x + Math.cos(a) * p.pheno.range + rand(-7, 7), from.y + Math.sin(a) * p.pheno.range + rand(-7, 7))
+      const drop = v(from.x + Math.cos(a) * reach + rand(-7, 7), from.y + Math.sin(a) * reach + rand(-7, 7))
       const pos = muzzle ? v(from.x, from.y - 16) : v(from.x, from.y)
       const flightT = Math.max(0.05, dist(pos, drop) / speed)
       this.bullets.push({
@@ -970,7 +1022,7 @@ export class Game {
     for (let i = 0; i < gunCount; i++) {
       const pa = (i / gunCount) * Math.PI * 2 + rand(0.6)
       const pd = gunCount === 1 ? 0 : r * 0.45
-      const plant = makePlant(wildGenome((opts.home ? 1.6 : 1) + danger * 0.4), 0, 1)
+      const plant = makePlant(wildGenome((opts.home ? 1.6 : 1) + danger * 0.4), 0)
       plant.water = 100
       plant.aim = gunA + (i % 2) * Math.PI + rand(-0.15, 0.15)
       guns.push({ x: Math.cos(pa) * pd, y: Math.sin(pa) * pd, plant })
@@ -1314,7 +1366,7 @@ export class Game {
       this.dropLoot('wood', n, scatter())
       wood -= n
     }
-    this.dropLoot('water', 2 + Math.floor(e.danger / 2), scatter())
+    this.dropLoot('water', 1 + Math.floor(e.danger / 3), scatter())
     this.stats.sunk++
     this.shake = Math.min(10, this.shake + 5)
     this.burst(e.pos, '#8a6a45', 16)
@@ -1515,7 +1567,7 @@ export class Game {
     const loot: Loot =
       Math.random() < 0.6
         ? { kind: 'wood', n: randInt(2, 3), seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
-        : { kind: 'water', n: 2, seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
+        : { kind: 'water', n: 1, seed: undefined, pos, vel, ttl: 70, phase: rand(6) }
     this.loot.push(loot)
   }
 
@@ -1684,7 +1736,7 @@ export class Game {
         boardChoose(b, hit.idx)
         return
       case 'allele':
-        boardPlace(b, hit.locus, hit.slot, hit.allele)
+        if (!boardPlace(b, hit.locus, hit.slot, hit.allele)) sfx('deny')
         return
     }
   }

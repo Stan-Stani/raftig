@@ -39,8 +39,6 @@ export interface AlleleDef {
   drainMult?: number
   /** raw punch vs. reach/effect. multiplies per-shot damage. */
   dmgMult?: number
-  /** efficient stock grows slow. multiplies time-to-mature. */
-  growMult?: number
   /** radians between barrels of a volley — wide sprays miss at range. */
   spread?: number
 }
@@ -77,11 +75,11 @@ export const LOCI: Record<LocusId, AlleleDef[]> = {
     { id: 'frost', sym: 'I', label: 'frost', dom: 1, w: 1.5, effect: 'frost' },
     { id: 'venom', sym: 'V', label: 'venom', dom: 1, w: 1.5, effect: 'venom' },
   ],
-  // thirst ↔ growth: a frugal stock is slow to come online.
+  // thirst: how fast the gun drinks the water meter down.
   thirst: [
-    { id: 'thirsty', sym: 'w', label: 'thirsty', dom: 1, w: 5, drain: 1.8, growMult: 0.8 },
-    { id: 'hardy', sym: 'W', label: 'hardy', dom: 0, w: 2.5, drain: 0.9, growMult: 1.0 },
-    { id: 'camel', sym: 'C', label: 'camel', dom: 0, w: 0.25, rare: true, drain: 0.35, growMult: 1.4 },
+    { id: 'thirsty', sym: 'w', label: 'thirsty', dom: 1, w: 5, drain: 1.8 },
+    { id: 'hardy', sym: 'W', label: 'hardy', dom: 0, w: 2.5, drain: 0.9 },
+    { id: 'camel', sym: 'C', label: 'camel', dom: 0, w: 0.25, rare: true, drain: 0.35 },
   ],
   quirk: [
     { id: 'none', sym: 'q', label: '—', dom: 1, w: 6 },
@@ -119,8 +117,6 @@ export interface Pheno {
   range: number
   element: Element
   drain: number
-  /** multiplies time-to-mature (thirst coupling); 1 = baseline */
-  growMult: number
   quirk: Quirk
   /** shell re-casts the plant's own volley at its burst point (burst locus) */
   airburst: boolean
@@ -209,7 +205,6 @@ export function phenotype(g: Genome): Pheno {
     range: reach.range!,
     element: element.effect ?? 'plain',
     drain: Math.round(drain * 100) / 100,
-    growMult: thirst.growMult ?? 1,
     quirk: quirk.quirk ?? 'none',
     airburst,
     name: cultivarName(g),

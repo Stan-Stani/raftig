@@ -1,7 +1,7 @@
 import { Game, TS, RANGE, SPLASH, TIERS, FOG_CELL, DANGER_SCALE, Plant, Bullet, EnemyShip } from './game'
 import { describe, phenotype, Genome, Pheno, alleleDef } from './genetics'
-import { TOOLS, toolbarLayout, seedPanelRect, seedRowRects, restartRect, SEED_VISIBLE, boardLayout } from './ui'
-import { synergies, DOCK_RANGE } from './breeding'
+import { TOOLS, toolbarLayout, seedPanelRect, seedRowRects, restartRect, SEED_VISIBLE, boardLayout, BoardChip } from './ui'
+import { synergies, picksCost, DOCK_RANGE } from './breeding'
 import { POI, POI_SIGHT, POI_ICON, POI_COLOR, TRADE_COST, TRADE_RANGE, BREED_COST } from './poi'
 import { muted } from './audio'
 import { Vec, v, hash01, clamp, gkey, dist } from './util'
@@ -169,15 +169,14 @@ function drawPlank(ctx: CanvasRenderingContext2D, x: number, y: number, hp: numb
 }
 
 function drawPlant(ctx: CanvasRenderingContext2D, x: number, y: number, p: Plant, hostile: boolean, t: number) {
-  const s = 0.35 + 0.65 * p.growth
   const dry = !hostile && p.water <= 0
-  const sway = Math.sin(t * 2 + p.wobble) * 2 * s + (dry ? 4 : 0)
-  const stemH = 24 * s
+  const sway = Math.sin(t * 2 + p.wobble) * 2 + (dry ? 4 : 0)
+  const stemH = 24
   const headX = x + sway
   const headY = y - 6 - stemH
 
   ctx.strokeStyle = dry ? '#8b7d5a' : hostile ? '#5c7a3e' : '#3e8a50'
-  ctx.lineWidth = 2.5 * s
+  ctx.lineWidth = 2.5
   ctx.beginPath()
   ctx.moveTo(x, y - 4)
   ctx.quadraticCurveTo(x + sway * 0.4, y - 6 - stemH * 0.5, headX, headY)
@@ -187,35 +186,28 @@ function drawPlant(ctx: CanvasRenderingContext2D, x: number, y: number, p: Plant
   ctx.fillStyle = dry ? '#9b8b62' : hostile ? '#6d8f4a' : '#4e9a5f'
   for (const side of [-1, 1]) {
     ctx.beginPath()
-    ctx.ellipse(x + side * 6 * s + sway * 0.3, y - 8 - stemH * 0.4, 6 * s, 3 * s, side * 0.5, 0, Math.PI * 2)
+    ctx.ellipse(x + side * 6 + sway * 0.3, y - 8 - stemH * 0.4, 6, 3, side * 0.5, 0, Math.PI * 2)
     ctx.fill()
   }
 
-  // flower head — colored by element, bud until mature
+  // flower head — colored by element
   const color = dry ? '#a89d80' : ELEMENT_COLOR[p.pheno.element]
-  const r = (p.growth >= 1 ? 6.5 : 3.5 + p.growth * 2.5) * (0.8 + 0.2 * s)
-  if (p.growth >= 1) {
-    ctx.fillStyle = color
-    for (let i = 0; i < 5; i++) {
-      const a = (i / 5) * Math.PI * 2 + t * 0.2 + p.wobble
-      ctx.beginPath()
-      ctx.arc(headX + Math.cos(a) * r * 0.8, headY + Math.sin(a) * r * 0.8, r * 0.55, 0, Math.PI * 2)
-      ctx.fill()
-    }
-    ctx.fillStyle = hostile ? '#3a2a2a' : '#fff8e1'
+  const r = 6.5
+  ctx.fillStyle = color
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2 + t * 0.2 + p.wobble
     ctx.beginPath()
-    ctx.arc(headX, headY, r * 0.45, 0, Math.PI * 2)
-    ctx.fill()
-  } else {
-    ctx.fillStyle = color
-    ctx.beginPath()
-    ctx.arc(headX, headY, r, 0, Math.PI * 2)
+    ctx.arc(headX + Math.cos(a) * r * 0.8, headY + Math.sin(a) * r * 0.8, r * 0.55, 0, Math.PI * 2)
     ctx.fill()
   }
+  ctx.fillStyle = hostile ? '#3a2a2a' : '#fff8e1'
+  ctx.beginPath()
+  ctx.arc(headX, headY, r * 0.45, 0, Math.PI * 2)
+  ctx.fill()
 
   // reload gauge (our guns only) — manual fire means the crew reloads between
   // volleys: an amber arc winds up as it reloads, a dim green ring = loaded & ready
-  if (!hostile && !dry && p.growth >= 1) {
+  if (!hostile && !dry) {
     const rr = r + 5
     if (p.cooldown > 0) {
       const loaded = 1 - Math.min(1, p.cooldown / p.pheno.period)
@@ -234,7 +226,7 @@ function drawPlant(ctx: CanvasRenderingContext2D, x: number, y: number, p: Plant
   }
 
   // shiny sparkle for expressed rare alleles (plantig homage)
-  if (p.pheno.shiny && p.growth >= 1) {
+  if (p.pheno.shiny) {
     const a = 0.5 + 0.5 * Math.sin(t * 4 + p.wobble)
     ctx.globalAlpha = a
     ctx.fillStyle = '#ffffff'
@@ -356,26 +348,26 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
     if (!plant) return
     drawPot(ctx, p.x, p.y)
     // burst ring: where this mortar's shells come down — gold when loaded, faint
-    // while the crew reloads. The helm walks it; the reach gene sets the distance.
-    if (plant.growth >= 1) {
-      const a = g.ship.a + plant.aim
-      drawAim(ctx, p.x, p.y - 12, a, false, false, t)
-      drawDropRing(
-        ctx,
-        p.x + Math.cos(a) * plant.pheno.range,
-        p.y + Math.sin(a) * plant.pheno.range,
-        g.plantSplash(plant),
-        plant.cooldown <= 0 && plant.water > 0,
-        t
-      )
-    }
+    // while the crew reloads. The helm walks it; the reach gene sets the distance
+    // and Z/X (battery elevation) pull it in short of that.
+    const a = g.ship.a + plant.aim
+    const reach = g.plantRange(plant)
+    drawAim(ctx, p.x, p.y - 12, a, false, false, t)
+    drawDropRing(
+      ctx,
+      p.x + Math.cos(a) * reach,
+      p.y + Math.sin(a) * reach,
+      g.plantSplash(plant),
+      plant.cooldown <= 0 && plant.water > 0,
+      t
+    )
     drawPlant(ctx, p.x, p.y, plant, false, t)
     drawWaterBar(ctx, p.x, p.y, plant)
   })
 
-  // hovering a mature plant → show its genetic reach (theirs too — know the sniper)
+  // hovering a plant → show its full genetic reach (theirs too — know the sniper)
   const hi = g.hoverInfo
-  if (hi && hi.plant.growth >= 1) {
+  if (hi) {
     ctx.fillStyle = hi.hostile ? 'rgba(255,110,90,0.05)' : 'rgba(255,255,255,0.04)'
     ctx.beginPath()
     ctx.arc(hi.pos.x, hi.pos.y, hi.plant.pheno.range, 0, Math.PI * 2)
@@ -842,6 +834,7 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
   x += chip(ctx, x, 12, `🪵 ${g.wood}`) + 6
   x += chip(ctx, x, 12, `💧 ${g.water}`) + 6
   x += chip(ctx, x, 12, `🌰 ${g.seeds.length}`) + 6
+  x += chip(ctx, x, 12, `🌼 ${g.pollen}`) + 6
   if (g.chillT > 0) chip(ctx, x, 12, '❄ chilled!')
 
   // the ship herself: hull, next refit, the galley stove
@@ -853,7 +846,7 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
   if (next) x2 += chip(ctx, x2, 44, `U refit → ${next.name} (${next.cost}🪵)`) + 6
   x2 += chip(ctx, x2, 44, 'B boil 1🪵→2💧') + 6
   // manual fire: reminder chip, lit gold when a loaded gun has a target to fire on
-  const ready = g.mounts.some(m => m.plant && m.plant.growth >= 1 && m.plant.water > 0 && m.plant.cooldown <= 0)
+  const ready = g.mounts.some(m => m.plant && m.plant.water > 0 && m.plant.cooldown <= 0)
   const litFire = ready && g.inCombat() && 0.5 + 0.5 * Math.sin(t * 6) > 0.35
   chip(ctx, x2, 44, '␣ SPACE fire', litFire ? '#ffd257' : undefined)
 
@@ -884,6 +877,10 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
   const right = `☠ ${g.stats.sunk} · ${mins}:${secs.toString().padStart(2, '0')}${muted ? ' · 🔇' : ''}`
   const rw = ctx.measureText(right).width + 18
   chip(ctx, w - rw - 12, 12, right)
+  // battery elevation — blue while the guns are cranked short of full reach
+  const elevTxt = `Z/X range ${Math.round(g.elev * 100)}%`
+  const ew = ctx.measureText(elevTxt).width + 18
+  chip(ctx, w - ew - 12, 44, elevTxt, g.elev < 0.995 ? '#7fd8ff' : undefined)
 
   // banner
   if (g.banner.t > 0) {
@@ -1231,7 +1228,7 @@ function drawPlantTooltip(ctx: CanvasRenderingContext2D, g: Game, w: number, h: 
   const gun = gunLine(p.pheno)
   const stat = hi.hostile
     ? `hp ${Math.ceil(p.hp)}/${p.maxHp}`
-    : `hp ${Math.ceil(p.hp)}/${p.maxHp} · water ${Math.ceil(p.water)} · ${p.growth >= 1 ? 'mature' : `${Math.floor(p.growth * 100)}% grown`}`
+    : `hp ${Math.ceil(p.hp)}/${p.maxHp} · water ${Math.ceil(p.water)}`
 
   ctx.font = '12px ui-monospace, monospace'
   const tw = Math.max(
@@ -1276,6 +1273,7 @@ function drawBoard(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number)
   const board = g.board!
   const L = boardLayout(w, h, board)
   const accent = board.premium ? '#f4a6d0' : '#ffd257'
+  const spend = picksCost(board)
 
   ctx.fillStyle = 'rgba(2,10,18,0.8)'
   ctx.fillRect(0, 0, w, h)
@@ -1290,6 +1288,20 @@ function drawBoard(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number)
   ctx.fillStyle = accent
   ctx.font = 'bold 18px ui-monospace, monospace'
   ctx.fillText(board.premium ? '🐝 breeder boat — channeling (premium)' : '🏝️ port — channeling', L.panel.x + 18, L.panel.y + 28)
+
+  // pollen readout: balance, and what the current picks will spend
+  ctx.textAlign = 'right'
+  ctx.font = 'bold 13px ui-monospace, monospace'
+  ctx.fillStyle = spend > board.pollen ? '#e79a9a' : spend > 0 ? '#ffd257' : '#9fb8c8'
+  ctx.fillText(`🌼 ${board.pollen}${spend ? '  −' + spend : ''}`, L.panel.x + L.panel.w - 18, L.panel.y + 28)
+  ctx.textAlign = 'left'
+
+  // one-line rules hint above the locus grid
+  if (L.ready && L.loci.length) {
+    ctx.fillStyle = '#6f8a9a'
+    ctx.font = '10px ui-monospace, monospace'
+    ctx.fillText('rare alleles cost 🌼 — earn one per cross' + (board.premium ? ', rares half price here' : ''), L.loci[0].rect.x, L.panel.y + 44)
+  }
 
   // parent slots
   for (const ps of L.parents) {
@@ -1385,12 +1397,13 @@ function drawBoard(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number)
   drawBoardBtn(ctx, L.cancelBtn, 'cancel · Esc', '#e79a9a')
   if (L.ready) {
     drawBoardBtn(ctx, L.autoBtn, 'auto-best · F', '#b8e986')
-    drawBoardBtn(ctx, L.crossBtn, `cross · Enter (${BREED_COST}💧)`, accent)
+    drawBoardBtn(ctx, L.crossBtn, `cross · Enter (${BREED_COST}💧${spend ? ' ' + spend + '🌼' : ''})`, accent)
   }
 }
 
-function drawChip(ctx: CanvasRenderingContext2D, c: { locus: import('./genetics').LocusId; allele: string; source: 'own' | 'wild'; rect: { x: number; y: number; w: number; h: number }; chosen: boolean }) {
+function drawChip(ctx: CanvasRenderingContext2D, c: BoardChip) {
   const rare = alleleDef(c.locus, c.allele).rare
+  ctx.globalAlpha = c.locked ? 0.4 : 1 // a rare you can't afford right now
   ctx.fillStyle = c.chosen ? (c.source === 'wild' ? 'rgba(150,100,40,0.9)' : 'rgba(52,104,74,0.9)') : 'rgba(255,255,255,0.06)'
   roundRect(ctx, c.rect.x, c.rect.y, c.rect.w, c.rect.h, 5)
   ctx.fill()
@@ -1404,7 +1417,15 @@ function drawChip(ctx: CanvasRenderingContext2D, c: { locus: import('./genetics'
   ctx.font = '10px ui-monospace, monospace'
   const label = (c.source === 'wild' ? '✦' : rare ? '·' : '') + alleleDef(c.locus, c.allele).label
   ctx.fillText(fit(ctx, label, c.rect.w - 4), c.rect.x + c.rect.w / 2, c.rect.y + c.rect.h / 2 + 4)
+  if (c.cost > 0) {
+    // pollen price tag in the corner of a chargeable rare
+    ctx.textAlign = 'right'
+    ctx.fillStyle = c.locked ? '#e79a9a' : '#ffd257'
+    ctx.font = 'bold 8px ui-monospace, monospace'
+    ctx.fillText(`${c.cost}🌼`, c.rect.x + c.rect.w - 3, c.rect.y + 9)
+  }
   ctx.textAlign = 'left'
+  ctx.globalAlpha = 1
 }
 
 function drawBoardBtn(ctx: CanvasRenderingContext2D, r: { x: number; y: number; w: number; h: number }, label: string, color: string) {
@@ -1441,7 +1462,7 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.fillText('a raft roguelike where your garden is the gun deck', w / 2, h * 0.16 + 28)
 
   const lines = [
-    'A/D — helm · W — sheet in · S — back water · SPACE — FIRE guns · 1–2 tools',
+    'A/D — helm · W — sheet in · S — back water · SPACE — FIRE guns · Z/X — gun range · 1–2 tools',
     'B — boil 1🪵 → 2💧 · U — refit · T — trade · F — breed (port/boat) · P pause · H help',
     '',
     'she sails like a SHIP: the prow leads, the hull turns, momentum carries.',
@@ -1466,10 +1487,11 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
     'the farther from home, the deadlier the sea — and the richer everything it holds.',
     '',
     'your plants ARE the mortars in FIXED MOUNTS — no aiming, no tracking: each shell',
-    'arcs over the sea and bursts exactly on its gold RING (the reach gene sets the',
-    'distance — breeding is your rangefinding). FIRE with SPACE: guns hold until you pull',
-    'the lanyard, then reload on their rate gene. steer the hull to walk the rings over',
-    'a raider, time the volley, and keep plants WATERED or they wilt & stop firing.',
+    'arcs over the sea and bursts exactly on its gold RING. the reach gene sets the max',
+    'distance; hold Z/X to LOWER/RAISE the whole battery and pull every ring in short of',
+    'it. FIRE with SPACE: guns hold until you pull the lanyard, then reload on their rate',
+    'gene. steer the hull to walk the rings over a raider, time the volley, and keep',
+    'plants WATERED or they wilt & stop firing.',
     "kill a ship's last gun and her crew scuttles — the wreck is yours.",
     'every gun trick is a GENE now: a homing quirk curves the shells, an airburst locus',
     'scatters a cluster where they land, elements chill/burn/rot — no rig, the genome IS',
@@ -1478,8 +1500,10 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
     'BREED at a 🏝️ port (one per region — a reliable anchor) or the wandering 🐝 breeder',
     'boat (premium): press F to dock and open the CHANNELING board. set two parents, then',
     'place one allele from each into the child — surface a carried recessive on purpose,',
-    'grab any ✦ wildcard the cross offers, and line up trait SYNERGIES. Enter to cross,',
-    'F auto-fills the best, Esc cancels. raider guns carrying a rare line may drop it.',
+    'grab any ✦ wildcard the cross offers, and line up trait SYNERGIES. commons are free',
+    'but every RARE you place costs 🌼 POLLEN — you earn one per cross (two at a breeder,',
+    'where rares are half price), so a dream genome is bred over runs, not built at once.',
+    'a dry streak drips pity pollen. Enter to cross, F auto-fills within budget, Esc cancels.',
     '',
     'the run ends when your hull gives out.',
   ]

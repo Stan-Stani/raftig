@@ -40,3 +40,10 @@ Open `http://localhost:5199/` with the chrome-devtools MCP tools
   wilt unwatered; clear `g.enemies = []` while staging scenes.
 - Check `list_console_messages` (error/warn) at the end — the game logs
   nothing in normal operation, so anything there is real.
+- chrome-devtools MCP errors with "browser is already running for
+  …/chrome-profile" when another session holds it — don't kill that Chrome.
+  Fallback: `npm i playwright-core` in a scratch dir and launch the cached
+  binary `~/Library/Caches/ms-playwright/chromium_headless_shell-*/
+  chrome-headless-shell-mac-arm64/chrome-headless-shell` headless; drive
+  `window.__game` via `page.evaluate`, real keys via `page.keyboard` /
+  dispatched `KeyboardEvent`s (held keys = keydown, wait, keyup).
