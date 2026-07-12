@@ -98,7 +98,7 @@ export function cellPOI(cx: number, cy: number): POI | null {
   if (roll < 0.3) kind = 'wreck'
   else if (roll < 0.52) kind = 'calm'
   else if (roll < 0.68) kind = 'trader'
-  else if (roll < 0.78) kind = home > 1500 ? 'hive' : 'calm' // bee fortresses hold the rougher sea-lanes
+  else if (roll < 0.78) kind = 'hive' // bee fortresses hold every water, home waters included
   else kind = home > 1400 ? 'nest' : 'wreck' // nests only in rougher waters
   return makePOI(kind, v(px, py), hash01(cx * 1.9, cy * 17.3))
 }

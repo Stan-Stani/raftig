@@ -452,6 +452,10 @@ export class Game {
     // a guaranteed first sight: smoke on the horizon in a random direction
     const swa = rand(Math.PI * 2)
     this.pois.set('start', makePOI('wreck', v(Math.cos(swa) * 700, Math.sin(swa) * 700)))
+    // and a bee fortress at the edge of home waters — the pollen economy's
+    // front door: there is always a bounty within an early sail
+    const hwa = swa + rand(1.5, Math.PI * 2 - 1.5)
+    this.pois.set('homehive', makePOI('hive', v(Math.cos(hwa) * 850, Math.sin(hwa) * 850)))
     this.tool = 'water'
     this.seedSel = 0
     this.seedScroll = 0
