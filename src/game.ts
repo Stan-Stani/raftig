@@ -10,6 +10,7 @@ import {
   boardChoose,
   boardPlace,
   boardAuto,
+  boardRemoveStock,
   picksCost,
   DOCK_RANGE,
   POLLEN_START,
@@ -341,6 +342,8 @@ export class Game {
   seedScroll = 0
   /** the channeling board — non-null while docked at a port/breeder, breeding */
   board: Board | null = null
+  /** feedback line drawn on the channeling board — world toasts hide behind the modal */
+  boardMsg: { text: string; t: number; color: string } | null = null
 
   firing = false // set by the fire key, consumed each frame → one broadside per press
   /** battery elevation, ELEV_MIN..1 — scales every gun's burst distance; Z lowers, X raises */
@@ -705,6 +708,7 @@ export class Game {
       t.life -= dt
     }
     this.texts = this.texts.filter(t => t.life > 0)
+    if (this.boardMsg && (this.boardMsg.t -= dt) <= 0) this.boardMsg = null
   }
 
   private updateMovement(dt: number) {
@@ -861,7 +865,7 @@ export class Game {
       }
     }
     for (const s of this.seeds) {
-      stock.push({ genome: s.genome, gen: s.gen, label: 'pouch', name: phenotype(s.genome).name })
+      stock.push({ genome: s.genome, gen: s.gen, label: 'pouch', name: phenotype(s.genome).name, seedId: s.id })
     }
     return stock
   }
@@ -880,6 +884,7 @@ export class Game {
     const stock = this.breedingStock()
     if (stock.length < 2) return this.toast('need two watered plants or seeds to cross')
     this.board = openBoard(premium, stock, this.pollen)
+    this.boardMsg = null
     sfx('build')
   }
 
@@ -887,7 +892,8 @@ export class Game {
   private commitBoard() {
     const b = this.board
     if (!b) return
-    if (this.seeds.length >= POUCH_CAP) return this.toast('pouch is full')
+    if (this.seeds.length >= POUCH_CAP)
+      return this.toast(`pouch is full (${this.seeds.length}/${POUCH_CAP}) — ✕ a seed or plant some`)
     if (this.water < BREED_COST) return this.toast(`a cross costs ${BREED_COST}💧`)
     const spend = picksCost(b)
     if (spend > this.pollen) return this.toast(`not enough pollen (need ${spend}🌼)`)
@@ -1933,8 +1939,23 @@ export class Game {
       case 'stock':
         boardChoose(b, hit.idx)
         return
+      case 'del': {
+        const entry = b.stock[hit.idx]
+        if (!entry || entry.seedId === undefined) return
+        const i = this.seeds.findIndex(s => s.id === entry.seedId)
+        if (i >= 0) this.seeds.splice(i, 1)
+        this.seedSel = Math.min(this.seedSel, Math.max(0, this.seeds.length - 1))
+        this.seedScroll = Math.min(this.seedScroll, Math.max(0, this.seeds.length - SEED_VISIBLE))
+        boardRemoveStock(b, hit.idx)
+        this.boardMsg = { text: `🗑 ${entry.name} overboard (${this.seeds.length}/${POUCH_CAP})`, t: 2.4, color: '#e8c98a' }
+        sfx('break')
+        return
+      }
       case 'allele':
-        if (!boardPlace(b, hit.locus, hit.slot, hit.allele)) sfx('deny')
+        if (!boardPlace(b, hit.locus, hit.slot, hit.allele)) {
+          this.boardMsg = { text: 'not enough pollen 🌼 for that rare', t: 2.4, color: '#ffb3b3' }
+          sfx('deny')
+        }
         return
     }
   }
@@ -2006,7 +2027,8 @@ export class Game {
   }
 
   private toast(text: string) {
-    this.toastAt(this.hover, text, '#ffb3b3')
+    if (this.board) this.boardMsg = { text, t: 2.4, color: '#ffb3b3' }
+    else this.toastAt(this.hover, text, '#ffb3b3')
     sfx('deny')
   }
 

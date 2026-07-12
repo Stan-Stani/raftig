@@ -67,6 +67,7 @@ export type BoardHit =
   | { kind: 'cross' }
   | { kind: 'focus'; slot: 0 | 1 }
   | { kind: 'stock'; idx: number }
+  | { kind: 'del'; idx: number }
   | { kind: 'allele'; locus: LocusId; slot: 0 | 1; allele: string }
 
 export interface BoardChip {
@@ -91,6 +92,8 @@ export interface BoardStockRow {
   idx: number
   rect: Rect
   entry: BoardParent
+  /** ✕ toss-overboard zone — pouch seeds only, deck plants can't be deleted */
+  delRect: Rect | null
 }
 export interface BoardLociRow {
   locus: LocusId
@@ -144,7 +147,11 @@ export function boardLayout(vw: number, vh: number, board: Board): BoardLayout {
   const stock: BoardStockRow[] = []
   for (let i = 0; i < Math.min(visible, board.stock.length - scroll); i++) {
     const idx = scroll + i
-    stock.push({ idx, rect: { x: leftX, y: stockTop + i * rowH, w: leftW, h: rowH - 3 }, entry: board.stock[idx] })
+    const entry = board.stock[idx]
+    const rect: Rect = { x: leftX, y: stockTop + i * rowH, w: leftW, h: rowH - 3 }
+    const delRect: Rect | null =
+      entry.seedId !== undefined ? { x: rect.x + rect.w - 22, y: rect.y, w: 22, h: rect.h } : null
+    stock.push({ idx, rect, entry, delRect })
   }
 
   // main column: one row per locus, chips flanking the child's expressed trait
@@ -225,6 +232,8 @@ export function boardLayout(vw: number, vh: number, board: Board): BoardLayout {
       if (ready && inRect(mx, my, autoBtn)) return { kind: 'auto' }
       if (ready && inRect(mx, my, crossBtn)) return { kind: 'cross' }
       for (const p of parents) if (inRect(mx, my, p.rect)) return { kind: 'focus', slot: p.slot }
+      // the ✕ sits inside the row, so it must claim the click first
+      for (const s of stock) if (s.delRect && inRect(mx, my, s.delRect)) return { kind: 'del', idx: s.idx }
       for (const s of stock) if (inRect(mx, my, s.rect)) return { kind: 'stock', idx: s.idx }
       for (const row of loci) for (const c of row.chips) if (inRect(mx, my, c.rect)) return { kind: 'allele', locus: c.locus, slot: c.slot, allele: c.allele }
       return null

@@ -1401,7 +1401,7 @@ function drawBoard(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number)
   // stock list (clipped)
   ctx.fillStyle = '#7d97a8'
   ctx.font = 'bold 11px ui-monospace, monospace'
-  ctx.fillText('your lines — click to add', L.stockClip.x, L.stockClip.y - 6)
+  ctx.fillText('your lines — click to add · ✕ toss', L.stockClip.x, L.stockClip.y - 6)
   ctx.save()
   ctx.beginPath()
   ctx.rect(L.stockClip.x, L.stockClip.y, L.stockClip.w, L.stockClip.h)
@@ -1415,10 +1415,15 @@ function drawBoard(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number)
     ctx.textAlign = 'left'
     ctx.fillStyle = ph.shiny ? '#ffe9a8' : '#e8f1f5'
     ctx.font = '11px ui-monospace, monospace'
-    ctx.fillText(fit(ctx, `${ph.shiny ? '✦ ' : ''}${ph.name}`, s.rect.w - 70), s.rect.x + 6, s.rect.y + 14)
+    ctx.fillText(fit(ctx, `${ph.shiny ? '✦ ' : ''}${ph.name}`, s.rect.w - (s.delRect ? 92 : 70)), s.rect.x + 6, s.rect.y + 14)
     ctx.fillStyle = '#8fb3c9'
     ctx.textAlign = 'right'
-    ctx.fillText(`${s.entry.label} ${s.entry.gen ? 'F' + s.entry.gen : 'wild'}`, s.rect.x + s.rect.w - 6, s.rect.y + 14)
+    ctx.fillText(`${s.entry.label} ${s.entry.gen ? 'F' + s.entry.gen : 'wild'}`, s.rect.x + s.rect.w - (s.delRect ? 24 : 6), s.rect.y + 14)
+    if (s.delRect) {
+      ctx.textAlign = 'center'
+      ctx.fillStyle = '#e79a9a'
+      ctx.fillText('✕', s.delRect.x + s.delRect.w / 2, s.rect.y + 14)
+    }
     ctx.textAlign = 'left'
   }
   ctx.restore()
@@ -1465,6 +1470,17 @@ function drawBoard(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number)
   if (L.ready) {
     drawBoardBtn(ctx, L.autoBtn, 'auto-best · F', '#b8e986')
     drawBoardBtn(ctx, L.crossBtn, `cross · Enter (${BREED_COST}💧${spend ? ' ' + spend + '🌼' : ''})`, accent)
+  }
+
+  // feedback line (refusals, tossed seeds) — world toasts would hide behind the modal
+  if (g.boardMsg) {
+    ctx.globalAlpha = Math.min(1, g.boardMsg.t / 0.6)
+    ctx.textAlign = 'center'
+    ctx.font = 'bold 12px ui-monospace, monospace'
+    ctx.fillStyle = g.boardMsg.color
+    ctx.fillText(g.boardMsg.text, L.panel.x + L.panel.w / 2, L.cancelBtn.y + 25)
+    ctx.textAlign = 'left'
+    ctx.globalAlpha = 1
   }
 }
 

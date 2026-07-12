@@ -40,6 +40,8 @@ export interface BoardParent {
   /** where it came from — 'deck' or 'pouch' */
   label: string
   name: string
+  /** pouch entries carry the seed's id so the board can toss them overboard */
+  seedId?: number
 }
 
 /** the pool the player channels from at one locus */
@@ -160,6 +162,18 @@ function regenerate(board: Board) {
     for (const slot of [0, 1] as const) picks[locus][slot] = cheapestChoice(locus, offer[locus], slot)
   board.picks = picks
   board.childGen = Math.max(pa.gen, pb.gen) + 1
+}
+
+/** drop a stock entry from the board (the caller owns the real seed pouch).
+ *  Any parent slot holding it empties, which stalls the cross until refilled. */
+export function boardRemoveStock(board: Board, stockIdx: number) {
+  const entry = board.stock[stockIdx]
+  if (!entry) return
+  board.stock.splice(stockIdx, 1)
+  for (const slot of [0, 1] as const) {
+    if (board.parents[slot] === entry) board.parents[slot] = null
+  }
+  regenerate(board)
 }
 
 /** the alleles legal in a given child slot: that parent's two, plus the wildcard */
