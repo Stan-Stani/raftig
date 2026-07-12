@@ -836,6 +836,9 @@ export class Game {
       sfx('breed')
       return
     }
+    // no trader in earshot — a hive alongside answers T with bounty talk
+    const hive = this.activePois.find(p => p.kind === 'hive' && dist(p.pos, c) <= p.r + 130)
+    if (hive) this.parleyHive(hive)
   }
 
   private updateFx(dt: number) {
@@ -1021,21 +1024,28 @@ export class Game {
   tryDock() {
     if (this.board || this.over || this.paused || this.helpOpen) return
     const c = this.ship.pos
-    // a hive island answers F with a parley, not a breeding board
+    // a friendly hive breeds like any port (T handles the bounty talk); a
+    // grudge — or a broken dome — closes the docks
     const hive = this.activePois.find(p => p.kind === 'hive' && dist(p.pos, c) <= p.r + 130)
-    if (hive) return this.parleyHive(hive)
     let premium = false
-    if (this.breeder && dist(this.breeder.pos, c) <= DOCK_RANGE) {
+    let atPort = false
+    if (hive && (hive.done || hive.hostile || this.beesAngry)) {
+      return this.toastAt(hive.pos, hive.done ? 'the hive is silent' : '🐝 the swarm remembers your smoke', '#9fb8c8')
+    } else if (hive) {
+      // friendly hive dock — normal cross, bees don't gossip like portmasters
+    } else if (this.breeder && dist(this.breeder.pos, c) <= DOCK_RANGE) {
       premium = true
-    } else if (!this.activePois.some(p => p.kind === 'port' && !p.done && dist(p.pos, c) <= DOCK_RANGE)) {
-      return this.toast('no port or breeder boat in range')
+    } else if (this.activePois.some(p => p.kind === 'port' && !p.done && dist(p.pos, c) <= DOCK_RANGE)) {
+      atPort = true
+    } else {
+      return this.toast('no port, hive, or breeder boat in range')
     }
     const stock = this.breedingStock()
     if (stock.length < 2) return this.toast('need two watered plants or seeds to cross')
     this.board = openBoard(premium, stock, this.pollen)
     this.boardMsg = null
     // portmasters gossip about where the locked genes grow — the map's real currency
-    if (!premium) this.shareRumor()
+    if (atPort) this.shareRumor()
     sfx('build')
   }
 

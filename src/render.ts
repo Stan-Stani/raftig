@@ -754,12 +754,14 @@ function drawHive(ctx: CanvasRenderingContext2D, g: Game, p: POI, t: number) {
       ctx.fill()
     }
   }
-  // parley prompt when alongside a hive that will still talk to you
+  // dock prompt when alongside a hive that will still talk to you
   const d = dist(p.pos, g.cam)
   if (!p.done && !angry && d < p.r + 220) {
     const near = d < p.r + 130
     ctx.font = 'bold 12px ui-monospace, monospace'
-    const label = g.contract ? `F · bounty ${g.contract.got}/${g.contract.need}` : 'F · parley (bees pay 🌼)'
+    const label = g.contract
+      ? `F · breed (${BREED_COST}🌼) · T · bounty ${g.contract.got}/${g.contract.need}`
+      : `F · breed (${BREED_COST}🌼) · T · bounty`
     const lw = ctx.measureText(label).width + 16
     ctx.fillStyle = 'rgba(4,20,32,0.8)'
     roundRect(ctx, x - lw / 2, y - 118, lw, 20, 10)
@@ -1687,7 +1689,7 @@ function drawHelp(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number) 
 
   const lines = [
     'A/D — helm · W — sheet in · S — back water · SPACE — FIRE guns · Z/X — gun range · 1–2 tools',
-    'B — boil 1🪵 → 2💧 · U — refit · T — trade · F — breed (port/boat) · P pause · H help',
+    'B — boil 1🪵 → 2💧 · U — refit · T — trade/parley · F — breed (port/hive/boat) · P pause · H help',
     '',
     'RUMORS — some genes the sea gates by compass and depth: mutation never mints them,',
     'you sail to their waters and catch them wild. portmasters trade the gossip:',
@@ -1739,8 +1741,9 @@ function drawHelp(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number) 
     'rare prices.) Enter to cross, F auto-fills, Esc cancels.',
     '',
     'the BEES hold 🍯 fortress islands in every water — one sits off your home shore.',
-    'sail alongside and press F to PARLEY: they pay a pollen BOUNTY for raiders sunk',
-    '(one contract at a time — the 🐝 chip up top tracks it). hive guns also shell any',
+    'a friendly hive is a full dock: F opens the channeling board (normal prices),',
+    'and T PARLEYS a pollen BOUNTY for raiders sunk (one contract at a time — the',
+    '🐝 chip up top tracks it). hive guns also shell any',
     'raider in reach, and the smart crews steer wide of them — but a bee-stung hull',
     '(🐝 badge) pays NO salvage and NO bounty unless it fully heals before you sink it.',
     'or turn your guns on the hive: its garrison out-guns and out-tanks any galleon,',
