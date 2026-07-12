@@ -1627,9 +1627,9 @@ export class Game {
   }
 
   /** the leech quirk pays off: siphoned droplets stream from the burst back to
-   *  the plant — the visible "drink" — as its water meter tops up */
+   *  the plant — the visible "drink" — as it patches its own stem */
   private leechProc(src: Plant, from: Vec) {
-    src.water = Math.min(100, src.water + 2)
+    src.hp = Math.min(src.maxHp, src.hp + 2)
     const m = this.mounts.find(mm => mm.plant === src)
     if (!m) return
     const to = this.mountPos(m)
@@ -1649,7 +1649,7 @@ export class Game {
     }
     if (this.time - this.leechToastT > 0.9) {
       this.leechToastT = this.time
-      this.toastAt(to, '+💧', '#8ef0b0')
+      this.toastAt(to, '+♥', '#8ef0b0')
     }
   }
 
