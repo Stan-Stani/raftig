@@ -174,6 +174,9 @@ export interface EnemyShip {
   patience: number
   /** the class's full patience — what refreshes restore */
   patience0: number
+  /** lookout lag, s — steering reads the player's course this far in the past,
+   *  so the pack reacts to your moves instead of mirroring your inputs */
+  reactT: number
   /** harrier oar stamina 0..1 — sprints drain it, rest refills it */
   row: number
   danger: number // difficulty of the waters it spawned in
@@ -344,6 +347,8 @@ export class Game {
   elev = 1
   /** last time a leech proc floated its +💧 — throttles the toast, not the effect */
   private leechToastT = -9
+  /** ~1.5s of the ship's course — enemy lookouts steer from reactT seconds back */
+  private shipTrail: { x: number; y: number; vx: number; vy: number; t: number }[] = []
   chillT = 0 // frost debuff on our ship
   shake = 0
   cam = v(0, 0)
@@ -408,6 +413,7 @@ export class Game {
     this.board = null
     this.elev = 1
     this.leechToastT = -9
+    this.shipTrail = []
     this.chillT = 0
     this.shake = 0
     this.over = false
@@ -750,6 +756,19 @@ export class Game {
     this.ship.vel.y *= 1 - Math.min(1, 1.4 * dt)
     this.ship.pos.x += this.ship.vel.x * dt
     this.ship.pos.y += this.ship.vel.y * dt
+    // log the course for the lookouts (enemy steering reads reactT seconds back)
+    this.shipTrail.push({ x: this.ship.pos.x, y: this.ship.pos.y, vx: this.ship.vel.x, vy: this.ship.vel.y, t: this.time })
+    while (this.shipTrail.length && this.shipTrail[0].t < this.time - 1.5) this.shipTrail.shift()
+  }
+
+  /** the ship as an enemy lookout remembers it — its course `ago` seconds back */
+  private shipAt(ago: number): { x: number; y: number; vx: number; vy: number } {
+    const target = this.time - ago
+    const tr = this.shipTrail
+    for (let i = tr.length - 1; i >= 0; i--) {
+      if (tr[i].t <= target) return tr[i]
+    }
+    return tr[0] ?? { x: this.ship.pos.x, y: this.ship.pos.y, vx: this.ship.vel.x, vy: this.ship.vel.y }
   }
 
   private updateShip(dt: number) {
@@ -805,7 +824,7 @@ export class Game {
         p.hp = Math.min(p.maxHp, p.hp + 2.5 * dt)
       }
       // a hurting plant sheds leaves, faster the worse it gets
-      if (p.hp < p.maxHp * 0.7 && Math.random() < (1 - p.hp / p.maxHp) * 2.5 * dt) {
+      if (p.hp < p.maxHp * 0.85 && Math.random() < (1 - p.hp / p.maxHp) * 4.5 * dt) {
         this.shedLeaf(this.mountPos(m))
       }
       if (p.hp <= 0) {
@@ -1110,7 +1129,8 @@ export class Game {
       guns,
       orbitDir: Math.random() < 0.5 ? 1 : -1,
       speed:
-        kind === 'harrier'
+        1.25 *
+        (kind === 'harrier'
           ? 92 + Math.min(18, danger * 2.5)
           : kind === 'fireship'
             ? 100 + Math.min(25, danger * 3)
@@ -1118,7 +1138,7 @@ export class Game {
               ? Math.min(88, 55 + danger * 3)
               : kind === 'galleon'
                 ? Math.min(46, 30 + danger * 1.5)
-                : Math.min(80, 40 + danger * 3 + rand(10)),
+                : Math.min(80, 40 + danger * 3 + rand(10))),
       mode: 'roam',
       noticeT: 0,
       noticeD: 0,
@@ -1128,6 +1148,7 @@ export class Game {
       wanderT: rand(2, 6),
       patience: patience0,
       patience0,
+      reactT: rand(0.35, 0.7),
       row: 1,
       danger,
       kind,
@@ -1201,10 +1222,12 @@ export class Game {
       const d = Math.hypot(dx, dy) || 1
       const ux = dx / d
       const uy = dy / d
-      // chasers lead your course: steer for where the hull will be when they
-      // arrive, not where it is — a straight-line sprint no longer wins by default
-      const leadT = Math.min(2.2, d / Math.max(60, spd))
-      const lead = v(center.x + this.ship.vel.x * leadT, center.y + this.ship.vel.y * leadT)
+      // chasers lead your course — but from the lookout's slightly stale picture
+      // (reactT back), so they anticipate held courses yet lag your jinks instead
+      // of mirroring the helm frame-for-frame
+      const past = this.shipAt(e.reactT)
+      const leadT = Math.min(2.2, d / Math.max(60, spd)) + e.reactT
+      const lead = v(past.x + past.vx * leadT, past.y + past.vy * leadT)
 
       // staged aggro: raiders eye you (❓) for a beat before committing (⚔️) —
       // back out of range while they wonder and nothing happens
@@ -1380,7 +1403,7 @@ export class Game {
           this.checkScuttle(e)
           continue
         }
-        if (p.hp < p.maxHp * 0.7 && Math.random() < (1 - p.hp / p.maxHp) * 2.5 * dt) {
+        if (p.hp < p.maxHp * 0.85 && Math.random() < (1 - p.hp / p.maxHp) * 4.5 * dt) {
           this.shedLeaf(this.gunPos(e, g))
         }
         p.cooldown -= dt
@@ -1389,7 +1412,9 @@ export class Game {
         // enough that keeping way on still slips the ring, but a ship you circle
         // is no longer helpless. Roamers don't track: sneaking past stays a play
         if (e.mode === 'hunt' && !this.over) {
-          const want = Math.atan2(center.y - from.y, center.x - from.x)
+          // gunners work off the same stale picture as the helm — the rings
+          // chase where you were, not the stick in your hand
+          const want = Math.atan2(past.y - from.y, past.x - from.x)
           const tr = gunTraverse(e.kind) * dt
           p.aim += clamp(angleDiff(want, p.aim), -tr, tr)
         }
