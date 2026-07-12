@@ -15,6 +15,7 @@ import {
   REGION_LOCKS,
   REGION_ARC,
   regionLockOf,
+  randomizeRegions,
 } from './genetics'
 import { Tool, TOOLS, toolbarLayout, seedRowRects, seedPanelRect, restartRect, inRect, SEED_VISIBLE, boardLayout } from './ui'
 import {
@@ -30,10 +31,6 @@ import {
   picksCost,
   DOCK_RANGE,
   POLLEN_START,
-  POLLEN_PER_CROSS,
-  POLLEN_PREMIUM_BONUS,
-  PITY_N,
-  PITY_BONUS,
 } from './breeding'
 import { POI, POI_CELL, POI_SIGHT, cellPOI, makePOI, TRADE_COST, TRADE_RANGE, BREED_COST } from './poi'
 import { keys } from './input'
@@ -218,8 +215,9 @@ export interface EnemyShip {
   danger: number // difficulty of the waters it spawned in
   /** the fleet's classes, each a doctrine: raiders brawl · harriers row & sprint ·
    *  sloops snipe long and flee the brawl · galleons tank and out-gun ·
-   *  fireships rush the hull and burn with it */
-  kind: 'raider' | 'harrier' | 'sloop' | 'galleon' | 'fireship'
+   *  fireships rush the hull and burn with it · bastions are a hive's garrison —
+   *  a fortress battery that cannot chase and never needs to */
+  kind: 'raider' | 'harrier' | 'sloop' | 'galleon' | 'fireship' | 'bastion'
   /** fireship plating: 0 bare (pops to one normal hit), 1 bronze, 2 iron */
   armor?: 0 | 1 | 2
   /** ship belongs to a nest and stays tethered to it */
@@ -267,7 +265,7 @@ export interface Bullet {
   airburst?: boolean
 }
 
-export type LootKind = 'wood' | 'seed' | 'water'
+export type LootKind = 'wood' | 'seed' | 'water' | 'pollen'
 export interface Loot {
   kind: LootKind
   n: number
@@ -302,13 +300,14 @@ export interface HoverInfo {
 
 /** how far a hunter presses before the chase fizzles — sloops and fireships range widest */
 function baseDeaggro(kind: EnemyShip['kind']): number {
-  return kind === 'harrier' ? 820 : kind === 'sloop' ? 900 : kind === 'fireship' ? 950 : DEAGGRO_R
+  return kind === 'harrier' ? 820 : kind === 'sloop' ? 900 : kind === 'fireship' ? 950 : kind === 'bastion' ? 1150 : DEAGGRO_R
 }
 
 /** rad/s a hunting mount grinds toward you — the ship holds range, the gun does
  *  the lining-up, and the red ring telegraphs every degree of it */
 function gunTraverse(kind: EnemyShip['kind']): number {
-  return kind === 'harrier' ? 0.9 : kind === 'sloop' ? 0.7 : kind === 'galleon' ? 0.35 : 0.5
+  // bastion gunners are drilled: the fortress can't chase, so the guns do all the work
+  return kind === 'harrier' ? 0.9 : kind === 'sloop' ? 0.7 : kind === 'galleon' ? 0.35 : kind === 'bastion' ? 0.6 : 0.5
 }
 
 function makePlant(genome: Genome, gen: number): Plant {
@@ -349,7 +348,6 @@ export class Game {
   /** pollen — the currency that buys rare-allele placements on the channeling board */
   pollen = POLLEN_START
   /** crosses in a row that surfaced no rare — feeds the pity floor */
-  barren = 0
 
   enemies: EnemyShip[] = []
   bullets: Bullet[] = []
@@ -381,6 +379,10 @@ export class Game {
   boardMsg: { text: string; t: number; color: string } | null = null
   /** region-gene gossip heard at ports this run, keyed 'locus:allele' */
   rumors = new Set<string>()
+  /** the standing bee bounty — sink ships, collect pollen. One at a time. */
+  contract: { need: number; got: number; pay: number } | null = null
+  /** you broke a hive: every fortress is hostile and no bee pays you again this run */
+  beesAngry = false
 
   firing = false // set by the fire key, consumed each frame → one broadside per press
   /** battery elevation, ELEV_MIN..1 — scales every gun's burst distance; Z lowers, X raises */
@@ -420,7 +422,10 @@ export class Game {
     this.wood = 8
     this.water = 6
     this.pollen = POLLEN_START
-    this.barren = 0
+    this.contract = null
+    this.beesAngry = false
+    // the sea re-deals its gene regions every run — rumors are the only map
+    randomizeRegions()
     this.seedId = 1
     // you set sail with one plant and an empty pouch — the first seed is out
     // there: flotsam, a trader, a wreck, or a raider's gun line
@@ -639,6 +644,8 @@ export class Game {
       if (p.kind === 'wreck' && d < p.r) this.salvageWreck(p)
       if (p.kind === 'nest' && !p.nestUp && d < 1250) this.spawnNest(p)
       if (p.kind === 'calm' && !p.seeded && d < POI_SIGHT.calm) this.seedCalm(p)
+      // a hive that holds a grudge (or a swarm at war) re-mans its walls on approach
+      if (p.kind === 'hive' && (p.hostile || this.beesAngry) && d < 1000) this.garrison(p)
     }
 
     // fog of war: reveal the waters around the ship
@@ -724,6 +731,70 @@ export class Game {
       l.ttl = 999
       l.vel = v(0, 0)
     }
+  }
+
+  // ---- the bee faction: fortress hives, bounty contracts, and the war you can start ----
+
+  /** the hive's standing garrison, if its walls are currently manned */
+  private hiveGarrison(p: POI): EnemyShip | undefined {
+    return this.enemies.find(e => e.kind === 'bastion' && e.home === p && !e.sunk)
+  }
+
+  /** man the walls: raise the fortress battery on the island (idempotent) */
+  private garrison(p: POI): EnemyShip {
+    const up = this.hiveGarrison(p)
+    if (up) return up
+    this.spawnEnemyShip({ at: v(p.pos.x, p.pos.y), kind: 'bastion', home: p })
+    return this.enemies[this.enemies.length - 1]
+  }
+
+  /** you fired on the bees: the island rises, and any bounty is void */
+  provokeHive(p: POI) {
+    const first = !p.hostile
+    p.hostile = true
+    const e = this.garrison(p)
+    this.aggro(e)
+    if (first) {
+      this.toastAt(p.pos, '🐝 the hive rises!', '#ffd257')
+      if (this.contract) {
+        this.contract = null
+        this.toastAt(this.ship.pos, 'bounty void — you fired on the bees', '#ff9d9d')
+      }
+    }
+  }
+
+  /** the garrison fell: the island goes quiet, coughs up its pollen stores —
+   *  and every hive on the sea learns your sail. No bee pays you again. */
+  private hiveFallen(p: POI) {
+    p.done = true
+    p.hostile = false
+    this.beesAngry = true
+    this.contract = null
+    const scatter = () => v(p.pos.x + rand(-90, 90), p.pos.y + rand(-90, 90))
+    const cache = 8 + Math.floor(this.dangerAt(p.pos))
+    for (let left = cache; left > 0; ) {
+      const n = Math.min(left, randInt(2, 3))
+      this.dropLoot('pollen', n, scatter())
+      left -= n
+    }
+    this.dropLoot('wood', randInt(4, 7), scatter())
+    this.banner = { title: '🍯 hive broken', sub: 'the pollen is yours — the swarm will remember', t: 4 }
+    this.burst(p.pos, '#ffd257', 20)
+  }
+
+  /** parley at a hive (F): strike a bounty, or hear how the swarm feels about you */
+  private parleyHive(p: POI) {
+    if (p.done) return this.toastAt(p.pos, 'the hive is silent', '#9fb8c8')
+    if (this.beesAngry || p.hostile) return this.toastAt(p.pos, '🐝 the swarm remembers your smoke', '#ff9d9d')
+    if (this.contract) {
+      const c = this.contract
+      return this.toastAt(p.pos, `🐝 bounty stands: ${c.got}/${c.need} sunk → ${c.pay}🌼`, '#ffd257')
+    }
+    const danger = this.dangerAt(p.pos)
+    const need = 2 + Math.min(3, Math.floor(danger / 3))
+    this.contract = { need, got: 0, pay: need + 2 }
+    this.toastAt(p.pos, `🐝 bounty struck: sink ${need} raiders → ${need + 2}🌼`, '#ffd257')
+    sfx('build')
   }
 
   /** barter with a trader raft in range (T) — wood for good seed lines */
@@ -931,6 +1002,9 @@ export class Game {
   tryDock() {
     if (this.board || this.over || this.paused || this.helpOpen) return
     const c = this.ship.pos
+    // a hive island answers F with a parley, not a breeding board
+    const hive = this.activePois.find(p => p.kind === 'hive' && dist(p.pos, c) <= p.r + 130)
+    if (hive) return this.parleyHive(hive)
     let premium = false
     if (this.breeder && dist(this.breeder.pos, c) <= DOCK_RANGE) {
       premium = true
@@ -987,24 +1061,13 @@ export class Game {
     const genome = boardCommit(b)
     if (!genome) return this.toast('set both parents first')
     this.water -= BREED_COST
+    // crossing spends pollen, never mints it — the bees pay bounties for that
     this.pollen -= spend
-    // earn a token per cross (more at a breeder boat), and let a dry streak with
-    // no rare surfacing drip the pity floor so a bad run still converges
-    let earn = POLLEN_PER_CROSS + (b.premium ? POLLEN_PREMIUM_BONUS : 0)
-    let pity = false
-    if (carriesRare(genome)) this.barren = 0
-    else if (++this.barren >= PITY_N) {
-      earn += PITY_BONUS
-      this.barren = 0
-      pity = true
-    }
-    this.pollen += earn
     const gen = b.childGen
     this.seeds.push({ id: this.seedId++, genome, gen })
     this.stats.bred++
     const ph = phenotype(genome)
     this.toastAt(this.ship.pos, `🌸 ${ph.name} (F${gen})${ph.shiny ? ' ✦' : ''}`, '#ffd257')
-    if (pity) this.toast(`pity bloom — +${PITY_BONUS}🌼 pollen`)
     sfx('breed')
     this.board = null
   }
@@ -1166,7 +1229,9 @@ export class Game {
           ? randInt(2, 3)
           : kind === 'galleon'
             ? randInt(5, Math.min(5 + Math.ceil(danger / 3), 7))
-            : randInt(2, Math.min(2 + Math.ceil(danger / 2), 6))
+            : kind === 'bastion'
+              ? 8
+              : randInt(2, Math.min(2 + Math.ceil(danger / 2), 6))
     const r = 20 + size * 6
     // fireship plating deepens with the waters: bare hulls pop to one normal
     // hit, bronze takes two, iron three — the blast is the same either way
@@ -1180,7 +1245,9 @@ export class Game {
             ? size * (34 + danger * 6)
             : kind === 'fireship'
               ? FIRESHIP_HIT * (armor + 1)
-              : size * (26 + danger * 5)
+              : kind === 'bastion'
+                ? size * (42 + danger * 7) // honeycomb walls out-tank any galleon
+                : size * (26 + danger * 5)
     // fireships mount no guns — the hull is the shell
     let gunCount =
       kind === 'harrier'
@@ -1191,7 +1258,9 @@ export class Game {
             ? 1 + (danger >= 5 ? 1 : 0)
             : kind === 'galleon'
               ? 3 + (size >= 6 ? 1 : 0) + (danger >= 7 ? 1 : 0)
-              : 1 + (size >= 4 ? 1 : 0) + (danger >= 6 && size >= 5 ? 1 : 0) + (opts.home ? 1 : 0)
+              : kind === 'bastion'
+                ? 4 + (danger >= 6 ? 1 : 0)
+                : 1 + (size >= 4 ? 1 : 0) + (danger >= 6 && size >= 5 ? 1 : 0) + (opts.home ? 1 : 0)
     const guns: EGun[] = []
     // batteries spawn sharing an axis, alternating port/starboard; once hunting,
     // each mount grinds slowly onto you (gunTraverse) while the hull holds range
@@ -1209,13 +1278,19 @@ export class Game {
         const titanHere = this.inRegion(pos, regionLockOf('power', 'titan')!)
         genome.power = [titanHere && Math.random() < 0.25 ? 'titan' : 'stout', 'stout']
       }
+      if (kind === 'bastion') {
+        // the bees breed their own guns, and they breed them well: long glass,
+        // heavy shot — region locks don't bind the swarm's own garden
+        genome.reach = [Math.random() < 0.5 ? 'spyglass' : 'long', 'long']
+        genome.power = [Math.random() < 0.4 ? 'titan' : 'stout', 'stout']
+      }
       const plant = makePlant(genome, 0)
       plant.water = 100
       plant.aim = gunA + (i % 2) * Math.PI + rand(-0.15, 0.15)
       guns.push({ x: Math.cos(pa) * pd, y: Math.sin(pa) * pd, plant })
     }
     const patience0 =
-      kind === 'sloop' ? 16 : kind === 'galleon' ? 20 : kind === 'fireship' ? 45 : CHASE_PATIENCE
+      kind === 'sloop' ? 16 : kind === 'galleon' ? 20 : kind === 'fireship' ? 45 : kind === 'bastion' ? 40 : CHASE_PATIENCE
     this.enemies.push({
       pos,
       vel: v(0, 0),
@@ -1228,20 +1303,22 @@ export class Game {
       guns,
       orbitDir: Math.random() < 0.5 ? 1 : -1,
       speed:
-        1.25 *
-        (kind === 'harrier'
-          ? 92 + Math.min(18, danger * 2.5)
-          : kind === 'fireship'
-            ? 100 + Math.min(25, danger * 3)
-            : kind === 'sloop'
-              ? Math.min(88, 55 + danger * 3)
-              : kind === 'galleon'
-                ? Math.min(46, 30 + danger * 1.5)
-                : Math.min(80, 40 + danger * 3 + rand(10))),
+        kind === 'bastion'
+          ? 0 // the island does not chase
+          : 1.25 *
+            (kind === 'harrier'
+              ? 92 + Math.min(18, danger * 2.5)
+              : kind === 'fireship'
+                ? 100 + Math.min(25, danger * 3)
+                : kind === 'sloop'
+                  ? Math.min(88, 55 + danger * 3)
+                  : kind === 'galleon'
+                    ? Math.min(46, 30 + danger * 1.5)
+                    : Math.min(80, 40 + danger * 3 + rand(10))),
       mode: 'roam',
       noticeT: 0,
       noticeD: 0,
-      aggroR: kind === 'harrier' ? 380 : kind === 'sloop' ? 430 : kind === 'fireship' ? 400 : AGGRO_R,
+      aggroR: kind === 'harrier' ? 380 : kind === 'sloop' ? 430 : kind === 'fireship' ? 400 : kind === 'bastion' ? 640 : AGGRO_R,
       deaggroR: baseDeaggro(kind),
       wanderA: rand(Math.PI * 2),
       wanderT: rand(2, 6),
@@ -1300,12 +1377,18 @@ export class Game {
     // so the pack doesn't churn; fights stay fights, not dogpiles
     let slots = 0
     for (const e of this.enemies) {
+      // a fortress garrison fights outside the pack's slot discipline — it
+      // neither waits for a slot nor denies one to the ships that must sail
+      if (e.kind === 'bastion') {
+        e.engaged = e.mode === 'hunt'
+        continue
+      }
       if (e.mode !== 'hunt') e.engaged = false
       else if (e.engaged) slots++
     }
     if (slots < HUNT_CAP) {
       const shadowers = this.enemies
-        .filter(e => e.mode === 'hunt' && !e.engaged)
+        .filter(e => e.kind !== 'bastion' && e.mode === 'hunt' && !e.engaged)
         .sort((a, b) => dist(a.pos, center) - dist(b.pos, center))
       for (const s of shadowers.slice(0, HUNT_CAP - slots)) s.engaged = true
     }
@@ -1472,6 +1555,11 @@ export class Game {
           e.vel.x += (ox / od) * 30
           e.vel.y += (oy / od) * 30
         }
+      }
+      // whatever the steering above decided, a fortress stays a fortress
+      if (e.kind === 'bastion') {
+        e.vel.x = 0
+        e.vel.y = 0
       }
       e.pos.x += e.vel.x * dt
       e.pos.y += e.vel.y * dt
@@ -1642,8 +1730,22 @@ export class Game {
     this.burst(e.pos, '#8a6a45', 16)
     this.toastAt(e.pos, '☠ ship sunk!', '#ffd257')
     sfx('sunk')
+    // the bee bounty pays for raider hulls — the swarm's own garrison doesn't count
+    if (this.contract && e.kind !== 'bastion') {
+      const c = this.contract
+      c.got++
+      if (c.got >= c.need) {
+        this.pollen += c.pay
+        this.contract = null
+        this.banner = { title: '🐝 bounty fulfilled', sub: `the bees pay ${c.pay}🌼 pollen`, t: 3.5 }
+        sfx('breed')
+      } else {
+        this.toastAt(e.pos, `🐝 ${c.got}/${c.need}`, '#ffd257')
+      }
+    }
     if (e.home && !this.enemies.some(o => o !== e && o.home === e.home && !o.sunk)) {
-      this.nestCleared(e.home)
+      if (e.home.kind === 'hive') this.hiveFallen(e.home)
+      else this.nestCleared(e.home)
     }
   }
 
@@ -1773,6 +1875,14 @@ export class Game {
         e.patience = e.patience0 // you drew blood — now they're invested
         this.damageEnemyHull(e, b)
         if (b.quirk === 'leech' && b.src) this.leechProc(b.src, at)
+      }
+    }
+    // a shell over a hive island wakes the swarm — the first burst provokes,
+    // every one after lands on the garrison like any other hull
+    for (const p of this.activePois) {
+      if (p.kind === 'hive' && !p.done && dist(at, p.pos) < p.r + splash * 0.5) {
+        hitAny = true
+        this.provokeHive(p)
       }
     }
     if (hitAny) {
@@ -1918,6 +2028,10 @@ export class Game {
           this.seeds.push(l.seed)
           this.toastAt(l.pos, `🌰 ${phenotype(l.seed.genome).name}`, '#b8e986')
         }
+        break
+      case 'pollen':
+        this.pollen += l.n
+        this.toastAt(l.pos, `+${l.n}🌼`, '#ffd257')
         break
     }
     sfx('collect')

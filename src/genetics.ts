@@ -112,15 +112,42 @@ export interface RegionLock {
 }
 
 export const REGION_LOCKS: RegionLock[] = [
-  { locus: 'element', allele: 'ember', heading: Math.PI / 2, minDanger: 3 }, // south — the shallow teaching rumor
-  { locus: 'power', allele: 'titan', heading: Math.PI, minDanger: 5 }, // west — galleon country
-  { locus: 'element', allele: 'frost', heading: -Math.PI / 2, minDanger: 6 }, // north
-  { locus: 'quirk', allele: 'homing', heading: 0, minDanger: 7 }, // east
-  { locus: 'burst', allele: 'airburst', heading: null, minDanger: 9 }, // the far deep, any heading
+  { locus: 'element', allele: 'ember', heading: Math.PI / 2, minDanger: 3 },
+  { locus: 'power', allele: 'titan', heading: Math.PI, minDanger: 5 },
+  { locus: 'element', allele: 'frost', heading: -Math.PI / 2, minDanger: 6 },
+  { locus: 'quirk', allele: 'homing', heading: 0, minDanger: 7 },
+  { locus: 'burst', allele: 'airburst', heading: null, minDanger: 9 },
 ]
 
 /** half-width of a region's compass sector — sectors overlap a little at the diagonals */
 export const REGION_ARC = Math.PI / 3
+
+function shuffle<T>(arr: T[]): T[] {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[arr[i], arr[j]] = [arr[j], arr[i]]
+  }
+  return arr
+}
+
+/** re-deal the regions for a fresh run: the depth ladder (3/5/6/7 + a far-deep
+ *  any-heading slot at 9) is fixed, but which gene sits at which compass point —
+ *  and which one is the shallow teaching lure — reshuffles every game. Rumors
+ *  are the only reliable map. */
+export function randomizeRegions() {
+  const dirs = shuffle([0, Math.PI / 2, Math.PI, -Math.PI / 2])
+  const slots: { heading: number | null; minDanger: number }[] = shuffle([
+    { heading: dirs[0], minDanger: 3 },
+    { heading: dirs[1], minDanger: 5 },
+    { heading: dirs[2], minDanger: 6 },
+    { heading: dirs[3], minDanger: 7 },
+    { heading: null, minDanger: 9 },
+  ])
+  REGION_LOCKS.forEach((lock, i) => {
+    lock.heading = slots[i].heading
+    lock.minDanger = slots[i].minDanger
+  })
+}
 
 export function regionLockOf(locus: LocusId, id: string): RegionLock | undefined {
   return REGION_LOCKS.find(l => l.locus === locus && l.allele === id)

@@ -119,7 +119,7 @@ function drawWaves(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number,
 }
 
 function drawLoot(ctx: CanvasRenderingContext2D, pos: Vec, kind: string, phase: number, ttl: number) {
-  const icons: Record<string, string> = { wood: '🪵', seed: '🌰', water: '💧' }
+  const icons: Record<string, string> = { wood: '🪵', seed: '🌰', water: '💧', pollen: '🌼' }
   const bob = Math.sin(phase * 2) * 3
   ctx.globalAlpha = ttl < 6 ? 0.35 + 0.5 * Math.abs(Math.sin(ttl * 5)) : 1
   ctx.fillStyle = '#00000033'
@@ -501,6 +501,53 @@ function drawPot(ctx: CanvasRenderingContext2D, x: number, y: number) {
 }
 
 function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: number) {
+  // the hive garrison is battlements, not a boat: a wax-brick ring on the island
+  if (e.kind === 'bastion') {
+    const frac0 = e.hp / e.maxHp
+    ctx.fillStyle = `rgba(120,90,34,${0.55 + 0.4 * frac0})`
+    ctx.strokeStyle = e.mode === 'hunt' ? '#ff9d5c' : '#8a6f3a'
+    ctx.lineWidth = 4
+    ctx.beginPath()
+    for (let i = 0; i <= 6; i++) {
+      const a = (i / 6) * Math.PI * 2
+      const hx = e.pos.x + Math.cos(a) * e.r * 0.9
+      const hy = e.pos.y + Math.sin(a) * e.r * 0.62
+      i === 0 ? ctx.moveTo(hx, hy) : ctx.lineTo(hx, hy)
+    }
+    ctx.closePath()
+    ctx.fill()
+    ctx.stroke()
+    // crenellations catch the light while the walls stand
+    ctx.fillStyle = '#ffd257'
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + Math.PI / 6
+      ctx.beginPath()
+      ctx.arc(e.pos.x + Math.cos(a) * e.r * 0.9, e.pos.y + Math.sin(a) * e.r * 0.62, 2.5, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    for (const gun of e.guns) {
+      const p = g.gunPos(e, gun)
+      drawPot(ctx, p.x, p.y)
+      const a = gun.plant.aim
+      drawAim(ctx, p.x, p.y - 12, a, false, false, t, '255,105,90')
+      drawDropRing(
+        ctx,
+        p.x + Math.cos(a) * gun.plant.pheno.range,
+        p.y + Math.sin(a) * gun.plant.pheno.range,
+        SPLASH,
+        e.mode === 'hunt' && gun.plant.cooldown <= 0,
+        t,
+        '255,105,90'
+      )
+      drawPlant(ctx, p.x, p.y, gun.plant, true, t)
+    }
+    if (e.mode === 'hunt') {
+      ctx.font = '15px serif'
+      ctx.textAlign = 'center'
+      ctx.fillText('⚔️', e.pos.x, e.pos.y - e.r - 14 + Math.sin(t * 5) * 2)
+    }
+    return
+  }
   // the hull sprite noses along its wake — cosmetic; the guns are world-fixed
   const ha = Math.atan2(e.vel.y, e.vel.x)
   ctx.save()
@@ -643,6 +690,84 @@ function drawPOI(ctx: CanvasRenderingContext2D, g: Game, p: POI, t: number) {
   else if (p.kind === 'trader') drawTrader(ctx, g, p, t)
   else if (p.kind === 'port') drawPort(ctx, g, p, t)
   else if (p.kind === 'breeder') drawBreeder(ctx, g, p, t)
+  else if (p.kind === 'hive') drawHive(ctx, g, p, t)
+}
+
+/** a bee fortress island: honeycomb walls around a hive dome. Neutral hives
+ *  parley (F) and pay bounties; fired-upon hives man the walls */
+function drawHive(ctx: CanvasRenderingContext2D, g: Game, p: POI, t: number) {
+  const x = p.pos.x
+  const y = p.pos.y
+  const angry = !p.done && (p.hostile || g.beesAngry)
+  // the island
+  ctx.fillStyle = '#c7a86e'
+  ctx.beginPath()
+  ctx.ellipse(x, y + 8, 74, 42, 0, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = '#9c854f'
+  ctx.beginPath()
+  ctx.ellipse(x, y + 4, 56, 30, 0, 0, Math.PI * 2)
+  ctx.fill()
+  // honeycomb rampart — a hex ring of wax-brick
+  ctx.strokeStyle = p.done ? '#6e5a35' : '#8a6f3a'
+  ctx.fillStyle = p.done ? 'rgba(90,74,44,0.8)' : 'rgba(176,138,58,0.9)'
+  ctx.lineWidth = 3
+  ctx.beginPath()
+  for (let i = 0; i <= 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6
+    const hx = x + Math.cos(a) * 40
+    const hy = y + Math.sin(a) * 26
+    i === 0 ? ctx.moveTo(hx, hy) : ctx.lineTo(hx, hy)
+  }
+  ctx.closePath()
+  ctx.fill()
+  ctx.stroke()
+  // the hive dome
+  ctx.fillStyle = p.done ? '#7a6a48' : '#d9a83f'
+  ctx.beginPath()
+  ctx.ellipse(x, y - 10, 22, 20, 0, Math.PI, 0)
+  ctx.fill()
+  ctx.strokeStyle = p.done ? '#5d5038' : '#a87c22'
+  ctx.lineWidth = 2
+  for (const dy of [-22, -16, -10, -4]) {
+    ctx.beginPath()
+    ctx.moveTo(x - Math.sqrt(Math.max(0, 1 - ((dy + 10) / 20) ** 2)) * 22, y + dy)
+    ctx.lineTo(x + Math.sqrt(Math.max(0, 1 - ((dy + 10) / 20) ** 2)) * 22, y + dy)
+    ctx.stroke()
+  }
+  if (p.done) {
+    // broken: a crack and no bees
+    ctx.strokeStyle = '#2e2618'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.moveTo(x - 6, y - 28)
+    ctx.lineTo(x + 2, y - 14)
+    ctx.lineTo(x - 4, y - 2)
+    ctx.stroke()
+  } else {
+    // the swarm: drifting gold motes, agitated and red-tinged when angry
+    for (let i = 0; i < 7; i++) {
+      const ph = t * (angry ? 3.2 : 1.4) + i * 1.7
+      ctx.fillStyle = angry && i % 2 ? '#ff9d5c' : '#ffd257'
+      ctx.beginPath()
+      ctx.arc(x + Math.cos(ph + i) * (26 + (i % 3) * 9), y - 14 + Math.sin(ph * 1.3) * 12, 1.6, 0, Math.PI * 2)
+      ctx.fill()
+    }
+  }
+  // parley prompt when alongside a hive that will still talk to you
+  const d = dist(p.pos, g.cam)
+  if (!p.done && !angry && d < p.r + 220) {
+    const near = d < p.r + 130
+    ctx.font = 'bold 12px ui-monospace, monospace'
+    const label = g.contract ? `F · bounty ${g.contract.got}/${g.contract.need}` : 'F · parley (bees pay 🌼)'
+    const lw = ctx.measureText(label).width + 16
+    ctx.fillStyle = 'rgba(4,20,32,0.8)'
+    roundRect(ctx, x - lw / 2, y - 118, lw, 20, 10)
+    ctx.fill()
+    ctx.fillStyle = near ? '#ffd257' : '#7d97a8'
+    ctx.textAlign = 'center'
+    ctx.fillText(label, x, y - 104)
+  }
 }
 
 /** a small harbour: the reliable place to dock (F) and cross your lines */
@@ -904,6 +1029,8 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
   x += chip(ctx, x, 12, `💧 ${g.water}`) + 6
   x += chip(ctx, x, 12, `🌰 ${g.seeds.length}`) + 6
   x += chip(ctx, x, 12, `🌼 ${g.pollen}`) + 6
+  // the standing bee bounty — the pollen income you're sailing for
+  if (g.contract) x += chip(ctx, x, 12, `🐝 ${g.contract.got}/${g.contract.need} → ${g.contract.pay}🌼`, '#ffd257') + 6
   if (g.chillT > 0) chip(ctx, x, 12, '❄ chilled!')
 
   // the ship herself: hull, next refit, the galley stove
@@ -1368,7 +1495,7 @@ function drawBoard(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number)
   if (L.ready && L.loci.length) {
     ctx.fillStyle = '#6f8a9a'
     ctx.font = '10px ui-monospace, monospace'
-    ctx.fillText('rare alleles cost 🌼 — earn one per cross' + (board.premium ? ', rares half price here' : ''), L.loci[0].rect.x, L.panel.y + 44)
+    ctx.fillText('rare alleles cost 🌼 — bee bounties pay it' + (board.premium ? ', rares half price here' : ''), L.loci[0].rect.x, L.panel.y + 44)
   }
 
   // parent slots
@@ -1571,7 +1698,7 @@ function drawHelp(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number) 
     '',
     'sights dot the horizon: ⚓ wrecks (fat salvage) · 🏮 traders (🪵 → seeds) · 🌀 becalmed',
     'pools (rich flotsam, dead sails) · ☠️ raider nests (wildest genes) · 🏝️ ports & the',
-    '🐝 breeder boat (dock with F to cross your lines).',
+    '🐝 breeder boat (dock with F to cross your lines) · 🍯 bee fortresses (see below).',
     '',
     'raiders eye you first (❓) — back away and they lose interest; linger and it\'s ⚔️.',
     'waking one ship stirs its podmates, but only a few press the attack at once —',
@@ -1606,9 +1733,15 @@ function drawHelp(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number) 
     'boat (premium): press F to dock and open the CHANNELING board. set two parents, then',
     'place one allele from each into the child — surface a carried recessive on purpose,',
     'grab any ✦ wildcard the cross offers, and line up trait SYNERGIES. commons are free',
-    'but every RARE you place costs 🌼 POLLEN — you earn one per cross (two at a breeder,',
-    'where rares are half price), so a dream genome is bred over runs, not built at once.',
-    'a dry streak drips pity pollen. Enter to cross, F auto-fills within budget, Esc cancels.',
+    'but every RARE you place costs 🌼 POLLEN — and crossing never earns it. The BEES do.',
+    '(the breeder boat still halves rare prices.) Enter to cross, F auto-fills, Esc cancels.',
+    '',
+    'the BEES hold 🍯 fortress islands out in the sea-lanes. sail alongside and press F',
+    'to PARLEY: they pay a pollen BOUNTY for raiders sunk (one contract at a time —',
+    'the 🐝 chip up top tracks it). or turn your guns on the hive: its garrison is a',
+    'fortress battery that out-guns and out-tanks any galleon, but a broken hive spills',
+    'its pollen stores. fire on the bees once and that island holds the grudge; break',
+    'one and EVERY hive goes hostile and no bee pays you again this run. choose a side.',
     '',
     'the run ends when your hull gives out.',
   ]

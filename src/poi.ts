@@ -7,7 +7,7 @@
 
 import { Vec, v, hash01 } from './util'
 
-export type POIKind = 'wreck' | 'nest' | 'calm' | 'trader' | 'port' | 'breeder'
+export type POIKind = 'wreck' | 'nest' | 'calm' | 'trader' | 'port' | 'breeder' | 'hive'
 
 export interface POI {
   kind: POIKind
@@ -24,6 +24,8 @@ export interface POI {
   nestUp: boolean
   /** becalmed flotsam already scattered */
   seeded: boolean
+  /** a hive you fired on — its garrison holds the grudge for the run */
+  hostile: boolean
   /** heading, radians — only the wandering breeder boat uses it */
   heading?: number
 }
@@ -43,6 +45,7 @@ export const POI_SIGHT: Record<POIKind, number> = {
   calm: 1200,
   port: 2100, // a harbour is a landmark you can steer for
   breeder: 1700,
+  hive: 2100, // a fortress island reads far — steer for it or around it
 }
 
 export const POI_ICON: Record<POIKind, string> = {
@@ -52,6 +55,7 @@ export const POI_ICON: Record<POIKind, string> = {
   calm: '🌀',
   port: '🏝️',
   breeder: '🐝',
+  hive: '🍯',
 }
 
 export const POI_COLOR: Record<POIKind, string> = {
@@ -61,6 +65,7 @@ export const POI_COLOR: Record<POIKind, string> = {
   calm: '#9fd8ff',
   port: '#e6c88f',
   breeder: '#f4a6d0',
+  hive: '#ffd257',
 }
 
 export const TRADE_COST = 6 // 🪵 per seed
@@ -91,15 +96,37 @@ export function cellPOI(cx: number, cy: number): POI | null {
   const roll = hash01(cx * 5.7 - 1.3, cy * 11.9 + 8.8)
   let kind: POIKind
   if (roll < 0.3) kind = 'wreck'
-  else if (roll < 0.55) kind = 'calm'
-  else if (roll < 0.72) kind = 'trader'
+  else if (roll < 0.52) kind = 'calm'
+  else if (roll < 0.68) kind = 'trader'
+  else if (roll < 0.78) kind = home > 1500 ? 'hive' : 'calm' // bee fortresses hold the rougher sea-lanes
   else kind = home > 1400 ? 'nest' : 'wreck' // nests only in rougher waters
   return makePOI(kind, v(px, py), hash01(cx * 1.9, cy * 17.3))
 }
 
 export function makePOI(kind: POIKind, pos: Vec, sizeRoll = 0.5): POI {
   const r =
-    kind === 'calm' ? 260 + sizeRoll * 170 : kind === 'nest' ? 320 : kind === 'port' ? 150 : kind === 'breeder' ? 130 : 110
+    kind === 'calm'
+      ? 260 + sizeRoll * 170
+      : kind === 'nest'
+        ? 320
+        : kind === 'hive'
+          ? 190
+          : kind === 'port'
+            ? 150
+            : kind === 'breeder'
+              ? 130
+              : 110
   // ports never sell out; everything else starts with its own default state
-  return { kind, pos, r, discovered: false, done: false, stock: kind === 'port' ? 99 : 2, nestUp: false, seeded: false, heading: 0 }
+  return {
+    kind,
+    pos,
+    r,
+    discovered: false,
+    done: false,
+    stock: kind === 'port' ? 99 : 2,
+    nestUp: false,
+    seeded: false,
+    hostile: false,
+    heading: 0,
+  }
 }

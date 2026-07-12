@@ -38,6 +38,11 @@ Open `http://localhost:5199/` with the chrome-devtools MCP tools
   re-close the help overlay after each edit.
 - Leaving the raft unattended in dangerous waters gets it shot and plants
   wilt unwatered; clear `g.enemies = []` while staging scenes.
+- Staging a fake POI: `updatePOIs` REBUILDS `g.activePois` from the `g.pois`
+  map every tick, so anything pushed only into `activePois` vanishes after one
+  frame. Put the object into `g.pois.set('testkey', poi)` (any string key) and
+  it persists; include all POI fields (`hostile`, `stock`, …) or later kinds
+  break.
 - Check `list_console_messages` (error/warn) at the end — the game logs
   nothing in normal operation, so anything there is real.
 - chrome-devtools MCP errors with "browser is already running for

@@ -7,11 +7,11 @@
 //
 // Scarcity keeps the placement from being a wishlist (BREEDING_REDESIGN §3/§4):
 // common alleles are free to arrange, but placing a RARE recessive you didn't
-// have to take costs POLLEN — a currency you earn one token per cross (two at a
-// breeder boat, where rares are also half price: the "steering service"). So the
-// good genomes are bred across several crosses, not assembled in one. A pity
-// floor drips pollen on dry streaks, and wildcards dupe-protect toward rares your
-// lines don't already carry.
+// have to take costs POLLEN — a currency the BEES pay, not the crosses: bounty
+// contracts at hive fortresses and raided hive caches are the only income (the
+// breeder boat still halves rare prices: the "steering service"). So the good
+// genomes are bred across several contracts, not assembled in one, and wildcards
+// dupe-protect toward rares your lines don't already carry.
 
 import { Genome, LocusId, LOCUS_ORDER, LOCI, alleleDef, expressed, mutationAllele, regionLockOf } from './genetics'
 import { pick } from './util'
@@ -25,14 +25,6 @@ export const RARE_COST = 2
 export const RARE_COST_PREMIUM = 1
 /** pollen you start a run with — enough for one rare at a port on cross one */
 export const POLLEN_START = 2
-/** pollen earned per committed cross */
-export const POLLEN_PER_CROSS = 1
-/** extra pollen for crossing at a breeder boat */
-export const POLLEN_PREMIUM_BONUS = 1
-/** crosses that surface no rare before the pity floor pays out */
-export const PITY_N = 3
-/** pollen the pity floor drips once a dry streak hits PITY_N */
-export const PITY_BONUS = 2
 
 export interface BoardParent {
   genome: Genome
