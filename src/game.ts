@@ -714,9 +714,9 @@ export class Game {
       // it to shift) instead of fighting it head-on
       const eff = 0.3 + 0.7 * Math.pow((1 + Math.cos(angleDiff(this.ship.a, this.wind.a))) / 2, 1.5)
       this.sailEff = eff
-      const maxSpeed = 120 * eff * gust * (this.chillT > 0 ? 0.55 : 1)
-      this.ship.vel.x += Math.cos(this.ship.a) * 260 * eff * gust * dt
-      this.ship.vel.y += Math.sin(this.ship.a) * 260 * eff * gust * dt
+      const maxSpeed = 240 * eff * gust * (this.chillT > 0 ? 0.55 : 1)
+      this.ship.vel.x += Math.cos(this.ship.a) * 520 * eff * gust * dt
+      this.ship.vel.y += Math.sin(this.ship.a) * 520 * eff * gust * dt
       const sp = Math.hypot(this.ship.vel.x, this.ship.vel.y)
       if (sp > maxSpeed) {
         this.ship.vel.x *= maxSpeed / sp
@@ -728,9 +728,9 @@ export class Game {
       this.ship.vel.x *= 1 - Math.min(1, 2.2 * dt)
       this.ship.vel.y *= 1 - Math.min(1, 2.2 * dt)
       const sternway = -(this.ship.vel.x * Math.cos(this.ship.a) + this.ship.vel.y * Math.sin(this.ship.a))
-      if (sternway < 42) {
-        this.ship.vel.x -= Math.cos(this.ship.a) * 100 * dt
-        this.ship.vel.y -= Math.sin(this.ship.a) * 100 * dt
+      if (sternway < 84) {
+        this.ship.vel.x -= Math.cos(this.ship.a) * 200 * dt
+        this.ship.vel.y -= Math.sin(this.ship.a) * 200 * dt
       }
     }
     // the keel swings momentum in behind the prow — the hull carves, not skates
