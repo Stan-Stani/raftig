@@ -13,7 +13,7 @@
 // floor drips pollen on dry streaks, and wildcards dupe-protect toward rares your
 // lines don't already carry.
 
-import { Genome, LocusId, LOCUS_ORDER, LOCI, alleleDef, expressed, mutationAllele } from './genetics'
+import { Genome, LocusId, LOCUS_ORDER, LOCI, alleleDef, expressed, mutationAllele, regionLockOf } from './genetics'
 import { pick } from './util'
 
 /** how close to a port / breeder boat you must be to dock (F) */
@@ -113,11 +113,12 @@ function ownedRares(stock: BoardParent[]): Set<string> {
 }
 
 /** a wildcard for the cross, dupe-protected: if the roll lands a rare the lines
- *  already carry, reroll toward one they don't (so exploration finds new genes) */
+ *  already carry, reroll toward one they don't (so exploration finds new genes).
+ *  Region-locked genes stay off the wildcard table — the sea holds those. */
 function wildFor(locus: LocusId, owned: Set<string>): string {
   const a = mutationAllele(locus)
   if (!alleleDef(locus, a).rare || !owned.has(locus + ':' + a)) return a
-  const fresh = LOCI[locus].filter(x => x.rare && !owned.has(locus + ':' + x.id))
+  const fresh = LOCI[locus].filter(x => x.rare && !owned.has(locus + ':' + x.id) && !regionLockOf(locus, x.id))
   return fresh.length ? pick(fresh).id : a
 }
 

@@ -97,6 +97,35 @@ export const LOCI: Record<LocusId, AlleleDef[]> = {
   ],
 }
 
+// ---- region-locked genes: the sea gates its best alleles by compass and depth.
+// These never mutate into a line — they drift only in wild seeds (and enemy
+// guns) inside their home waters. You sail there, catch one, and marry it in.
+// Ports sell the rumors that make the map legible.
+
+export interface RegionLock {
+  locus: LocusId
+  allele: string
+  /** compass heading of the region's centre (canvas y-down: north = -π/2), or null = any heading */
+  heading: number | null
+  /** how deep the waters must run (dangerAt) before it blooms */
+  minDanger: number
+}
+
+export const REGION_LOCKS: RegionLock[] = [
+  { locus: 'element', allele: 'ember', heading: Math.PI / 2, minDanger: 3 }, // south — the shallow teaching rumor
+  { locus: 'power', allele: 'titan', heading: Math.PI, minDanger: 5 }, // west — galleon country
+  { locus: 'element', allele: 'frost', heading: -Math.PI / 2, minDanger: 6 }, // north
+  { locus: 'quirk', allele: 'homing', heading: 0, minDanger: 7 }, // east
+  { locus: 'burst', allele: 'airburst', heading: null, minDanger: 9 }, // the far deep, any heading
+]
+
+/** half-width of a region's compass sector — sectors overlap a little at the diagonals */
+export const REGION_ARC = Math.PI / 3
+
+export function regionLockOf(locus: LocusId, id: string): RegionLock | undefined {
+  return REGION_LOCKS.find(l => l.locus === locus && l.allele === id)
+}
+
 /** allele-id pair per locus, e.g. genome.power = ['mild','stout'] */
 export type Genome = Record<LocusId, [string, string]>
 
@@ -239,11 +268,13 @@ export function describe(g: Genome): string[] {
   })
 }
 
-/** Sample a wild genome; rareBoost > 1 makes rare alleles likelier (late waves). */
-export function wildGenome(rareBoost = 1): Genome {
+/** Sample a wild genome; rareBoost > 1 makes rare alleles likelier (late waves).
+ *  wmul weights alleles by where the seed grew — region locks zero their gene
+ *  outside its home waters and thicken it inside. */
+export function wildGenome(rareBoost = 1, wmul?: (locus: LocusId, a: AlleleDef) => number): Genome {
   const g = {} as Genome
   for (const locus of LOCUS_ORDER) {
-    const roll = () => weighted(LOCI[locus], a => a.w * (a.rare ? rareBoost : 1)).id
+    const roll = () => weighted(LOCI[locus], a => a.w * (a.rare ? rareBoost : 1) * (wmul ? wmul(locus, a) : 1)).id
     g[locus] = [roll(), roll()]
   }
   return g
@@ -255,11 +286,13 @@ export const MUTATION_RATE = 0.06
 const JACKPOT_RATE = 0.35
 
 /** A mutation result at a locus — jackpot-weighted toward that locus's rares.
- *  Shared by meiosis (drift) and the channeling board (wildcard tiles). */
+ *  Shared by meiosis (drift) and the channeling board (wildcard tiles).
+ *  Region-locked alleles never mutate in: the hunt is the only door. */
 export function mutationAllele(locus: LocusId): string {
-  const rares = LOCI[locus].filter(a => a.rare)
+  const pool = LOCI[locus].filter(a => !regionLockOf(locus, a.id))
+  const rares = pool.filter(a => a.rare)
   if (rares.length && Math.random() < JACKPOT_RATE) return pick(rares).id
-  return pick(LOCI[locus]).id
+  return pick(pool).id
 }
 
 function meiosis(g: Genome, locus: LocusId): string {

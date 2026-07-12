@@ -1,5 +1,21 @@
 import { Vec, v, dist, clamp, rand, randInt, gkey, angleDiff, weighted, pick } from './util'
-import { Genome, Seed, Pheno, phenotype, wildGenome, makeGenome, carriesRare } from './genetics'
+import {
+  Genome,
+  Seed,
+  Pheno,
+  phenotype,
+  wildGenome,
+  makeGenome,
+  carriesRare,
+  alleleDef,
+  AlleleDef,
+  LocusId,
+  LOCUS_ORDER,
+  RegionLock,
+  REGION_LOCKS,
+  REGION_ARC,
+  regionLockOf,
+} from './genetics'
 import { Tool, TOOLS, toolbarLayout, seedRowRects, seedPanelRect, restartRect, inRect, SEED_VISIBLE, boardLayout } from './ui'
 import {
   Board,
@@ -43,6 +59,25 @@ export const POD_WAKE_R = 340 // committing raiders stir roaming neighbours this
 export const CHASE_PATIENCE = 13 // seconds a hunter presses before you're not worth the powder
 export const HUNT_CAP = 3 // ships in full ⚔️ at once — the rest shadow outside gun range
 export const DANGER_SCALE = 550 // px from home waters per +1 danger
+
+/** the named danger bands — geography the crew can point at */
+export function seaName(danger: number): string {
+  return danger < 2 ? 'home waters' : danger < 4 ? 'open sea' : danger < 6 ? 'raider seas' : 'deadly waters'
+}
+
+/** rumor-speak for a region's compass sector (canvas y-down: north = -π/2) */
+export function compassWord(heading: number | null): string {
+  if (heading === null) return 'far from any shore'
+  const names: [number, string][] = [
+    [0, 'to the east'],
+    [Math.PI / 2, 'to the south'],
+    [Math.PI, 'to the west'],
+    [-Math.PI / 2, 'to the north'],
+  ]
+  let best = names[0]
+  for (const n of names) if (Math.abs(angleDiff(heading, n[0])) < Math.abs(angleDiff(heading, best[0]))) best = n
+  return best[1]
+}
 export const FOG_CELL = 280 // minimap fog-of-war resolution
 export const FOG_SIGHT = 640 // radius revealed around the ship
 export const BREEDER_SPEED = 24 // px/s the wandering breeder boat drifts
@@ -344,6 +379,8 @@ export class Game {
   board: Board | null = null
   /** feedback line drawn on the channeling board — world toasts hide behind the modal */
   boardMsg: { text: string; t: number; color: string } | null = null
+  /** region-gene gossip heard at ports this run, keyed 'locus:allele' */
+  rumors = new Set<string>()
 
   firing = false // set by the fire key, consumed each frame → one broadside per press
   /** battery elevation, ELEV_MIN..1 — scales every gun's burst distance; Z lowers, X raises */
@@ -414,6 +451,8 @@ export class Game {
     this.seedSel = 0
     this.seedScroll = 0
     this.board = null
+    this.boardMsg = null
+    this.rumors = new Set()
     this.elev = 1
     this.leechToastT = -9
     this.shipTrail = []
@@ -474,6 +513,22 @@ export class Game {
   /** difficulty of the waters at p — grows with distance from home (the spawn point) */
   dangerAt(p: Vec): number {
     return 1 + dist(p, v(0, 0)) / DANGER_SCALE
+  }
+
+  /** is a locked gene's home region at p? — deep enough, right compass sector */
+  inRegion(p: Vec, lock: RegionLock): boolean {
+    if (this.dangerAt(p) < lock.minDanger) return false
+    if (lock.heading === null) return true
+    return Math.abs(angleDiff(Math.atan2(p.y, p.x), lock.heading)) <= REGION_ARC
+  }
+
+  /** wild-gene weights for the waters at p: region-locked alleles are absent
+   *  outside their home region and bloom thick inside it */
+  regionMul(p: Vec): (locus: LocusId, a: AlleleDef) => number {
+    return (locus, a) => {
+      const lock = regionLockOf(locus, a.id)
+      return lock ? (this.inRegion(p, lock) ? 3 : 0) : 1
+    }
   }
 
   /** local wind multiplier: 1 in open water, ~0.12 deep inside a becalmed pool */
@@ -618,7 +673,7 @@ export class Game {
     this.dropLoot('water', 1 + Math.floor(danger / 4), scatter())
     const nSeeds = 1 + (danger >= 4 ? 1 : 0)
     for (let i = 0; i < nSeeds; i++) {
-      this.dropLoot('seed', 1, scatter(), { id: this.seedId++, genome: wildGenome(1 + danger * 0.5), gen: 0 })
+      this.dropLoot('seed', 1, scatter(), { id: this.seedId++, genome: wildGenome(1 + danger * 0.5, this.regionMul(p.pos)), gen: 0 })
     }
     this.burst(p.pos, '#ffb74d', 14)
     this.toastAt(p.pos, '⚓ salvage!', '#ffd257')
@@ -643,7 +698,7 @@ export class Game {
     const danger = this.dangerAt(p.pos) + 2
     const scatter = () => v(p.pos.x + rand(-60, 60), p.pos.y + rand(-60, 60))
     for (let i = 0; i < 2 + (danger >= 7 ? 1 : 0); i++) {
-      this.dropLoot('seed', 1, scatter(), { id: this.seedId++, genome: wildGenome(2 + danger * 0.5), gen: 0 })
+      this.dropLoot('seed', 1, scatter(), { id: this.seedId++, genome: wildGenome(2 + danger * 0.5, this.regionMul(p.pos)), gen: 0 })
     }
     this.dropLoot('wood', randInt(5, 8), scatter())
     this.dropLoot('water', 1, scatter())
@@ -663,7 +718,7 @@ export class Game {
       const roll = Math.random()
       if (roll < 0.58) this.dropLoot('wood', randInt(2, 3), at)
       else if (roll < 0.86) this.dropLoot('water', 1, at)
-      else this.dropLoot('seed', 1, at, { id: this.seedId++, genome: wildGenome(1 + danger * 0.4), gen: 0 })
+      else this.dropLoot('seed', 1, at, { id: this.seedId++, genome: wildGenome(1 + danger * 0.4, this.regionMul(p.pos)), gen: 0 })
     }
     for (const l of this.loot.slice(-n)) {
       l.ttl = 999
@@ -680,7 +735,8 @@ export class Game {
       this.wood -= TRADE_COST
       p.stock--
       const danger = this.dangerAt(p.pos)
-      const seed = { id: this.seedId++, genome: wildGenome(1.4 + danger * 0.4), gen: 0 }
+      // traders sell what grows where they anchor — a northern trader is a frost stall
+      const seed = { id: this.seedId++, genome: wildGenome(1.4 + danger * 0.4, this.regionMul(p.pos)), gen: 0 }
       this.seeds.push(seed)
       this.toastAt(p.pos, `🌰 ${phenotype(seed.genome).name}`, '#b8e986')
       if (p.stock <= 0) {
@@ -885,7 +941,38 @@ export class Game {
     if (stock.length < 2) return this.toast('need two watered plants or seeds to cross')
     this.board = openBoard(premium, stock, this.pollen)
     this.boardMsg = null
+    // portmasters gossip about where the locked genes grow — the map's real currency
+    if (!premium) this.shareRumor()
     sfx('build')
+  }
+
+  /** every allele the player's lines carry anywhere — deck plants and pouch */
+  ownedAlleleKeys(): Set<string> {
+    const owned = new Set<string>()
+    const add = (g: Genome) => {
+      for (const l of LOCUS_ORDER) for (const id of g[l]) owned.add(l + ':' + id)
+    }
+    for (const m of this.mounts) if (m.plant) add(m.plant.genome)
+    for (const s of this.seeds) add(s.genome)
+    return owned
+  }
+
+  /** one rumor per port visit: unheard locks first (shallowest — the natural
+   *  breadcrumb order), then reminders of heard-but-uncaught genes */
+  private shareRumor() {
+    const key = (l: RegionLock) => l.locus + ':' + l.allele
+    const unheard = REGION_LOCKS.filter(l => !this.rumors.has(key(l))).sort((a, b) => a.minDanger - b.minDanger)
+    const owned = this.ownedAlleleKeys()
+    const uncaught = REGION_LOCKS.filter(l => !owned.has(key(l)))
+    const lock = unheard[0] ?? (uncaught.length ? pick(uncaught) : null)
+    if (!lock) return // every locked gene is already in the player's lines
+    this.rumors.add(key(lock))
+    const label = alleleDef(lock.locus, lock.allele).label
+    this.boardMsg = {
+      text: `🗺 rumor: ${label} blooms in the ${seaName(lock.minDanger)} ${compassWord(lock.heading)}`,
+      t: 8,
+      color: '#ffd257',
+    }
   }
 
   /** commit the current board: mint the crossed seed into the pouch */
@@ -1112,10 +1199,16 @@ export class Game {
     for (let i = 0; i < gunCount; i++) {
       const pa = (i / gunCount) * Math.PI * 2 + rand(0.6)
       const pd = gunCount === 1 ? 0 : r * 0.45
-      const genome = wildGenome((opts.home ? 1.6 : 1) + danger * 0.4)
+      // enemy guns grow from the same waters — northern raiders shoot frost, and
+      // that telegraph is the region system talking
+      const genome = wildGenome((opts.home ? 1.6 : 1) + danger * 0.4, this.regionMul(pos))
       // class doctrine bred into the guns: sloops carry long glass, galleons heavy shot
       if (kind === 'sloop') genome.reach = [Math.random() < 0.25 ? 'spyglass' : 'long', 'long']
-      if (kind === 'galleon') genome.power = [Math.random() < 0.2 ? 'titan' : 'stout', 'stout']
+      if (kind === 'galleon') {
+        // titan is region-locked: only galleons raiding titan waters mount the real thing
+        const titanHere = this.inRegion(pos, regionLockOf('power', 'titan')!)
+        genome.power = [titanHere && Math.random() < 0.25 ? 'titan' : 'stout', 'stout']
+      }
       const plant = makePlant(genome, 0)
       plant.water = 100
       plant.aim = gunA + (i % 2) * Math.PI + rand(-0.15, 0.15)

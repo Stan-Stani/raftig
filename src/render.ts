@@ -1,5 +1,5 @@
-import { Game, TS, RANGE, SPLASH, TIERS, FOG_CELL, DANGER_SCALE, Plant, Bullet, EnemyShip } from './game'
-import { describe, phenotype, Genome, Pheno, alleleDef } from './genetics'
+import { Game, TS, RANGE, SPLASH, TIERS, FOG_CELL, DANGER_SCALE, Plant, Bullet, EnemyShip, seaName, compassWord } from './game'
+import { describe, phenotype, Genome, Pheno, alleleDef, REGION_LOCKS } from './genetics'
 import { TOOLS, toolbarLayout, seedPanelRect, seedRowRects, restartRect, SEED_VISIBLE, boardLayout, BoardChip } from './ui'
 import { synergies, picksCost, DOCK_RANGE } from './breeding'
 import { POI, POI_SIGHT, POI_ICON, POI_COLOR, TRADE_COST, TRADE_RANGE, BREED_COST } from './poi'
@@ -27,10 +27,12 @@ export function render(ctx: CanvasRenderingContext2D, g: Game) {
   const { vw: w, vh: h } = g
   const t = g.time
 
-  // sea
+  // sea — the water itself darkens and sours as the danger bands deepen,
+  // so "how far out am I" reads off the horizon, not just the HUD number
+  const deep = clamp((g.dangerAt(g.cam) - 1) / 9, 0, 1)
   const grad = ctx.createLinearGradient(0, 0, 0, h)
-  grad.addColorStop(0, '#0d4a6f')
-  grad.addColorStop(1, '#072a40')
+  grad.addColorStop(0, mixColor('#0d4a6f', '#3d1f4a', deep))
+  grad.addColorStop(1, mixColor('#072a40', '#1a0c24', deep))
   ctx.fillStyle = grad
   ctx.fillRect(0, 0, w, h)
 
@@ -922,10 +924,9 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
   const secs = Math.floor(g.stats.time % 60)
   const hunting = g.enemies.filter(e => e.mode === 'hunt').length
   const danger = g.dangerAt(g.cam)
-  const seaName = danger < 2 ? 'home waters' : danger < 4 ? 'open sea' : danger < 6 ? 'raider seas' : 'deadly waters'
   const status = hunting
     ? `⚔️ ${hunting} raider${hunting === 1 ? '' : 's'} engaging!`
-    : `${seaName} · danger ${danger.toFixed(1)} · ${g.enemies.length} sail${g.enemies.length === 1 ? '' : 's'} near`
+    : `${seaName(danger)} · danger ${danger.toFixed(1)} · ${g.enemies.length} sail${g.enemies.length === 1 ? '' : 's'} near`
   ctx.font = 'bold 15px ui-monospace, monospace'
   const sw = ctx.measureText(status).width + 24
   ctx.fillStyle = hunting ? 'rgba(80,16,16,0.8)' : 'rgba(4,20,32,0.75)'
@@ -970,7 +971,7 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
   if (g.hoverInfo && !g.board) drawPlantTooltip(ctx, g, w, h)
   if (g.board) drawBoard(ctx, g, w, h)
 
-  if (g.helpOpen) drawHelp(ctx, w, h)
+  if (g.helpOpen) drawHelp(ctx, g, w, h)
   else if (g.paused && !g.over) {
     ctx.fillStyle = 'rgba(0,0,0,0.45)'
     ctx.fillRect(0, 0, w, h)
@@ -1533,7 +1534,19 @@ function fit(ctx: CanvasRenderingContext2D, s: string, maxW: number): string {
   return out + '…'
 }
 
-function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
+/** the region-gene ledger: ✓ caught · rumor heard · ??? still just dockside silence */
+function rumorRecap(g: Game): string[] {
+  const owned = g.ownedAlleleKeys()
+  return REGION_LOCKS.map(l => {
+    const key = l.locus + ':' + l.allele
+    if (!g.rumors.has(key) && !owned.has(key)) return '  ??? — dock at a 🏝️ port for the gossip'
+    const label = alleleDef(l.locus, l.allele).label
+    const place = `${seaName(l.minDanger)} ${compassWord(l.heading)}`
+    return owned.has(key) ? `  ✓ ${label} — ${place} (caught: it's in your lines)` : `  ${label} — ${place}`
+  })
+}
+
+function drawHelp(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number) {
   ctx.fillStyle = 'rgba(2,12,20,0.82)'
   ctx.fillRect(0, 0, w, h)
   ctx.textAlign = 'center'
@@ -1547,6 +1560,10 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
   const lines = [
     'A/D — helm · W — sheet in · S — back water · SPACE — FIRE guns · Z/X — gun range · 1–2 tools',
     'B — boil 1🪵 → 2💧 · U — refit · T — trade · F — breed (port/boat) · P pause · H help',
+    '',
+    'RUMORS — some genes the sea gates by compass and depth: mutation never mints them,',
+    'you sail to their waters and catch them wild. portmasters trade the gossip:',
+    ...rumorRecap(g),
     '',
     'she sails like a SHIP: the prow leads, the hull turns, momentum carries.',
     'mind the WIND (arrow up top): running with it is fast, beating into it is a crawl.',
