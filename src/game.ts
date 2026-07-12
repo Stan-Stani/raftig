@@ -1,4 +1,4 @@
-import { Vec, v, dist, clamp, rand, randInt, gkey, angleDiff, weighted } from './util'
+import { Vec, v, dist, clamp, rand, randInt, gkey, angleDiff, weighted, pick } from './util'
 import { Genome, Seed, Pheno, phenotype, wildGenome, makeGenome, carriesRare } from './genetics'
 import { Tool, TOOLS, toolbarLayout, seedRowRects, seedPanelRect, restartRect, inRect, SEED_VISIBLE, boardLayout } from './ui'
 import {
@@ -45,6 +45,8 @@ export const DANGER_SCALE = 550 // px from home waters per +1 danger
 export const FOG_CELL = 280 // minimap fog-of-war resolution
 export const FOG_SIGHT = 640 // radius revealed around the ship
 export const BREEDER_SPEED = 24 // px/s the wandering breeder boat drifts
+/** one "normal" shot's worth of damage — fireship hulls are priced in these */
+export const FIRESHIP_HIT = 8
 
 export interface Plant {
   genome: Genome
@@ -179,6 +181,8 @@ export interface EnemyShip {
    *  sloops snipe long and flee the brawl · galleons tank and out-gun ·
    *  fireships rush the hull and burn with it */
   kind: 'raider' | 'harrier' | 'sloop' | 'galleon' | 'fireship'
+  /** fireship plating: 0 bare (pops to one normal hit), 1 bronze, 2 iron */
+  armor?: 0 | 1 | 2
   /** ship belongs to a nest and stays tethered to it */
   home?: POI
   /** holds one of the HUNT_CAP attack slots — shadowers wait outside gun range */
@@ -800,6 +804,10 @@ export class Game {
       if (!fighting && p.burnT <= 0 && p.poisonT <= 0 && p.hp < p.maxHp) {
         p.hp = Math.min(p.maxHp, p.hp + 2.5 * dt)
       }
+      // a hurting plant sheds leaves, faster the worse it gets
+      if (p.hp < p.maxHp * 0.7 && Math.random() < (1 - p.hp / p.maxHp) * 2.5 * dt) {
+        this.shedLeaf(this.mountPos(m))
+      }
       if (p.hp <= 0) {
         m.plant = null
         this.toastAt(this.mountPos(m), '🥀', '#c5b8a0')
@@ -1048,6 +1056,9 @@ export class Game {
             ? randInt(5, Math.min(5 + Math.ceil(danger / 3), 7))
             : randInt(2, Math.min(2 + Math.ceil(danger / 2), 6))
     const r = 20 + size * 6
+    // fireship plating deepens with the waters: bare hulls pop to one normal
+    // hit, bronze takes two, iron three — the blast is the same either way
+    const armor: 0 | 1 | 2 = kind !== 'fireship' ? 0 : danger >= 6.5 ? 2 : danger >= 4 ? 1 : 0
     const maxHp =
       kind === 'harrier'
         ? size * (20 + danger * 3.5)
@@ -1056,7 +1067,7 @@ export class Game {
           : kind === 'galleon'
             ? size * (34 + danger * 6)
             : kind === 'fireship'
-              ? 36 + danger * 7
+              ? FIRESHIP_HIT * (armor + 1)
               : size * (26 + danger * 5)
     // fireships mount no guns — the hull is the shell
     let gunCount =
@@ -1120,6 +1131,7 @@ export class Game {
       row: 1,
       danger,
       kind,
+      armor,
       home: opts.home,
     })
   }
@@ -1189,6 +1201,10 @@ export class Game {
       const d = Math.hypot(dx, dy) || 1
       const ux = dx / d
       const uy = dy / d
+      // chasers lead your course: steer for where the hull will be when they
+      // arrive, not where it is — a straight-line sprint no longer wins by default
+      const leadT = Math.min(2.2, d / Math.max(60, spd))
+      const lead = v(center.x + this.ship.vel.x * leadT, center.y + this.ship.vel.y * leadT)
 
       // staged aggro: raiders eye you (❓) for a beat before committing (⚔️) —
       // back out of range while they wonder and nothing happens
@@ -1214,10 +1230,13 @@ export class Game {
       }
 
       if (e.mode === 'hunt' && e.kind === 'fireship') {
-        // the fireship IS the shell: charge flat out and burn together on contact.
-        // Its flame wake says exactly where it's pointed — don't be there
-        e.vel.x = ux * spd
-        e.vel.y = uy * spd
+        // the fireship IS the shell: charge the intercept point flat out and burn
+        // together on contact. Its flame wake says where it's pointed — turn away
+        const lx = lead.x - e.pos.x
+        const ly = lead.y - e.pos.y
+        const ld = Math.hypot(lx, ly) || 1
+        e.vel.x = (lx / ld) * spd
+        e.vel.y = (ly / ld) * spd
         if (Math.random() < 9 * dt) {
           this.puff(v(e.pos.x + rand(-e.r * 0.5, e.r * 0.5), e.pos.y + rand(-e.r * 0.5, e.r * 0.5)), '#ff8c42', 1)
         }
@@ -1231,9 +1250,9 @@ export class Game {
         e.vel.x = -ux * spd - uy * e.orbitDir * spd * 0.3
         e.vel.y = -uy * spd + ux * e.orbitDir * spd * 0.3
       } else if (e.mode === 'hunt') {
-        // guns are fixed mortars with no traverse — instead of orbiting freely,
-        // sail for the station where the cheapest battery's burst ring lands on you
-        const gun = this.bestGun(e, center, e.engaged ?? false)
+        // sail for the station where the cheapest battery's burst ring will land
+        // on you — computed against your led course, so runners get cut off
+        const gun = this.bestGun(e, lead, e.engaged ?? false)
         if (gun) {
           let tx = gun.fp.x
           let ty = gun.fp.y
@@ -1360,6 +1379,9 @@ export class Game {
           this.killEnemyGun(e, g)
           this.checkScuttle(e)
           continue
+        }
+        if (p.hp < p.maxHp * 0.7 && Math.random() < (1 - p.hp / p.maxHp) * 2.5 * dt) {
+          this.shedLeaf(this.gunPos(e, g))
         }
         p.cooldown -= dt
         const from = this.gunPos(e, g)
@@ -2022,6 +2044,18 @@ export class Game {
   }
 
   // ---- fx helpers ----
+
+  /** a hurting plant sheds leaves — deck (and enemy gun) health at a glance */
+  private shedLeaf(at: Vec) {
+    this.particles.push({
+      pos: v(at.x + rand(-7, 7), at.y - rand(10, 24)),
+      vel: v(rand(-18, 18), rand(10, 26)),
+      life: rand(0.8, 1.3),
+      maxLife: 1.3,
+      size: rand(1.8, 3),
+      color: pick(['#7aa05a', '#9b8b62', '#b3a06a']),
+    })
+  }
 
   puff(pos: Vec, color: string, n: number) {
     for (let i = 0; i < n; i++) {

@@ -168,14 +168,24 @@ function drawPlank(ctx: CanvasRenderingContext2D, x: number, y: number, hp: numb
   }
 }
 
+/** lerp two hex colors — health reads straight off the foliage */
+function mixColor(a: string, b: string, t: number): string {
+  const pa = parseInt(a.slice(1), 16)
+  const pb = parseInt(b.slice(1), 16)
+  const ch = (sa: number, sb: number) => Math.round(sa + (sb - sa) * t)
+  return `rgb(${ch((pa >> 16) & 255, (pb >> 16) & 255)},${ch((pa >> 8) & 255, (pb >> 8) & 255)},${ch(pa & 255, pb & 255)})`
+}
+
 function drawPlant(ctx: CanvasRenderingContext2D, x: number, y: number, p: Plant, hostile: boolean, t: number) {
   const dry = !hostile && p.water <= 0
-  const sway = Math.sin(t * 2 + p.wobble) * 2 + (dry ? 4 : 0)
-  const stemH = 24
+  // health is the pose: a hurt plant browns, droops, and sways loose — no bar
+  const hurt = 1 - Math.max(0, Math.min(1, p.hp / p.maxHp))
+  const sway = Math.sin(t * 2 + p.wobble) * (2 + hurt * 2.5) + (dry ? 4 : 0)
+  const stemH = 24 - hurt * 6
   const headX = x + sway
   const headY = y - 6 - stemH
 
-  ctx.strokeStyle = dry ? '#8b7d5a' : hostile ? '#5c7a3e' : '#3e8a50'
+  ctx.strokeStyle = mixColor(dry ? '#8b7d5a' : hostile ? '#5c7a3e' : '#3e8a50', '#6b5233', hurt * 0.85)
   ctx.lineWidth = 2.5
   ctx.beginPath()
   ctx.moveTo(x, y - 4)
@@ -183,16 +193,17 @@ function drawPlant(ctx: CanvasRenderingContext2D, x: number, y: number, p: Plant
   ctx.stroke()
 
   // leaves
-  ctx.fillStyle = dry ? '#9b8b62' : hostile ? '#6d8f4a' : '#4e9a5f'
+  ctx.fillStyle = mixColor(dry ? '#9b8b62' : hostile ? '#6d8f4a' : '#4e9a5f', '#8a693d', hurt * 0.85)
   for (const side of [-1, 1]) {
     ctx.beginPath()
-    ctx.ellipse(x + side * 6 + sway * 0.3, y - 8 - stemH * 0.4, 6, 3, side * 0.5, 0, Math.PI * 2)
+    ctx.ellipse(x + side * 6 + sway * 0.3, y - 8 - stemH * 0.4, 6, 3 - hurt * 1.2, side * (0.5 + hurt * 0.5), 0, Math.PI * 2)
     ctx.fill()
   }
 
-  // flower head — colored by element
+  // flower head — colored by element, dimming as the stem fails
   const color = dry ? '#a89d80' : ELEMENT_COLOR[p.pheno.element]
   const r = 6.5
+  ctx.globalAlpha = 0.6 + 0.4 * (1 - hurt)
   ctx.fillStyle = color
   for (let i = 0; i < 5; i++) {
     const a = (i / 5) * Math.PI * 2 + t * 0.2 + p.wobble
@@ -204,6 +215,7 @@ function drawPlant(ctx: CanvasRenderingContext2D, x: number, y: number, p: Plant
   ctx.beginPath()
   ctx.arc(headX, headY, r * 0.45, 0, Math.PI * 2)
   ctx.fill()
+  ctx.globalAlpha = 1
 
   // reload gauge (our guns only) — manual fire means the crew reloads between
   // volleys: an amber arc winds up as it reloads, a dim green ring = loaded & ready
@@ -516,6 +528,13 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
     }
   } else if (e.kind === 'fireship') {
     drawHull(ctx, e.r * 1.1, e.r * 0.7, frac, true, e.burnT)
+    // plating rims the hull: bronze takes two normal hits, iron three
+    if (e.armor) {
+      hullPath(ctx, e.r * 1.1, e.r * 0.7)
+      ctx.strokeStyle = e.armor === 2 ? '#a7b2bc' : '#c08a4a'
+      ctx.lineWidth = 2.5
+      ctx.stroke()
+    }
     // braziers banked along the deck, ready to blow
     for (const bx of [-0.5, 0, 0.5]) {
       ctx.fillStyle = `rgba(255,176,87,${0.7 + 0.3 * Math.sin(t * 9 + bx * 5)})`
@@ -1528,7 +1547,9 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number, h: number) {
     'outlast the burst and even they fall away.',
     'the deep sea sends specialists: slim SLOOPS snipe from a long glass and sheet',
     'away when you close · gilded GALLEONS tank, out-gun, and out-wait you · glowing',
-    'FIRESHIPS rush your hull and go up with it — sink them at range, or move.',
+    'FIRESHIPS charge and go up against your hull — one solid hit pops a bare one,',
+    'bronze/iron plating (deeper waters) takes two or three. chasers LEAD your course,',
+    'so a straight-line sprint no longer wins by default — jink, tack, fight.',
     'raider guns are mortars too — red RINGS mark where their shells burst, and a',
     'hunting mount grinds SLOWLY toward you: keep way on and slip the walking rings.',
     'the farther from home, the deadlier the sea — and the richer everything it holds.',
