@@ -23,8 +23,8 @@ export const DOCK_RANGE = 210
 export const RARE_COST = 2
 /** breeder boat halves it — its premium is cheaper steering, not just more wilds */
 export const RARE_COST_PREMIUM = 1
-/** pollen you start a run with — enough for one rare at a port on cross one */
-export const POLLEN_START = 2
+/** pollen you start a run with — none: the first cross is a bee bounty away */
+export const POLLEN_START = 0
 
 export interface BoardParent {
   genome: Genome

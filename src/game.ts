@@ -99,6 +99,9 @@ export interface Plant {
    *  natural facing — the helm is the only traverse); world-fixed on raider
    *  ships, except that a hunting raider's mount grinds slowly toward you. */
   aim: number
+  /** barrel elevation 0.5..1 — bee fortress gunners crank their reticules in
+   *  and out like your Z/X battery. Unset on ship guns (fixed full reach). */
+  elev?: number
 }
 
 /** a gun mount bolted to the deck — local coords, prow = +x */
@@ -227,6 +230,11 @@ export interface EnemyShip {
   /** mid-scuttle guard — the hull is going down, don't re-enter */
   scuttling?: boolean
   sunk?: boolean
+  /** stung by hive artillery: drops nothing until the crew fully patches the
+   *  hull and the player lands the kill themselves */
+  beeHit?: boolean
+  /** the smarter crews give bee fortresses a wide berth */
+  wary?: boolean
 }
 
 export interface Wind {
@@ -257,6 +265,8 @@ export interface Bullet {
   src?: Plant
   /** the ship that fired an enemy shell — a burst that tells renews its patience */
   owner?: EnemyShip
+  /** fired by a hive garrison: hits raiders too, and taints their salvage */
+  bee?: boolean
   /** inherited (homing quirk): shell curves toward the nearest raider in flight */
   homing?: boolean
   /** firing heading, so an airburst's cluster radiates from the burst point */
@@ -648,8 +658,12 @@ export class Game {
       if (p.kind === 'wreck' && d < p.r) this.salvageWreck(p)
       if (p.kind === 'nest' && !p.nestUp && d < 1250) this.spawnNest(p)
       if (p.kind === 'calm' && !p.seeded && d < POI_SIGHT.calm) this.seedCalm(p)
-      // a hive that holds a grudge (or a swarm at war) re-mans its walls on approach
-      if (p.kind === 'hive' && (p.hostile || this.beesAngry) && d < 1000) this.garrison(p)
+      // a hive mans its walls when there's shooting to do: a grudge (or open war)
+      // against the player, or any raider sail prowling its waters
+      if (p.kind === 'hive') {
+        if ((p.hostile || this.beesAngry) && d < 1000) this.garrison(p)
+        else if (this.enemies.some(e => e.kind !== 'bastion' && !e.sunk && dist(e.pos, p.pos) < 800)) this.garrison(p)
+      }
     }
 
     // fog of war: reveal the waters around the ship
@@ -796,8 +810,9 @@ export class Game {
     }
     const danger = this.dangerAt(p.pos)
     const need = 2 + Math.min(3, Math.floor(danger / 3))
-    this.contract = { need, got: 0, pay: need + 2 }
-    this.toastAt(p.pos, `🐝 bounty struck: sink ${need} raiders → ${need + 2}🌼`, '#ffd257')
+    const pay = need * 2 // one clean bounty funds at least one 4🌼 cross
+    this.contract = { need, got: 0, pay }
+    this.toastAt(p.pos, `🐝 bounty struck: sink ${need} raiders → ${pay}🌼`, '#ffd257')
     sfx('build')
   }
 
@@ -1059,14 +1074,13 @@ export class Game {
     if (!b) return
     if (this.seeds.length >= POUCH_CAP)
       return this.toast(`pouch is full (${this.seeds.length}/${POUCH_CAP}) — ✕ a seed or plant some`)
-    if (this.water < BREED_COST) return this.toast(`a cross costs ${BREED_COST}💧`)
     const spend = picksCost(b)
-    if (spend > this.pollen) return this.toast(`not enough pollen (need ${spend}🌼)`)
+    const total = BREED_COST + spend
+    if (this.pollen < total) return this.toast(`a cross costs ${BREED_COST}🌼 base — need ${total}🌼`)
     const genome = boardCommit(b)
     if (!genome) return this.toast('set both parents first')
-    this.water -= BREED_COST
     // crossing spends pollen, never mints it — the bees pay bounties for that
-    this.pollen -= spend
+    this.pollen -= total
     const gen = b.childGen
     this.seeds.push({ id: this.seedId++, genome, gen })
     this.stats.bred++
@@ -1334,6 +1348,9 @@ export class Game {
       kind,
       armor,
       home: opts.home,
+      // some crews aren't dumb: sloops always shy off hive guns, fireships never
+      // (the crew is already dead), the rest split roughly half and half
+      wary: kind === 'sloop' ? true : kind === 'fireship' || kind === 'bastion' ? false : Math.random() < 0.45,
     })
   }
 
@@ -1352,6 +1369,8 @@ export class Game {
 
   private notice(e: EnemyShip, t = NOTICE_T) {
     if (e.mode !== 'roam') return
+    // a garrison at peace ignores the player entirely — its guns are for raiders
+    if (e.kind === 'bastion' && !this.beesAngry && !e.home?.hostile) return
     e.mode = 'notice'
     // the eager classes commit fast: rowers smell blood, fireships exist to burn
     e.noticeT = e.kind === 'harrier' || e.kind === 'fireship' ? t * 0.6 : t
@@ -1540,6 +1559,8 @@ export class Game {
           e.hp = Math.min(e.maxHp, e.hp + 6 * dt)
           patching = true
         }
+        // a fully patched hull shakes off the bee sting — its salvage is clean again
+        if (e.beeHit && e.hp >= e.maxHp) e.beeHit = false
         for (const g of e.guns) {
           const tp = g.plant
           if (tp.burnT <= 0 && tp.poisonT <= 0 && tp.hp < tp.maxHp) {
@@ -1558,6 +1579,26 @@ export class Game {
         if (od > 0 && od < 190) {
           e.vel.x += (ox / od) * 30
           e.vel.y += (oy / od) * 30
+        }
+      }
+      // the wary crews sheer away from hive artillery rather than sail the band:
+      // a soft shoulder from far out, and a hard refusal to enter the guns' reach
+      if (e.wary) {
+        for (const p of this.activePois) {
+          if (p.kind !== 'hive' || p.done) continue
+          const hx = e.pos.x - p.pos.x
+          const hy = e.pos.y - p.pos.y
+          const hd = Math.hypot(hx, hy)
+          if (hd > 1 && hd < 700) {
+            const push = ((700 - hd) / 700) * Math.max(spd, 40) * 2.2
+            e.vel.x += (hx / hd) * push
+            e.vel.y += (hy / hd) * push
+            // inside the band itself, survival overrides the hunt: bail straight out
+            if (hd < 500) {
+              e.vel.x = (hx / hd) * Math.max(spd, 60)
+              e.vel.y = (hy / hd) * Math.max(spd, 60)
+            }
+          }
         }
       }
       // whatever the steering above decided, a fortress stays a fortress
@@ -1602,6 +1643,58 @@ export class Game {
         // a hunting mount grinds toward you while the hull holds range — slow
         // enough that keeping way on still slips the ring, but a ship you circle
         // is no longer helpless. Roamers don't track: sneaking past stays a play
+        if (e.kind === 'bastion') {
+          // bee gunners pick their own fights: any raider in reach comes first,
+          // the player only once the hive is crossed. Unlike ship mortars they
+          // RANGE IN — cranking elevation walks the reticule short of full reach,
+          // and they lead a moving hull to where the shell will actually land
+          const maxR = p.pheno.range
+          const minR = maxR * 0.5
+          let prey: EnemyShip | null = null
+          let pd = maxR + 140
+          for (const o of this.enemies) {
+            if (o === e || o.sunk || o.kind === 'bastion') continue
+            const od = dist(from, o.pos)
+            if (od < pd) {
+              pd = od
+              prey = o
+            }
+          }
+          const atWar = e.mode === 'hunt' && !this.over
+          let want: Vec | null = null
+          if (prey) {
+            // intercept: where the prey will be when a shell fired now comes
+            // down. Flight time depends on the drop distance, which depends on
+            // the intercept point — a few fixed-point rounds converge the two
+            let ft = clamp(dist(from, prey.pos), minR, maxR) / 200
+            for (let it = 0; it < 3; it++) {
+              want = v(prey.pos.x + prey.vel.x * ft, prey.pos.y + prey.vel.y * ft)
+              ft = clamp(dist(from, want), minR, maxR) / 200
+            }
+          } else if (atWar) {
+            want = v(past.x, past.y)
+          }
+          if (want) {
+            const wantA = Math.atan2(want.y - from.y, want.x - from.x)
+            const tr = gunTraverse(e.kind) * dt
+            p.aim += clamp(angleDiff(wantA, p.aim), -tr, tr)
+            const wantE = clamp(dist(from, want) / maxR, 0.5, 1)
+            const cur = p.elev ?? 1
+            p.elev = cur + clamp(wantE - cur, -ELEV_RATE * dt, ELEV_RATE * dt)
+          }
+          if (p.cooldown <= 0 && want) {
+            const dropR = maxR * (p.elev ?? 1)
+            const drop = v(from.x + Math.cos(p.aim) * dropR, from.y + Math.sin(p.aim) * dropR)
+            const covers = prey
+              ? dist(drop, want) < prey.r + SPLASH * 0.5
+              : this.onHull(drop, SPLASH * 0.5)
+            if (covers) {
+              this.enemyFire(e, p, from)
+              p.cooldown = p.pheno.period * 1.1 * (e.chillT > 0 ? 1.5 : 1) * rand(0.9, 1.15)
+            }
+          }
+          continue
+        }
         if (e.mode === 'hunt' && !this.over) {
           // gunners work off the same stale picture as the helm — the rings
           // chase where you were, not the stick in your hand
@@ -1687,10 +1780,15 @@ export class Game {
 
   private enemyFire(e: EnemyShip, p: Plant, from: Vec) {
     const speed = 200 // slower shells than yours — keep way on and slip the drop
-    // the mount lobs dead along its current heading, bursting at the bred reach —
-    // no leading, no homing: read the red rings and don't be there when it lands
-    const a = p.aim + rand(-0.05, 0.05)
-    const drop = v(from.x + Math.cos(a) * p.pheno.range + rand(-8, 8), from.y + Math.sin(a) * p.pheno.range + rand(-8, 8))
+    // the mount lobs dead along its current heading, bursting at the bred reach
+    // (scaled by elevation on fortress guns) — no homing: read the red rings
+    // and don't be there when it lands
+    // bee fortress gunners are drilled steady; ship crews throw looser shots
+    const jitter = e.kind === 'bastion' ? 0.015 : 0.05
+    const scatter = e.kind === 'bastion' ? 4 : 8
+    const a = p.aim + rand(-jitter, jitter)
+    const reach = p.pheno.range * (p.elev ?? 1)
+    const drop = v(from.x + Math.cos(a) * reach + rand(-scatter, scatter), from.y + Math.sin(a) * reach + rand(-scatter, scatter))
     const pos = v(from.x, from.y - 16)
     const flightT = dist(from, drop) / speed
     this.bullets.push({
@@ -1705,6 +1803,7 @@ export class Game {
       flightT,
       splash: SPLASH,
       owner: e,
+      bee: e.kind === 'bastion',
     })
   }
 
@@ -1721,21 +1820,25 @@ export class Game {
     // guns go down with the ship — their seed lines may float free
     for (const g of [...e.guns]) this.killEnemyGun(e, g)
     const scatter = () => v(e.pos.x + rand(-e.r, e.r), e.pos.y + rand(-e.r, e.r))
-    // loot scales a touch faster than the threat — pushing one ring out is always tempting
-    let wood = e.size * randInt(2, 3) + Math.floor(e.danger * 0.8)
-    while (wood > 0) {
-      const n = Math.min(wood, randInt(2, 4))
-      this.dropLoot('wood', n, scatter())
-      wood -= n
+    // loot scales a touch faster than the threat — pushing one ring out is always
+    // tempting. But a bee-stung hull is the swarm's kill: it pays nothing
+    if (!e.beeHit) {
+      let wood = e.size * randInt(2, 3) + Math.floor(e.danger * 0.8)
+      while (wood > 0) {
+        const n = Math.min(wood, randInt(2, 4))
+        this.dropLoot('wood', n, scatter())
+        wood -= n
+      }
+      if (Math.random() < 0.6) this.dropLoot('water', 1 + Math.floor(e.danger / 6), scatter())
     }
-    if (Math.random() < 0.6) this.dropLoot('water', 1 + Math.floor(e.danger / 6), scatter())
     this.stats.sunk++
     this.shake = Math.min(10, this.shake + 5)
     this.burst(e.pos, '#8a6a45', 16)
-    this.toastAt(e.pos, '☠ ship sunk!', '#ffd257')
+    this.toastAt(e.pos, e.beeHit ? '☠ bee-stung — no salvage' : '☠ ship sunk!', e.beeHit ? '#9fb8c8' : '#ffd257')
     sfx('sunk')
-    // the bee bounty pays for raider hulls — the swarm's own garrison doesn't count
-    if (this.contract && e.kind !== 'bastion') {
+    // the bee bounty pays for raider hulls — the swarm's own garrison doesn't
+    // count, and neither does a kill the bees softened up
+    if (this.contract && e.kind !== 'bastion' && !e.beeHit) {
       const c = this.contract
       c.got++
       if (c.got >= c.need) {
@@ -1767,6 +1870,7 @@ export class Game {
     e.guns.splice(i, 1)
     const pos = this.gunPos(e, g)
     this.burst(pos, '#4e9a5f', 8)
+    if (e.beeHit) return // a stung ship's lines go down with it — the bees' claim
     // your own bees keep the pouch fed — only a line worth stealing floats free,
     // and deeper waters carry hotter genomes, so range is still the gene hunt
     if (carriesRare(g.plant.genome) && Math.random() < 0.5) {
@@ -1845,6 +1949,18 @@ export class Game {
         if (b.element === 'frost') this.chillT = 2.5
         this.shake = Math.min(8, this.shake + 1.5)
         if (this.ship.hp <= 0) this.gameOver()
+      }
+      // hive artillery hits raider hulls too — and a stung ship pays no salvage
+      // until its crew fully patches the wound (the bees claim tainted kills)
+      if (b.bee) {
+        for (const o of this.enemies) {
+          if (o.sunk || o.kind === 'bastion') continue
+          if (dist(at, o.pos) < o.r + splash * 0.5) {
+            hitAny = true
+            o.beeHit = true
+            this.damageEnemyHull(o, b)
+          }
+        }
       }
       if (hitAny) {
         this.burst(at, this.bulletColor(b), 10)

@@ -34,8 +34,8 @@ export const POI_CELL = 1400
 /** cells per side of a region block — one guaranteed port seeds each block */
 export const PORT_REGION = 3
 
-/** 💧 charged for one cross at a port or the breeder boat */
-export const BREED_COST = 2
+/** 🌼 base charge for one cross at a port or the breeder boat — rares cost extra */
+export const BREED_COST = 4
 
 /** how far each kind reads on the horizon (edge markers + discovery) */
 export const POI_SIGHT: Record<POIKind, number> = {

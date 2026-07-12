@@ -529,16 +529,10 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
       const p = g.gunPos(e, gun)
       drawPot(ctx, p.x, p.y)
       const a = gun.plant.aim
+      // fortress gunners range in: the ring sits at the cranked elevation
+      const rr = gun.plant.pheno.range * (gun.plant.elev ?? 1)
       drawAim(ctx, p.x, p.y - 12, a, false, false, t, '255,105,90')
-      drawDropRing(
-        ctx,
-        p.x + Math.cos(a) * gun.plant.pheno.range,
-        p.y + Math.sin(a) * gun.plant.pheno.range,
-        SPLASH,
-        e.mode === 'hunt' && gun.plant.cooldown <= 0,
-        t,
-        '255,105,90'
-      )
+      drawDropRing(ctx, p.x + Math.cos(a) * rr, p.y + Math.sin(a) * rr, SPLASH, gun.plant.cooldown <= 0, t, '255,105,90')
       drawPlant(ctx, p.x, p.y, gun.plant, true, t)
     }
     if (e.mode === 'hunt') {
@@ -611,6 +605,12 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
     ctx.beginPath()
     ctx.arc(e.pos.x, e.pos.y, e.r, 0, Math.PI * 2)
     ctx.fill()
+  }
+  // stung by hive artillery: this hull pays no salvage until its crew patches up
+  if (e.beeHit) {
+    ctx.font = '12px serif'
+    ctx.textAlign = 'center'
+    ctx.fillText('🐝', e.pos.x + e.r * 0.8, e.pos.y - e.r - 8 + Math.sin(t * 6) * 1.5)
   }
   for (const gun of e.guns) {
     const p = g.gunPos(e, gun)
@@ -834,7 +834,7 @@ function drawDockPrompt(ctx: CanvasRenderingContext2D, g: Game, p: POI, x: numbe
   if (d > DOCK_RANGE + 90) return
   const near = d < DOCK_RANGE
   ctx.font = 'bold 12px ui-monospace, monospace'
-  const label = kind === 'breeder' ? `F · breeder cross (${BREED_COST}💧, premium)` : `F · breed here (${BREED_COST}💧)`
+  const label = kind === 'breeder' ? `F · breeder cross (${BREED_COST}🌼, premium)` : `F · breed here (${BREED_COST}🌼)`
   const lw = ctx.measureText(label).width + 16
   ctx.fillStyle = 'rgba(4,20,32,0.8)'
   roundRect(ctx, x - lw / 2, y - 100, lw, 20, 10)
@@ -1484,11 +1484,12 @@ function drawBoard(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number)
   ctx.font = 'bold 18px ui-monospace, monospace'
   ctx.fillText(board.premium ? '🐝 breeder boat — channeling (premium)' : '🏝️ port — channeling', L.panel.x + 18, L.panel.y + 28)
 
-  // pollen readout: balance, and what the current picks will spend
+  // pollen readout: balance vs the full price of this cross (base + rares)
+  const total = BREED_COST + spend
   ctx.textAlign = 'right'
   ctx.font = 'bold 13px ui-monospace, monospace'
-  ctx.fillStyle = spend > board.pollen ? '#e79a9a' : spend > 0 ? '#ffd257' : '#9fb8c8'
-  ctx.fillText(`🌼 ${board.pollen}${spend ? '  −' + spend : ''}`, L.panel.x + L.panel.w - 18, L.panel.y + 28)
+  ctx.fillStyle = total > board.pollen ? '#e79a9a' : spend > 0 ? '#ffd257' : '#9fb8c8'
+  ctx.fillText(`🌼 ${board.pollen}  −${total}`, L.panel.x + L.panel.w - 18, L.panel.y + 28)
   ctx.textAlign = 'left'
 
   // one-line rules hint above the locus grid
@@ -1597,7 +1598,7 @@ function drawBoard(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number)
   drawBoardBtn(ctx, L.cancelBtn, 'cancel · Esc', '#e79a9a')
   if (L.ready) {
     drawBoardBtn(ctx, L.autoBtn, 'auto-best · F', '#b8e986')
-    drawBoardBtn(ctx, L.crossBtn, `cross · Enter (${BREED_COST}💧${spend ? ' ' + spend + '🌼' : ''})`, accent)
+    drawBoardBtn(ctx, L.crossBtn, `cross · Enter (${BREED_COST + spend}🌼)`, accent)
   }
 
   // feedback line (refusals, tossed seeds) — world toasts would hide behind the modal
@@ -1732,16 +1733,20 @@ function drawHelp(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number) 
     'BREED at a 🏝️ port (one per region — a reliable anchor) or the wandering 🐝 breeder',
     'boat (premium): press F to dock and open the CHANNELING board. set two parents, then',
     'place one allele from each into the child — surface a carried recessive on purpose,',
-    'grab any ✦ wildcard the cross offers, and line up trait SYNERGIES. commons are free',
-    'but every RARE you place costs 🌼 POLLEN — and crossing never earns it. The BEES do.',
-    '(the breeder boat still halves rare prices.) Enter to cross, F auto-fills, Esc cancels.',
+    'grab any ✦ wildcard the cross offers, and line up trait SYNERGIES. every cross',
+    'costs 4🌼 POLLEN base, RARES cost extra — and crossing never earns pollen. you',
+    'start with none: the BEES are the whole economy. (the breeder boat still halves',
+    'rare prices.) Enter to cross, F auto-fills, Esc cancels.',
     '',
-    'the BEES hold 🍯 fortress islands out in the sea-lanes. sail alongside and press F',
-    'to PARLEY: they pay a pollen BOUNTY for raiders sunk (one contract at a time —',
-    'the 🐝 chip up top tracks it). or turn your guns on the hive: its garrison is a',
-    'fortress battery that out-guns and out-tanks any galleon, but a broken hive spills',
-    'its pollen stores. fire on the bees once and that island holds the grudge; break',
-    'one and EVERY hive goes hostile and no bee pays you again this run. choose a side.',
+    'the BEES hold 🍯 fortress islands in every water — one sits off your home shore.',
+    'sail alongside and press F to PARLEY: they pay a pollen BOUNTY for raiders sunk',
+    '(one contract at a time — the 🐝 chip up top tracks it). hive guns also shell any',
+    'raider in reach, and the smart crews steer wide of them — but a bee-stung hull',
+    '(🐝 badge) pays NO salvage and NO bounty unless it fully heals before you sink it.',
+    'or turn your guns on the hive: its garrison out-guns and out-tanks any galleon,',
+    'and a broken hive spills its pollen stores. fire on the bees once and that island',
+    'holds the grudge; break one and EVERY hive goes hostile and no bee pays you again',
+    'this run. choose a side.',
     '',
     'the run ends when your hull gives out.',
   ]
