@@ -60,8 +60,9 @@ export interface Plant {
   burnT: number
   poisonT: number
   wobble: number // render phase
-  /** fixed firing heading, radians. Hull-relative on your ship (always the mount's
-   *  natural facing — the helm is the only traverse); world-fixed on raider ships. */
+  /** firing heading, radians. Hull-relative on your ship (always the mount's
+   *  natural facing — the helm is the only traverse); world-fixed on raider
+   *  ships, except that a hunting raider's mount grinds slowly toward you. */
   aim: number
 }
 
@@ -259,6 +260,12 @@ export interface HoverInfo {
 /** how far a hunter presses before the chase fizzles — sloops and fireships range widest */
 function baseDeaggro(kind: EnemyShip['kind']): number {
   return kind === 'harrier' ? 820 : kind === 'sloop' ? 900 : kind === 'fireship' ? 950 : DEAGGRO_R
+}
+
+/** rad/s a hunting mount grinds toward you — the ship holds range, the gun does
+ *  the lining-up, and the red ring telegraphs every degree of it */
+function gunTraverse(kind: EnemyShip['kind']): number {
+  return kind === 'harrier' ? 0.9 : kind === 'sloop' ? 0.7 : kind === 'galleon' ? 0.35 : 0.5
 }
 
 function makePlant(genome: Genome, gen: number): Plant {
@@ -1063,8 +1070,8 @@ export class Game {
               ? 3 + (size >= 6 ? 1 : 0) + (danger >= 7 ? 1 : 0)
               : 1 + (size >= 4 ? 1 : 0) + (danger >= 6 && size >= 5 ? 1 : 0) + (opts.home ? 1 : 0)
     const guns: EGun[] = []
-    // guns are bolted to the hull, ship-cannon style: batteries share an axis and
-    // alternate port/starboard — the ship has to maneuver to bring one to bear
+    // batteries spawn sharing an axis, alternating port/starboard; once hunting,
+    // each mount grinds slowly onto you (gunTraverse) while the hull holds range
     const gunA = rand(Math.PI * 2)
     for (let i = 0; i < gunCount; i++) {
       const pa = (i / gunCount) * Math.PI * 2 + rand(0.6)
@@ -1356,6 +1363,14 @@ export class Game {
         }
         p.cooldown -= dt
         const from = this.gunPos(e, g)
+        // a hunting mount grinds toward you while the hull holds range — slow
+        // enough that keeping way on still slips the ring, but a ship you circle
+        // is no longer helpless. Roamers don't track: sneaking past stays a play
+        if (e.mode === 'hunt' && !this.over) {
+          const want = Math.atan2(center.y - from.y, center.x - from.x)
+          const tr = gunTraverse(e.kind) * dt
+          p.aim += clamp(angleDiff(want, p.aim), -tr, tr)
+        }
         // same mortar rules as your deck: the shell bursts at the gun's bred reach,
         // so gunners hold fire until the burst ring sits on your hull
         if (p.cooldown <= 0 && e.mode === 'hunt' && e.engaged && !this.over) {
@@ -1434,7 +1449,7 @@ export class Game {
 
   private enemyFire(e: EnemyShip, p: Plant, from: Vec) {
     const speed = 200 // slower shells than yours — keep way on and slip the drop
-    // fixed mounts lob dead along their heading, bursting at the gun's bred reach —
+    // the mount lobs dead along its current heading, bursting at the bred reach —
     // no leading, no homing: read the red rings and don't be there when it lands
     const a = p.aim + rand(-0.05, 0.05)
     const drop = v(from.x + Math.cos(a) * p.pheno.range + rand(-8, 8), from.y + Math.sin(a) * p.pheno.range + rand(-8, 8))
