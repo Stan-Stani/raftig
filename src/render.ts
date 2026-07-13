@@ -1,5 +1,5 @@
-import { Game, TS, RANGE, SPLASH, TIERS, FOG_CELL, DANGER_SCALE, Plant, Bullet, EnemyShip, seaName, compassWord } from './game'
-import { describe, phenotype, Genome, Pheno, alleleDef, REGION_LOCKS } from './genetics'
+import { Game, TS, RANGE, SPLASH, TIERS, FOG_CELL, DANGER_SCALE, Plant, Bullet, EnemyShip, seaName } from './game'
+import { describe, phenotype, Genome, Pheno, alleleDef } from './genetics'
 import { TOOLS, toolbarLayout, seedPanelRect, seedRowRects, restartRect, SEED_VISIBLE, boardLayout, BoardChip } from './ui'
 import { synergies, picksCost, DOCK_RANGE } from './breeding'
 import { POI, POI_SIGHT, POI_ICON, POI_COLOR, TRADE_COST, TRADE_RANGE, BREED_COST } from './poi'
@@ -1130,6 +1130,9 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
     ctx.fillStyle = '#9fb8c8'
     ctx.font = '14px ui-monospace, monospace'
     CONTROL_LINES.forEach((l, i) => ctx.fillText(l, w / 2, h / 2 + i * 22))
+    ctx.fillStyle = '#ffd257'
+    ctx.font = 'bold 14px ui-monospace, monospace'
+    ctx.fillText('🐝 I — suggest a feature or report a bug (no account needed)', w / 2, h / 2 + CONTROL_LINES.length * 22 + 26)
   }
   if (g.over) drawGameOver(ctx, g, w, h, t)
 }
@@ -1686,18 +1689,6 @@ function fit(ctx: CanvasRenderingContext2D, s: string, maxW: number): string {
   return out + '…'
 }
 
-/** the region-gene ledger: ✓ caught · rumor heard · ??? still just dockside silence */
-function rumorRecap(g: Game): string[] {
-  const owned = g.ownedAlleleKeys()
-  return REGION_LOCKS.map(l => {
-    const key = l.locus + ':' + l.allele
-    if (!g.rumors.has(key) && !owned.has(key)) return '  ??? — dock at a 🏝️ port for the gossip'
-    const label = alleleDef(l.locus, l.allele).label
-    const place = `${seaName(l.minDanger)} ${compassWord(l.heading)}`
-    return owned.has(key) ? `  ✓ ${label} — ${place} (caught: it's in your lines)` : `  ${label} — ${place}`
-  })
-}
-
 /** the controls summary — shown in full on the start screen, and again
  *  (that's the whole point) on the pause screen so it's never more than
  *  one key away */
@@ -1718,82 +1709,13 @@ function drawHelp(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number) 
   ctx.font = '15px ui-monospace, monospace'
   ctx.fillText('a raft roguelike where your garden is the gun deck', w / 2, h * 0.16 + 28)
 
-  const lines = [
-    ...CONTROL_LINES,
-    '',
-    'RUMORS — some genes the sea gates by compass and depth: mutation never mints them,',
-    'you sail to their waters and catch them wild. portmasters trade the gossip:',
-    ...rumorRecap(g),
-    '',
-    'she sails like a SHIP: the prow leads, the hull turns, momentum carries.',
-    'mind the WIND (arrow up top): running with it is fast, beating into it is a crawl.',
-    'the MINIMAP (bottom left) charts where you sail; ⌂ points the way home.',
-    '',
-    'sights dot the horizon: ⚓ wrecks (fat salvage) · 🏮 traders (🪵 → seeds) · 🌀 becalmed',
-    'pools (rich flotsam, dead sails) · ☠️ raider nests (wildest genes) · 🏝️ ports & the',
-    '🐝 breeder boat (dock with F to cross your lines) · 🍯 bee fortresses (see below).',
-    '',
-    'raiders eye you first (❓) — back away and they lose interest; linger and it\'s ⚔️.',
-    'waking one ship stirs its podmates, but only a few press the attack at once —',
-    'the rest shadow you, waiting for a slot. pick where you engage.',
-    'hunters have PATIENCE: run clean and stop trading shots, and they break off',
-    '("not worth the powder") — but every hit landed, either way, keeps them keen.',
-    'they patch their hulls while you run — commit, or eat the loss.',
-    '(your crew patches too, once the shooting stops — no hammering required.)',
-    'red-pennant HARRIERS sprint on oars through any wind — but rowers blow:',
-    'outlast the burst and even they fall away.',
-    'the deep sea sends specialists: slim SLOOPS snipe from a long glass and sheet',
-    'away when you close · gilded GALLEONS tank, out-gun, and out-wait you · glowing',
-    'FIRESHIPS charge and go up against your hull — one solid hit pops a bare one,',
-    'bronze/iron plating (deeper waters) takes two or three. chasers LEAD your course,',
-    'so a straight-line sprint no longer wins by default — jink, tack, fight.',
-    'raider guns are mortars too — red RINGS mark where their shells burst, and a',
-    'hunting mount grinds SLOWLY toward you: keep way on and slip the walking rings.',
-    'the farther from home, the deadlier the sea — and the richer everything it holds.',
-    '',
-    'your plants ARE the mortars in FIXED MOUNTS — no aiming, no tracking: each shell',
-    'arcs over the sea and bursts exactly on its gold RING. the reach gene sets the max',
-    'distance; hold Z/X to LOWER/RAISE the whole battery and pull every ring in short of',
-    'it. FIRE with SPACE: guns hold until you pull the lanyard, then reload on their rate',
-    'gene. steer the hull to walk the rings over a raider, time the volley, and keep',
-    'plants WATERED or they wilt & stop firing.',
-    "kill a ship's last gun and her crew scuttles — the wreck is yours.",
-    'every gun trick is a GENE now: a homing quirk curves the shells, an airburst locus',
-    'scatters a cluster where they land, elements chill/burn/rot — no rig, the genome IS',
-    'the weapon. the best traits are rare recessives that hide in CARRIER LINES.',
-    'wood buys REFITS (U): skiff → sloop → brig → galleon, more mounts each time.',
-    'BREED at a 🏝️ port (one per region — a reliable anchor) or the wandering 🐝 breeder',
-    'boat (premium): press F to dock and open the CHANNELING board. set two parents, then',
-    'place one allele from each into the child — surface a carried recessive on purpose,',
-    'grab any ✦ wildcard the cross offers, and line up trait SYNERGIES. every cross',
-    'costs 4🌼 POLLEN base, RARES cost extra — and crossing never earns pollen. you',
-    'start with none: the BEES are the whole economy. (the breeder boat still halves',
-    'rare prices.) Enter to cross, F auto-fills, Esc cancels.',
-    '',
-    'the BEES hold 🍯 fortress islands in every water — one sits off your home shore.',
-    'a friendly hive is a full dock: F opens the channeling board (normal prices),',
-    'and T PARLEYS a pollen BOUNTY for raiders sunk (one contract at a time — the',
-    '🐝 chip up top tracks it). hive guns also shell any',
-    'raider in reach, and the smart crews steer wide of them — but a bee-stung hull',
-    '(🐝 badge) pays NO salvage and NO bounty unless it fully heals before you sink it.',
-    'or turn your guns on the hive: its garrison out-guns and out-tanks any galleon,',
-    'and a broken hive spills its pollen stores. fire on the bees and that island holds',
-    'the grudge — walls up, no trade — but T there still SUES FOR PEACE: pay pollen',
-    '(more in deeper water) and the garrison stands down, no hull broken. break the',
-    'hive instead and EVERY hive goes hostile and no bee pays you again this run —',
-    'that one has no way back. choose a side.',
-    '',
-    'press I any time to suggest a feature or report a bug — no account needed.',
-    '',
-    'the run ends when your hull gives out.',
-  ]
   ctx.fillStyle = '#dcebf3'
   ctx.font = '14px ui-monospace, monospace'
-  lines.forEach((l, i) => ctx.fillText(l, w / 2, h * 0.3 + i * 22))
+  CONTROL_LINES.forEach((l, i) => ctx.fillText(l, w / 2, h * 0.42 + i * 22))
 
   ctx.fillStyle = '#ffd257'
-  ctx.font = 'bold 16px ui-monospace, monospace'
-  ctx.fillText('— click to set sail —', w / 2, h * 0.3 + lines.length * 22 + 30)
+  ctx.font = 'bold 18px ui-monospace, monospace'
+  ctx.fillText('— click to start —', w / 2, h * 0.42 + CONTROL_LINES.length * 22 + 40)
 }
 
 function drawGameOver(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t: number) {
