@@ -28,6 +28,8 @@ export interface POI {
   hostile: boolean
   /** heading, radians — only the wandering breeder boat uses it */
   heading?: number
+  /** bounties fulfilled at this hive — repeat business, steeper terms each time */
+  bounties: number
 }
 
 export const POI_CELL = 1400
@@ -128,5 +130,6 @@ export function makePOI(kind: POIKind, pos: Vec, sizeRoll = 0.5): POI {
     seeded: false,
     hostile: false,
     heading: 0,
+    bounties: 0,
   }
 }

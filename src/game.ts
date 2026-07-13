@@ -400,8 +400,10 @@ export class Game {
   boardMsg: { text: string; t: number; color: string } | null = null
   /** region-gene gossip heard at ports this run, keyed 'locus:allele' */
   rumors = new Set<string>()
-  /** the standing bee bounty — sink ships, collect pollen. One at a time. */
-  contract: { need: number; got: number; pay: number } | null = null
+  /** the standing bee bounty — sink ships, collect pollen. One at a time.
+   *  `hive` is who struck it, so fulfilling it can raise that hive's own
+   *  repeat-business rate for next time */
+  contract: { need: number; got: number; pay: number; hive: POI } | null = null
   /** you broke a hive: every fortress is hostile and no bee pays you again this run */
   beesAngry = false
 
@@ -828,9 +830,11 @@ export class Game {
       return this.toastAt(p.pos, `🐝 bounty stands: ${c.got}/${c.need} sunk → ${c.pay}🌼`, '#ffd257')
     }
     const danger = this.dangerAt(p.pos)
-    const need = 2 + Math.min(5, Math.floor(danger / 3))
+    // repeat business steepens the terms: the first bounty at a hive is the
+    // cheap one, and each one you've already fulfilled here adds to the ask
+    const need = 2 + Math.min(3, Math.floor(danger / 3)) + Math.min(4, p.bounties)
     const pay = need * 2 // one clean bounty funds at least one 4🌼 cross
-    this.contract = { need, got: 0, pay }
+    this.contract = { need, got: 0, pay, hive: p }
     this.toastAt(p.pos, `🐝 bounty struck: sink ${need} raiders → ${pay}🌼`, '#ffd257')
     sfx('build')
   }
@@ -1906,6 +1910,7 @@ export class Game {
       c.got++
       if (c.got >= c.need) {
         this.pollen += c.pay
+        c.hive.bounties++ // repeat business — this hive asks steeper next time
         this.contract = null
         this.banner = { title: '🐝 bounty fulfilled', sub: `the bees pay ${c.pay}🌼 pollen`, t: 3.5 }
         sfx('breed')
