@@ -331,7 +331,7 @@ function makePlant(genome: Genome, gen: number): Plant {
     genome,
     gen,
     pheno: phenotype(genome),
-    water: 70,
+    water: 100,
     activeT: 0,
     hp: PLANT_HP,
     maxHp: PLANT_HP,
@@ -389,6 +389,11 @@ export class Game {
   tool: Tool = 'water'
   seedSel = 0
   seedScroll = 0
+  /** armed by a first click on a planted mount — a second click on the SAME
+   *  mount within the window actually digs it up. Stops a stray click from
+   *  destroying a plant for good */
+  pendingDig: Mount | null = null
+  pendingDigT = 0
   /** the channeling board — non-null while docked at a port/breeder, breeding */
   board: Board | null = null
   /** feedback line drawn on the channeling board — world toasts hide behind the modal */
@@ -591,6 +596,10 @@ export class Game {
     this.time += dt
     this.stats.time += dt
     this.chillT = Math.max(0, this.chillT - dt)
+    if (this.pendingDig) {
+      this.pendingDigT -= dt
+      if (this.pendingDigT <= 0) this.pendingDig = null
+    }
 
     this.updateWind(dt)
     this.updatePOIs(dt)
@@ -1342,7 +1351,6 @@ export class Game {
         genome.power = [Math.random() < 0.4 ? 'titan' : 'stout', 'stout']
       }
       const plant = makePlant(genome, 0)
-      plant.water = 100
       plant.aim = gunA + (i % 2) * Math.PI + rand(-0.15, 0.15)
       guns.push({ x: Math.cos(pa) * pd, y: Math.sin(pa) * pd, plant })
     }
@@ -2463,11 +2471,20 @@ export class Game {
       case 'plant': {
         if (!m) return
         if (m.plant) {
-          // occupied — dig it up to make room for a better cultivar
-          m.plant = null
-          this.toastAt(this.mountPos(m), 'dug up 🥀', '#c5b8a0')
+          // occupied — a second click on the SAME mount confirms the dig, so
+          // one stray click can't destroy a plant you meant to keep
+          if (this.pendingDig === m) {
+            m.plant = null
+            this.toastAt(this.mountPos(m), 'dug up 🥀', '#c5b8a0')
+            this.pendingDig = null
+          } else {
+            this.pendingDig = m
+            this.pendingDigT = 1.4
+            this.toastAt(this.mountPos(m), 'click again to dig up', '#ff9d5c')
+          }
           return
         }
+        this.pendingDig = null
         if (!this.seeds.length) return this.toast('no seeds — breed or loot')
         const seed = this.seeds.splice(this.seedSel, 1)[0]
         this.seedSel = clamp(this.seedSel, 0, Math.max(0, this.seeds.length - 1))

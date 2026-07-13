@@ -14,7 +14,7 @@ export interface ToolDef {
 }
 
 export const TOOLS: ToolDef[] = [
-  { tool: 'plant', icon: '🌱', name: 'plant', tip: 'pick a seed (Q/E or wheel), click an empty mount to sow · click a planted mount to dig it up' },
+  { tool: 'plant', icon: '🌱', name: 'plant', tip: 'pick a seed (Q/E or wheel), click an empty mount to sow · click a planted mount twice to dig it up' },
   { tool: 'water', icon: '💧', name: 'water', tip: 'click a plant to water it (1💧) — dry plants wilt and die · B boils 1🪵 → 2💧' },
 ]
 

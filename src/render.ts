@@ -381,6 +381,15 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
     )
     drawPlant(ctx, p.x, p.y, plant, false, t)
     drawWaterBar(ctx, p.x, p.y, plant)
+    // armed to dig: a pulsing ring so a half-finished click reads as a warning,
+    // not a silent no-op, before the confirming second click lands
+    if (g.pendingDig === m) {
+      ctx.strokeStyle = `rgba(255,157,92,${0.5 + 0.4 * Math.sin(t * 10)})`
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(p.x, p.y - 6, 20, 0, Math.PI * 2)
+      ctx.stroke()
+    }
   })
 
   // hovering a plant → show its full genetic reach (theirs too — know the sniper)
