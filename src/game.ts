@@ -56,6 +56,8 @@ export const POD_WAKE_R = 340 // committing raiders stir roaming neighbours this
 export const CHASE_PATIENCE = 13 // seconds a hunter presses before you're not worth the powder
 export const HUNT_CAP = 3 // ships in full ⚔️ at once — the rest shadow outside gun range
 export const DANGER_SCALE = 550 // px from home waters per +1 danger
+export const SLOOP_BOLD_FLEE_HP = 0.4 // a bold sloop only sheets away once hurt this badly
+export const SLOOP_KITE_PATIENCE_MULT = 1.6 // running scared burns patience faster than trading shots
 
 /** the named danger bands — geography the crew can point at */
 export function seaName(danger: number): string {
@@ -235,6 +237,9 @@ export interface EnemyShip {
   beeHit?: boolean
   /** the smarter crews give bee fortresses a wide berth */
   wary?: boolean
+  /** a jumpy sloop crew: sheets away on proximity alone, full health or not.
+   *  bold sloops (the rest) stand and trade until they're actually hurt */
+  riskAverse?: boolean
 }
 
 export interface Wind {
@@ -1361,6 +1366,9 @@ export class Game {
       // some crews aren't dumb: sloops always shy off hive guns, fireships never
       // (the crew is already dead), the rest split roughly half and half
       wary: kind === 'sloop' ? true : kind === 'fireship' || kind === 'bastion' ? false : Math.random() < 0.45,
+      // jumpy crews get more common the deeper you push — rougher waters breed
+      // sloops that won't give a brawler a fair fight even at full health
+      riskAverse: kind === 'sloop' && Math.random() < clamp(0.2 + danger * 0.07, 0.2, 0.85),
     })
   }
 
@@ -1482,11 +1490,20 @@ export class Game {
           this.fireshipBlast(e)
           continue
         }
-      } else if (e.mode === 'hunt' && e.kind === 'sloop' && d < this.sloopStandoff(e)) {
-        // a sloop refuses the brawl: close inside its glass and it sheets away,
-        // curving off to re-open the range — chase it down or let it go
+      } else if (
+        e.mode === 'hunt' &&
+        e.kind === 'sloop' &&
+        d < this.sloopStandoff(e) &&
+        (e.riskAverse || e.hp < e.maxHp * SLOOP_BOLD_FLEE_HP)
+      ) {
+        // a risk-averse sloop refuses the brawl outright; a bold one only
+        // sheets away once it's actually hurt — close inside its glass and it
+        // curves off to re-open the range — chase it down or let it go.
+        // Either way, running scared (not trading shots) burns patience fast:
+        // a sloop that kites the whole fight eventually gives up on its own
         e.vel.x = -ux * spd - uy * e.orbitDir * spd * 0.3
         e.vel.y = -uy * spd + ux * e.orbitDir * spd * 0.3
+        e.patience -= dt * (SLOOP_KITE_PATIENCE_MULT - 1)
       } else if (e.mode === 'hunt') {
         // sail for the station where the cheapest battery's burst ring will land
         // on you — computed against your led course, so runners get cut off
