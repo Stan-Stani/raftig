@@ -1772,6 +1772,8 @@ function drawHelp(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number) 
     'hive instead and EVERY hive goes hostile and no bee pays you again this run —',
     'that one has no way back. choose a side.',
     '',
+    'press I any time to suggest a feature or report a bug — no account needed.',
+    '',
     'the run ends when your hull gives out.',
   ]
   ctx.fillStyle = '#dcebf3'

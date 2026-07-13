@@ -5,6 +5,10 @@ export const keys = new Set<string>()
 
 export function initInput(canvas: HTMLCanvasElement, game: Game) {
   window.addEventListener('keydown', e => {
+    // a focused form field (the feedback modal's inputs) owns its own
+    // keystrokes — typing "T" or hitting Space must never reach the game
+    const el = document.activeElement
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return
     if (e.repeat) return
     keys.add(e.code)
     game.keydown(e.code)

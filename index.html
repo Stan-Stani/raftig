@@ -8,10 +8,65 @@
     <style>
       html, body { margin: 0; padding: 0; overflow: hidden; background: #072a40; height: 100%; }
       canvas { display: block; cursor: crosshair; }
+
+      #feedback {
+        display: none;
+        position: fixed; inset: 0; z-index: 10;
+        background: rgba(4, 16, 26, 0.72);
+        align-items: center; justify-content: center;
+        font: 14px/1.5 ui-monospace, monospace;
+      }
+      #feedback.open { display: flex; }
+      #feedback form {
+        width: min(440px, 90vw);
+        background: #0a1c2b; color: #cfe7f2;
+        border: 1px solid rgba(255,255,255,0.15); border-radius: 10px;
+        padding: 18px 20px;
+      }
+      #feedback h2 { margin: 0 0 3px; color: #ffd257; font-size: 17px; }
+      #feedback p.sub { margin: 0 0 14px; color: #7d97a8; font-size: 12.5px; }
+      #feedback label { display: block; margin: 10px 0 4px; color: #9fb8c8; }
+      #feedback input, #feedback textarea, #feedback select {
+        width: 100%; box-sizing: border-box; background: #06141f; color: #cfe7f2;
+        border: 1px solid rgba(255,255,255,0.18); border-radius: 6px; padding: 7px 8px;
+        font: inherit;
+      }
+      #feedback textarea { min-height: 64px; resize: vertical; }
+      #feedback .row { display: flex; gap: 10px; align-items: center; margin-top: 14px; }
+      #feedback button {
+        background: #ffd257; color: #06141f; border: none; border-radius: 6px;
+        padding: 8px 16px; font: inherit; font-weight: bold; cursor: pointer;
+      }
+      #feedback button.ghost { background: transparent; color: #7d97a8; }
+      #feedback #feedbackMsg { font-size: 12.5px; flex: 1; text-align: right; }
     </style>
   </head>
   <body>
     <canvas id="game"></canvas>
+
+    <div id="feedback">
+      <form id="feedbackForm">
+        <h2>🐝 suggest something</h2>
+        <p class="sub">bugs, feature ideas, balance gripes — no account needed. Esc to close.</p>
+        <label for="fbTitle">title</label>
+        <input id="fbTitle" maxlength="140" required placeholder="short summary" autocomplete="off" />
+        <label for="fbCategory">category</label>
+        <select id="fbCategory">
+          <option value="feature">feature</option>
+          <option value="bug">bug</option>
+          <option value="balance">balance</option>
+          <option value="other">other</option>
+        </select>
+        <label for="fbBody">details (optional)</label>
+        <textarea id="fbBody" maxlength="2000" placeholder="what happened, or what you'd want"></textarea>
+        <div class="row">
+          <button type="button" class="ghost" id="fbClose">close (Esc)</button>
+          <span id="feedbackMsg"></span>
+          <button type="submit">submit</button>
+        </div>
+      </form>
+    </div>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

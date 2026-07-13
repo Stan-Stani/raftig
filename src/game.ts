@@ -448,6 +448,9 @@ export class Game {
   over = false
   paused = false
   helpOpen = true
+  /** the "suggest something" modal — a real HTML overlay, not canvas-drawn
+   *  (text entry needs a real input, not hand-rolled keystroke plumbing) */
+  feedbackOpen = false
   banner = { title: '', sub: '', t: 0 }
   stats = { sunk: 0, bred: 0, time: 0, far: 0 }
 
@@ -615,7 +618,7 @@ export class Game {
   update(dt: number) {
     this.cam = this.ship.pos
     this.hover = this.screenToWorld(this.hoverScreen.x, this.hoverScreen.y)
-    if (this.over || this.paused || this.helpOpen || this.board) {
+    if (this.over || this.paused || this.helpOpen || this.board || this.feedbackOpen) {
       this.updateFx(dt)
       return
     }
@@ -2506,6 +2509,13 @@ export class Game {
       }
       return
     }
+    // the feedback modal is a real HTML overlay — it owns its own text
+    // entry, but Escape still needs to reach here for keyboard events the
+    // modal's own listener doesn't catch (e.g. focus not on a field)
+    if (this.feedbackOpen) {
+      if (code === 'Escape') this.feedbackOpen = false
+      return
+    }
     const idx = ['Digit1', 'Digit2'].indexOf(code)
     if (idx >= 0 && idx < TOOLS.length) {
       this.tool = TOOLS[idx].tool
@@ -2536,6 +2546,9 @@ export class Game {
         break
       case 'KeyH':
         this.helpOpen = !this.helpOpen
+        break
+      case 'KeyI':
+        if (!this.over) this.feedbackOpen = true
         break
       case 'KeyP':
         if (!this.over) this.paused = !this.paused
