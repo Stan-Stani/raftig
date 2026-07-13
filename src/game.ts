@@ -805,10 +805,14 @@ export class Game {
     this.burst(p.pos, '#ffd257', 20)
   }
 
-  /** parley at a hive (F): strike a bounty, or hear how the swarm feels about you */
+  /** parley at a hive (T): strike a bounty, sue for peace with a grudge you
+   *  haven't broken, or hear how the swarm feels about you */
   private parleyHive(p: POI) {
     if (p.done) return this.toastAt(p.pos, 'the hive is silent', '#9fb8c8')
-    if (this.beesAngry || p.hostile) return this.toastAt(p.pos, '🐝 the swarm remembers your smoke', '#ff9d9d')
+    // war (a broken hive, anywhere) is the one grudge nothing buys back —
+    // a live grudge on a still-standing hive is just a fine away from over
+    if (this.beesAngry) return this.toastAt(p.pos, '🐝 the swarm remembers your smoke', '#ff9d9d')
+    if (p.hostile) return this.suePeace(p)
     if (this.contract) {
       const c = this.contract
       return this.toastAt(p.pos, `🐝 bounty stands: ${c.got}/${c.need} sunk → ${c.pay}🌼`, '#ffd257')
@@ -818,6 +822,29 @@ export class Game {
     const pay = need * 2 // one clean bounty funds at least one 4🌼 cross
     this.contract = { need, got: 0, pay }
     this.toastAt(p.pos, `🐝 bounty struck: sink ${need} raiders → ${pay}🌼`, '#ffd257')
+    sfx('build')
+  }
+
+  /** the pollen price of standing a grudge-hive's walls back down — costs
+   *  more the deeper the water, the swarm out here has less patience for you */
+  peaceTribute(p: POI): number {
+    return 8 + Math.floor(this.dangerAt(p.pos))
+  }
+
+  /** T at a hive whose garrison you've provoked but not broken: pay tribute
+   *  to stand the walls down and go back to bounty terms. Always goes through
+   *  — short a full purse just runs your pollen into debt, no cross clears
+   *  until you've bounty'd your way back to zero */
+  private suePeace(p: POI) {
+    const tribute = this.peaceTribute(p)
+    this.pollen -= tribute
+    p.hostile = false
+    const g = this.hiveGarrison(p)
+    if (g) {
+      g.mode = 'roam'
+      g.engaged = false
+    }
+    this.toastAt(p.pos, `🐝 peace bought — ${tribute}🌼`, '#ffd257')
     sfx('build')
   }
 

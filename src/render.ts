@@ -754,19 +754,23 @@ function drawHive(ctx: CanvasRenderingContext2D, g: Game, p: POI, t: number) {
       ctx.fill()
     }
   }
-  // dock prompt when alongside a hive that will still talk to you
+  // dock prompt when alongside a hive that will still talk to you — a live
+  // grudge (not open war) still talks, just to sue for peace instead of trade
   const d = dist(p.pos, g.cam)
-  if (!p.done && !angry && d < p.r + 220) {
+  const grudge = !p.done && p.hostile && !g.beesAngry
+  if (!p.done && !g.beesAngry && d < p.r + 220) {
     const near = d < p.r + 130
     ctx.font = 'bold 12px ui-monospace, monospace'
-    const label = g.contract
-      ? `F · breed (${BREED_COST}🌼) · T · bounty ${g.contract.got}/${g.contract.need}`
-      : `F · breed (${BREED_COST}🌼) · T · bounty`
+    const label = grudge
+      ? `T · make peace (${g.peaceTribute(p)}🌼)`
+      : g.contract
+        ? `F · breed (${BREED_COST}🌼) · T · bounty ${g.contract.got}/${g.contract.need}`
+        : `F · breed (${BREED_COST}🌼) · T · bounty`
     const lw = ctx.measureText(label).width + 16
     ctx.fillStyle = 'rgba(4,20,32,0.8)'
     roundRect(ctx, x - lw / 2, y - 118, lw, 20, 10)
     ctx.fill()
-    ctx.fillStyle = near ? '#ffd257' : '#7d97a8'
+    ctx.fillStyle = grudge ? '#ff9d5c' : near ? '#ffd257' : '#7d97a8'
     ctx.textAlign = 'center'
     ctx.fillText(label, x, y - 104)
   }
@@ -1747,9 +1751,11 @@ function drawHelp(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number) 
     'raider in reach, and the smart crews steer wide of them — but a bee-stung hull',
     '(🐝 badge) pays NO salvage and NO bounty unless it fully heals before you sink it.',
     'or turn your guns on the hive: its garrison out-guns and out-tanks any galleon,',
-    'and a broken hive spills its pollen stores. fire on the bees once and that island',
-    'holds the grudge; break one and EVERY hive goes hostile and no bee pays you again',
-    'this run. choose a side.',
+    'and a broken hive spills its pollen stores. fire on the bees and that island holds',
+    'the grudge — walls up, no trade — but T there still SUES FOR PEACE: pay pollen',
+    '(more in deeper water) and the garrison stands down, no hull broken. break the',
+    'hive instead and EVERY hive goes hostile and no bee pays you again this run —',
+    'that one has no way back. choose a side.',
     '',
     'the run ends when your hull gives out.',
   ]
