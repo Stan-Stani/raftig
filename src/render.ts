@@ -1130,9 +1130,6 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
     ctx.fillStyle = '#9fb8c8'
     ctx.font = '14px ui-monospace, monospace'
     CONTROL_LINES.forEach((l, i) => ctx.fillText(l, w / 2, h / 2 + i * 22))
-    ctx.fillStyle = '#ffd257'
-    ctx.font = 'bold 14px ui-monospace, monospace'
-    ctx.fillText('🐝 I — suggest a feature or report a bug (no account needed)', w / 2, h / 2 + CONTROL_LINES.length * 22 + 26)
   }
   if (g.over) drawGameOver(ctx, g, w, h, t)
 }

@@ -17,6 +17,13 @@
         font: 14px/1.5 ui-monospace, monospace;
       }
       #feedback.open { display: flex; }
+      /* paused screen already draws its own dim + controls on the canvas —
+         the modal just sits below that, so drop the backdrop and push down */
+      #feedback.lowered {
+        background: transparent;
+        align-items: flex-start;
+        padding-top: 64vh;
+      }
       #feedback form {
         width: min(440px, 90vw);
         background: #0a1c2b; color: #cfe7f2;

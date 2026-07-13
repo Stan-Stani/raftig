@@ -2548,7 +2548,8 @@ export class Game {
         this.helpOpen = !this.helpOpen
         break
       case 'KeyI':
-        if (!this.over) this.feedbackOpen = true
+        // no-op while paused — the pause screen always shows the same form
+        if (!this.over && !this.paused) this.feedbackOpen = true
         break
       case 'KeyP':
       case 'Escape':

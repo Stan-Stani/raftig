@@ -35,14 +35,20 @@ function initFeedback(game: Game) {
   const msg = document.getElementById('feedbackMsg')!
   const closeBtn = document.getElementById('fbClose')!
 
+  // the form is up whenever explicitly opened (I, standalone, centered) OR
+  // whenever paused (always there, below the canvas-drawn controls) — the
+  // two can never both be true (KeyI no-ops while paused), so exactly one
+  // reason applies at a time
   const close = () => {
-    game.feedbackOpen = false
+    if (game.feedbackOpen) game.feedbackOpen = false
+    else if (game.paused) game.paused = false
   }
 
   let wasOpen = false
   function sync() {
-    if (game.feedbackOpen !== wasOpen) {
-      wasOpen = game.feedbackOpen
+    const open = game.feedbackOpen || game.paused
+    if (open !== wasOpen) {
+      wasOpen = open
       modal.classList.toggle('open', wasOpen)
       if (wasOpen) {
         msg.textContent = ''
@@ -50,6 +56,7 @@ function initFeedback(game: Game) {
         title.focus()
       }
     }
+    modal.classList.toggle('lowered', game.paused)
     requestAnimationFrame(sync)
   }
   sync()
@@ -58,11 +65,16 @@ function initFeedback(game: Game) {
   modal.addEventListener('click', e => {
     if (e.target === modal) close()
   })
-  // Escape must close the modal even while a form field has focus, so this
-  // listens on window directly rather than going through the game's own
-  // keydown (input.ts steps aside entirely while a field is focused)
+  // Escape must close the modal even while a form field has focus, since
+  // input.ts's own listener steps aside entirely in that case (game.keydown
+  // never runs). Gated on the SAME "is a field focused" condition input.ts
+  // uses, so exactly one of the two listeners ever acts on a given Escape —
+  // otherwise this would immediately re-toggle whatever game.keydown just did
   window.addEventListener('keydown', e => {
-    if (e.code === 'Escape' && game.feedbackOpen) close()
+    if (e.code !== 'Escape') return
+    const el = document.activeElement
+    const typing = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement
+    if (typing) close()
   })
 
   form.addEventListener('submit', async e => {
