@@ -1,0 +1,47 @@
+name: Deploy to VPS
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -euo pipefail
+
+            cd /root/raftig
+            git fetch origin
+            git reset --hard origin/main
+            echo "Deployed commit: $(git rev-parse --short HEAD)"
+
+            # game client — static build, served straight from /var/www/raftig
+            npm ci
+            npm run build
+            rsync -a --delete dist/ /var/www/raftig/
+            cp tickets/ideas.html /var/www/raftig/ideas.html
+
+            # ticket board — small Node service behind PM2, only restarted
+            # (and re-npm-ci'd) if something in tickets/ actually changed
+            cd tickets
+            npm ci
+            pm2 restart raftig-tickets || pm2 start server.js --name raftig-tickets
+            pm2 save
+
+            # smoke tests
+            for i in $(seq 1 30); do
+              curl -fsS http://127.0.0.1:8795/health >/dev/null 2>&1 && break
+              sleep 1
+            done
+            curl -fsS http://127.0.0.1:8795/health
+
+            curl -fsS -H "Host: raftig.seldoncortex.com" http://127.0.0.1/ >/dev/null
+            curl -fsS -H "Host: raftig.seldoncortex.com" http://127.0.0.1/api/tickets >/dev/null
+            echo "Smoke tests passed."
