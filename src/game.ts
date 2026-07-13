@@ -828,7 +828,7 @@ export class Game {
       return this.toastAt(p.pos, `🐝 bounty stands: ${c.got}/${c.need} sunk → ${c.pay}🌼`, '#ffd257')
     }
     const danger = this.dangerAt(p.pos)
-    const need = 2 + Math.min(3, Math.floor(danger / 3))
+    const need = 2 + Math.min(5, Math.floor(danger / 3))
     const pay = need * 2 // one clean bounty funds at least one 4🌼 cross
     this.contract = { need, got: 0, pay }
     this.toastAt(p.pos, `🐝 bounty struck: sink ${need} raiders → ${pay}🌼`, '#ffd257')

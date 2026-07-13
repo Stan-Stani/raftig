@@ -1,7 +1,7 @@
 // Toolbar / seed-panel definitions and the channeling-board layout, shared by
 // render (drawing) and game (hit-testing) so the two never drift.
 
-import { Board, BoardParent, slotChoices, slotRareCost, picksCost } from './breeding'
+import { Board, BoardParent, slotChoices, slotSwitchCost, picksCost } from './breeding'
 import { Genome, LocusId, LOCUS_ORDER, expressed, alleleDef } from './genetics'
 
 export type Tool = 'plant' | 'water'
@@ -185,9 +185,9 @@ export function boardLayout(vw: number, vh: number, board: Board): BoardLayout {
         const choices = slotChoices(off, slot)
         const areaX = slot === 0 ? mainX + labelW : mainX + labelW + slotAreaW + centerW
         const chipW = Math.min(56, (slotAreaW - chipGap * (choices.length - 1)) / Math.max(1, choices.length))
-        const curCost = slotRareCost(locus, off, slot, picks[slot], board.premium)
+        const curCost = slotSwitchCost(locus, off, slot, picks[slot], board.premium)
         choices.forEach((allele, ci) => {
-          const cost = slotRareCost(locus, off, slot, allele, board.premium)
+          const cost = slotSwitchCost(locus, off, slot, allele, board.premium)
           const chosen = picks[slot] === allele
           chips.push({
             locus,

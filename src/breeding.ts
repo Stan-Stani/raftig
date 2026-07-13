@@ -6,12 +6,13 @@
 // and the authorship is the placement. No rig: the genome IS the gun.
 //
 // Scarcity keeps the placement from being a wishlist (BREEDING_REDESIGN §3/§4):
-// common alleles are free to arrange, but placing a RARE recessive you didn't
-// have to take costs POLLEN — a currency the BEES pay, not the crosses: bounty
-// contracts at hive fortresses and raided hive caches are the only income (the
-// breeder boat still halves rare prices: the "steering service"). So the good
-// genomes are bred across several contracts, not assembled in one, and wildcards
-// dupe-protect toward rares your lines don't already carry.
+// the cheapest all-common cross is always free, but every slot you switch away
+// from that default costs at least 1 POLLEN — a currency the BEES pay, not the
+// crosses: bounty contracts at hive fortresses and raided hive caches are the
+// only income (the breeder boat still halves rare prices: the "steering
+// service"). Taking a RARE recessive over an available common costs more still.
+// So the good genomes are bred across several contracts, not assembled in one,
+// and wildcards dupe-protect toward rares your lines don't already carry.
 
 import { Genome, LocusId, LOCUS_ORDER, LOCI, alleleDef, expressed, mutationAllele, regionLockOf } from './genetics'
 import { pick } from './util'
@@ -66,14 +67,16 @@ export function openBoard(premium: boolean, stock: BoardParent[], pollen: number
   return { premium, stock, scroll: 0, parents: [null, null], focus: 0, offer: null, picks: null, childGen: 1, pollen }
 }
 
-/** the pollen price of putting `allele` into a child slot: rares you chose over
- *  an available common allele cost; forced rares (no common option) and commons
- *  are free. Breeder boats halve the price. */
-export function slotRareCost(locus: LocusId, offer: LocusOffer, slot: 0 | 1, allele: string, premium: boolean): number {
-  if (!alleleDef(locus, allele).rare) return 0
+/** the pollen price of putting `allele` into a child slot: the cheapest
+ *  (default) choice for that slot is always free, but every switch away from
+ *  it is a deliberate pick and costs at least 1 — taking a rare over an
+ *  available common costs the full rare price instead. Breeder boats halve
+ *  the rare price. */
+export function slotSwitchCost(locus: LocusId, offer: LocusOffer, slot: 0 | 1, allele: string, premium: boolean): number {
+  if (allele === cheapestChoice(locus, offer, slot)) return 0
+  if (!alleleDef(locus, allele).rare) return 1
   const hasCommon = slotChoices(offer, slot).some(id => !alleleDef(locus, id).rare)
-  if (!hasCommon) return 0
-  return premium ? RARE_COST_PREMIUM : RARE_COST
+  return hasCommon ? (premium ? RARE_COST_PREMIUM : RARE_COST) : 1
 }
 
 /** total pollen the current picks would spend */
@@ -82,7 +85,7 @@ export function picksCost(board: Board): number {
   let sum = 0
   for (const locus of LOCUS_ORDER)
     for (const slot of [0, 1] as const)
-      sum += slotRareCost(locus, board.offer[locus], slot, board.picks[locus][slot], board.premium)
+      sum += slotSwitchCost(locus, board.offer[locus], slot, board.picks[locus][slot], board.premium)
   return sum
 }
 
@@ -178,8 +181,9 @@ export function slotChoices(offer: LocusOffer, slot: 0 | 1): string[] {
   return out
 }
 
-/** place an allele into a child slot. Validated against the offer, and — for a
- *  rare that costs pollen — rejected (returns false) if the cross can't afford it. */
+/** place an allele into a child slot. Validated against the offer, and — for
+ *  any switch that costs pollen — rejected (returns false) if the cross can't
+ *  afford it. */
 export function boardPlace(board: Board, locus: LocusId, slot: 0 | 1, allele: string): boolean {
   if (!board.offer || !board.picks) return false
   if (!slotChoices(board.offer[locus], slot).includes(allele)) return false
@@ -206,7 +210,10 @@ export function boardAuto(board: Board) {
   for (const locus of LOCUS_ORDER)
     for (const slot of [0, 1] as const)
       for (const allele of slotChoices(offer[locus], slot)) {
-        const cost = slotRareCost(locus, offer[locus], slot, allele, board.premium)
+        // auto-fill only ever buys real upgrades (rares) — it won't spend
+        // pollen on a lateral common-to-common switch with no genetic payoff
+        if (!alleleDef(locus, allele).rare) continue
+        const cost = slotSwitchCost(locus, offer[locus], slot, allele, board.premium)
         if (cost > 0) upgrades.push({ locus, slot, allele, cost, w: alleleDef(locus, allele).w })
       }
   upgrades.sort((x, y) => x.w - y.w) // rarest (lowest population weight) first
