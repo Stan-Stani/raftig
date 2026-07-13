@@ -981,10 +981,6 @@ export class Game {
       if (!fighting && p.burnT <= 0 && p.poisonT <= 0 && p.hp < p.maxHp) {
         p.hp = Math.min(p.maxHp, p.hp + 2.5 * dt)
       }
-      // a hurting plant sheds leaves, faster the worse it gets
-      if (p.hp < p.maxHp * 0.85 && Math.random() < (1 - p.hp / p.maxHp) * 4.5 * dt) {
-        this.shedLeaf(this.mountPos(m))
-      }
       if (p.hp <= 0) {
         m.plant = null
         this.toastAt(this.mountPos(m), '🥀', '#c5b8a0')
@@ -1661,9 +1657,6 @@ export class Game {
           this.killEnemyGun(e, g)
           this.checkScuttle(e)
           continue
-        }
-        if (p.hp < p.maxHp * 0.85 && Math.random() < (1 - p.hp / p.maxHp) * 4.5 * dt) {
-          this.shedLeaf(this.gunPos(e, g))
         }
         p.cooldown -= dt
         const from = this.gunPos(e, g)
@@ -2452,7 +2445,8 @@ export class Game {
 
   // ---- fx helpers ----
 
-  /** a hurting plant sheds leaves — deck (and enemy gun) health at a glance */
+  /** a burst of leaves marks the instant a plant takes a hit — ongoing wound
+   *  state is the sprite's own pose/color (drawPlant), not a particle trickle */
   private shedLeaf(at: Vec) {
     this.particles.push({
       pos: v(at.x + rand(-7, 7), at.y - rand(10, 24)),
