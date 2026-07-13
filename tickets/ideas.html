@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raftig — suggest something</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 24px 16px 80px;
+    background: #06141f; color: #cfe7f2;
+    font: 14px/1.5 ui-monospace, monospace;
+  }
+  main { max-width: 640px; margin: 0 auto; }
+  h1 { color: #ffd257; font-size: 20px; margin: 0 0 4px; }
+  p.sub { color: #7d97a8; margin: 0 0 24px; }
+  form {
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px; padding: 16px; margin-bottom: 28px;
+  }
+  form label { display: block; margin: 10px 0 4px; color: #9fb8c8; }
+  form input, form textarea, form select {
+    width: 100%; box-sizing: border-box; background: #0a1c2b; color: #cfe7f2;
+    border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; padding: 8px;
+    font: inherit;
+  }
+  form textarea { min-height: 70px; resize: vertical; }
+  form button {
+    margin-top: 14px; background: #ffd257; color: #06141f; border: none;
+    border-radius: 6px; padding: 9px 16px; font: inherit; font-weight: bold; cursor: pointer;
+  }
+  form button:disabled { opacity: 0.5; cursor: default; }
+  #formMsg { margin-top: 10px; font-size: 13px; }
+  .ticket {
+    display: flex; gap: 12px; align-items: flex-start;
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px; padding: 12px 14px; margin-bottom: 10px;
+  }
+  .vote-btn {
+    flex: none; width: 46px; height: 46px; border-radius: 6px;
+    background: rgba(255,210,87,0.12); border: 1px solid rgba(255,210,87,0.3);
+    color: #ffd257; font: bold 15px ui-monospace, monospace; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .vote-btn.voted { background: #ffd257; color: #06141f; cursor: default; }
+  .vote-btn span { font-size: 10px; opacity: 0.8; }
+  .ticket-title { font-weight: bold; color: #eaf6ff; margin: 0 0 3px; }
+  .ticket-body { color: #9fb8c8; white-space: pre-wrap; margin: 0 0 6px; }
+  .tag {
+    display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px;
+    background: rgba(255,255,255,0.08); color: #7d97a8; margin-right: 6px;
+  }
+  #empty { color: #7d97a8; text-align: center; padding: 30px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🐝 suggest something</h1>
+  <p class="sub">bugs, feature ideas, balance gripes — no account needed. vote on what you want built next.</p>
+
+  <form id="ticketForm">
+    <label for="title">title</label>
+    <input id="title" maxlength="140" required placeholder="short summary" />
+    <label for="category">category</label>
+    <select id="category">
+      <option value="feature">feature</option>
+      <option value="bug">bug</option>
+      <option value="balance">balance</option>
+      <option value="other">other</option>
+    </select>
+    <label for="body">details (optional)</label>
+    <textarea id="body" maxlength="2000" placeholder="what happened, or what you'd want"></textarea>
+    <button type="submit">submit</button>
+    <div id="formMsg"></div>
+  </form>
+
+  <div id="list"></div>
+  <div id="empty" hidden>nothing yet — be the first to suggest something.</div>
+</main>
+
+<script>
+  const votedKey = id => `raftig-voted-${id}`
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+  }
+
+  function timeAgo(ts) {
+    const s = Math.floor((Date.now() - ts) / 1000)
+    if (s < 60) return 'just now'
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`
+    if (s < 86400) return `${Math.floor(s / 3600)}h ago`
+    return `${Math.floor(s / 86400)}d ago`
+  }
+
+  async function loadTickets() {
+    const res = await fetch('/api/tickets')
+    const tickets = await res.json()
+    const list = document.getElementById('list')
+    const empty = document.getElementById('empty')
+    list.innerHTML = ''
+    empty.hidden = tickets.length > 0
+    for (const t of tickets) {
+      const voted = localStorage.getItem(votedKey(t.id)) === '1'
+      const el = document.createElement('div')
+      el.className = 'ticket'
+      el.innerHTML = `
+        <button class="vote-btn ${voted ? 'voted' : ''}" data-id="${t.id}" ${voted ? 'disabled' : ''}>
+          ${t.votes}<span>vote</span>
+        </button>
+        <div>
+          <span class="tag">${escapeHtml(t.category)}</span>
+          <span class="tag">${timeAgo(t.created_at)}</span>
+          <div class="ticket-title">${escapeHtml(t.title)}</div>
+          ${t.body ? `<div class="ticket-body">${escapeHtml(t.body)}</div>` : ''}
+        </div>
+      `
+      list.appendChild(el)
+    }
+    document.querySelectorAll('.vote-btn:not(.voted)').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id
+        btn.disabled = true
+        const res = await fetch(`/api/tickets/${id}/vote`, { method: 'POST' })
+        if (res.ok || res.status === 409) {
+          localStorage.setItem(votedKey(id), '1')
+          loadTickets()
+        } else {
+          btn.disabled = false
+        }
+      })
+    })
+  }
+
+  document.getElementById('ticketForm').addEventListener('submit', async e => {
+    e.preventDefault()
+    const btn = e.target.querySelector('button')
+    const msg = document.getElementById('formMsg')
+    btn.disabled = true
+    msg.textContent = ''
+    try {
+      const res = await fetch('/api/tickets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: document.getElementById('title').value,
+          body: document.getElementById('body').value,
+          category: document.getElementById('category').value,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        msg.style.color = '#ffb3b3'
+        msg.textContent = data.error || 'something went wrong'
+      } else {
+        msg.style.color = '#b8e986'
+        msg.textContent = 'submitted — thanks!'
+        e.target.reset()
+        loadTickets()
+      }
+    } catch {
+      msg.style.color = '#ffb3b3'
+      msg.textContent = 'network error — try again'
+    } finally {
+      btn.disabled = false
+    }
+  })
+
+  loadTickets()
+</script>
+</body>
+</html>
