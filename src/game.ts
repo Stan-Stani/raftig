@@ -2009,12 +2009,29 @@ export class Game {
         this.shake = Math.min(8, this.shake + 1.5)
         if (this.ship.hp <= 0) this.gameOver()
       }
-      // hive artillery hits raider hulls too — and a stung ship pays no salvage
-      // until its crew fully patches the wound (the bees claim tainted kills)
+      // hive artillery hits raider hulls AND their mounted guns too — a stung
+      // ship pays no salvage until its crew fully patches up (the bees claim
+      // tainted kills)
       if (b.bee) {
         for (const o of this.enemies) {
           if (o.sunk || o.kind === 'bastion') continue
-          if (dist(at, o.pos) < o.r + splash * 0.5) {
+          for (const eg of [...o.guns]) {
+            const gp = eg.plant
+            if (dist(at, this.gunPos(o, eg)) < splash) {
+              hitAny = true
+              o.beeHit = true
+              gp.hp -= b.dmg * (b.element === 'venom' ? 1.6 : 1)
+              if (b.element === 'ember') gp.burnT = 3
+              if (b.element === 'frost') o.chillT = 2.5
+              if (b.element === 'venom') gp.poisonT = 4
+              for (let i = 0; i < 7; i++) this.shedLeaf(this.gunPos(o, eg))
+              if (gp.hp <= 0) {
+                this.killEnemyGun(o, eg)
+                this.checkScuttle(o)
+              }
+            }
+          }
+          if (!o.sunk && dist(at, o.pos) < o.r + splash * 0.5) {
             hitAny = true
             o.beeHit = true
             this.damageEnemyHull(o, b)
