@@ -221,9 +221,11 @@ export interface EnemyShip {
   danger: number // difficulty of the waters it spawned in
   /** the fleet's classes, each a doctrine: raiders brawl · harriers row & sprint ·
    *  sloops snipe long and flee the brawl · galleons tank and out-gun ·
-   *  fireships rush the hull and burn with it · bastions are a hive's garrison —
-   *  a fortress battery that cannot chase and never needs to */
-  kind: 'raider' | 'harrier' | 'sloop' | 'galleon' | 'fireship' | 'bastion'
+   *  fireships rush the hull and burn with it · mortars dig in at range and
+   *  RANGE YOU IN for real (lead + crank elevation) instead of holding a dumb
+   *  station · bastions are a hive's garrison — a fortress battery that
+   *  cannot chase and never needs to */
+  kind: 'raider' | 'harrier' | 'sloop' | 'galleon' | 'fireship' | 'mortar' | 'bastion'
   /** fireship plating: 0 bare (pops to one normal hit), 1 bronze, 2 iron */
   armor?: 0 | 1 | 2
   /** ship belongs to a nest and stays tethered to it */
@@ -317,14 +319,35 @@ export interface HoverInfo {
 
 /** how far a hunter presses before the chase fizzles — sloops and fireships range widest */
 function baseDeaggro(kind: EnemyShip['kind']): number {
-  return kind === 'harrier' ? 820 : kind === 'sloop' ? 900 : kind === 'fireship' ? 950 : kind === 'bastion' ? 1150 : DEAGGRO_R
+  return kind === 'harrier'
+    ? 820
+    : kind === 'sloop'
+      ? 900
+      : kind === 'mortar'
+        ? 680 // it doesn't chase so much as keep pressuring from where it's dug in
+        : kind === 'fireship'
+          ? 950
+          : kind === 'bastion'
+            ? 1150
+            : DEAGGRO_R
 }
 
 /** rad/s a hunting mount grinds toward you — the ship holds range, the gun does
  *  the lining-up, and the red ring telegraphs every degree of it */
 function gunTraverse(kind: EnemyShip['kind']): number {
-  // bastion gunners are drilled: the fortress can't chase, so the guns do all the work
-  return kind === 'harrier' ? 0.9 : kind === 'sloop' ? 0.7 : kind === 'galleon' ? 0.35 : kind === 'bastion' ? 0.6 : 0.5
+  // bastion/mortar gunners are drilled: they range in for real, so the gun
+  // doing more of the work is the point, not a limitation
+  return kind === 'harrier'
+    ? 0.9
+    : kind === 'sloop'
+      ? 0.7
+      : kind === 'galleon'
+        ? 0.35
+        : kind === 'bastion'
+          ? 0.6
+          : kind === 'mortar'
+            ? 0.55
+            : 0.5
 }
 
 function makePlant(genome: Genome, gen: number): Plant {
@@ -1293,6 +1316,7 @@ export class Game {
       { kind: 'sloop', w: danger > 1.5 ? 2.2 : 0 },
       { kind: 'fireship', w: danger > 2.5 ? Math.min(2.5, 0.8 + (danger - 2.5) * 0.5) : 0 },
       { kind: 'galleon', w: danger > 4 ? Math.min(2.2, 0.7 + (danger - 4) * 0.4) : 0 },
+      { kind: 'mortar', w: danger > 3.5 ? Math.min(1.8, 0.5 + (danger - 3.5) * 0.35) : 0 },
     ]
     return weighted(table, t => t.w).kind
   }
@@ -1312,11 +1336,13 @@ export class Game {
         ? 2
         : kind === 'sloop'
           ? randInt(2, 3)
-          : kind === 'galleon'
-            ? randInt(5, Math.min(5 + Math.ceil(danger / 3), 7))
-            : kind === 'bastion'
-              ? 8
-              : randInt(2, Math.min(2 + Math.ceil(danger / 2), 6))
+          : kind === 'mortar'
+            ? randInt(3, 4)
+            : kind === 'galleon'
+              ? randInt(5, Math.min(5 + Math.ceil(danger / 3), 7))
+              : kind === 'bastion'
+                ? 8
+                : randInt(2, Math.min(2 + Math.ceil(danger / 2), 6))
     const r = 20 + size * 6
     // fireship plating deepens with the waters: bare hulls pop to one normal
     // hit, bronze takes two, iron three — the blast is the same either way
@@ -1326,13 +1352,15 @@ export class Game {
         ? size * (20 + danger * 3.5)
         : kind === 'sloop'
           ? size * (18 + danger * 3)
-          : kind === 'galleon'
-            ? size * (34 + danger * 6)
-            : kind === 'fireship'
-              ? FIRESHIP_HIT * (armor + 1)
-              : kind === 'bastion'
-                ? size * (42 + danger * 7) // honeycomb walls out-tank any galleon
-                : size * (26 + danger * 5)
+          : kind === 'mortar'
+            ? size * (28 + danger * 5.5) // tough enough to survive the approach, not a galleon-tank
+            : kind === 'galleon'
+              ? size * (34 + danger * 6)
+              : kind === 'fireship'
+                ? FIRESHIP_HIT * (armor + 1)
+                : kind === 'bastion'
+                  ? size * (42 + danger * 7) // honeycomb walls out-tank any galleon
+                  : size * (26 + danger * 5)
     // fireships mount no guns — the hull is the shell
     let gunCount =
       kind === 'harrier'
@@ -1341,11 +1369,13 @@ export class Game {
           ? 0
           : kind === 'sloop'
             ? 1 + (danger >= 5 ? 1 : 0)
-            : kind === 'galleon'
-              ? 3 + (size >= 6 ? 1 : 0) + (danger >= 7 ? 1 : 0)
-              : kind === 'bastion'
-                ? 4 + (danger >= 6 ? 1 : 0)
-                : 1 + (size >= 4 ? 1 : 0) + (danger >= 6 && size >= 5 ? 1 : 0) + (opts.home ? 1 : 0)
+            : kind === 'mortar'
+              ? 1 + (danger >= 6 ? 1 : 0) // one heavy siege gun; two once the water gets deep
+              : kind === 'galleon'
+                ? 3 + (size >= 6 ? 1 : 0) + (danger >= 7 ? 1 : 0)
+                : kind === 'bastion'
+                  ? 4 + (danger >= 6 ? 1 : 0)
+                  : 1 + (size >= 4 ? 1 : 0) + (danger >= 6 && size >= 5 ? 1 : 0) + (opts.home ? 1 : 0)
     const guns: EGun[] = []
     // batteries spawn sharing an axis, alternating port/starboard; once hunting,
     // each mount grinds slowly onto you (gunTraverse) while the hull holds range
@@ -1358,10 +1388,15 @@ export class Game {
       const genome = wildGenome((opts.home ? 1.6 : 1) + danger * 0.4, this.regionMul(pos))
       // class doctrine bred into the guns: sloops carry long glass, galleons heavy shot
       if (kind === 'sloop') genome.reach = [Math.random() < 0.25 ? 'spyglass' : 'long', 'long']
-      if (kind === 'galleon') {
-        // titan is region-locked: only galleons raiding titan waters mount the real thing
+      if (kind === 'galleon' || kind === 'mortar') {
+        // titan is region-locked: only ships raiding titan waters mount the real thing
         const titanHere = this.inRegion(pos, regionLockOf('power', 'titan')!)
         genome.power = [titanHere && Math.random() < 0.25 ? 'titan' : 'stout', 'stout']
+      }
+      if (kind === 'mortar') {
+        // a siege gun is built to reach: long glass, same doctrine as a sloop's,
+        // but bolted to a hull that digs in and ranges you instead of fleeing
+        genome.reach = [Math.random() < 0.3 ? 'spyglass' : 'long', 'long']
       }
       if (kind === 'bastion') {
         // the bees breed their own guns, and they breed them well: long glass,
@@ -1374,7 +1409,17 @@ export class Game {
       guns.push({ x: Math.cos(pa) * pd, y: Math.sin(pa) * pd, plant })
     }
     const patience0 =
-      kind === 'sloop' ? 16 : kind === 'galleon' ? 20 : kind === 'fireship' ? 45 : kind === 'bastion' ? 40 : CHASE_PATIENCE
+      kind === 'sloop'
+        ? 16
+        : kind === 'galleon'
+          ? 20
+          : kind === 'mortar'
+            ? 25 // a dug-in gunner doesn't spook easy
+            : kind === 'fireship'
+              ? 45
+              : kind === 'bastion'
+                ? 40
+                : CHASE_PATIENCE
     this.enemies.push({
       pos,
       vel: v(0, 0),
@@ -1396,13 +1441,24 @@ export class Game {
                 ? 100 + Math.min(25, danger * 3)
                 : kind === 'sloop'
                   ? Math.min(88, 55 + danger * 3)
-                  : kind === 'galleon'
-                    ? Math.min(46, 30 + danger * 1.5)
-                    : Math.min(80, 40 + danger * 3 + rand(10))),
+                  : kind === 'mortar'
+                    ? Math.min(42, 24 + danger * 1.3) // slow to reposition — close on it and it stays closed on
+                    : kind === 'galleon'
+                      ? Math.min(46, 30 + danger * 1.5)
+                      : Math.min(80, 40 + danger * 3 + rand(10))),
       mode: 'roam',
       noticeT: 0,
       noticeD: 0,
-      aggroR: kind === 'harrier' ? 380 : kind === 'sloop' ? 430 : kind === 'fireship' ? 400 : kind === 'bastion' ? 640 : AGGRO_R,
+      aggroR:
+        kind === 'harrier'
+          ? 380
+          : kind === 'sloop' || kind === 'mortar'
+            ? 430
+            : kind === 'fireship'
+              ? 400
+              : kind === 'bastion'
+                ? 640
+                : AGGRO_R,
       deaggroR: baseDeaggro(kind),
       wanderA: rand(Math.PI * 2),
       wanderT: rand(2, 6),
@@ -1720,9 +1776,7 @@ export class Game {
         // is no longer helpless. Roamers don't track: sneaking past stays a play
         if (e.kind === 'bastion') {
           // bee gunners pick their own fights: any raider in reach comes first,
-          // the player only once the hive is crossed. Unlike ship mortars they
-          // RANGE IN — cranking elevation walks the reticule short of full reach,
-          // and they lead a moving hull to where the shell will actually land
+          // the player only once the hive is crossed
           const maxR = p.pheno.range
           const minR = maxR * 0.5
           let prey: EnemyShip | null = null
@@ -1738,36 +1792,30 @@ export class Game {
           const atWar = e.mode === 'hunt' && !this.over
           let want: Vec | null = null
           if (prey) {
-            // intercept: where the prey will be when a shell fired now comes
-            // down. Flight time depends on the drop distance, which depends on
-            // the intercept point — a few fixed-point rounds converge the two
-            let ft = clamp(dist(from, prey.pos), minR, maxR) / 200
-            for (let it = 0; it < 3; it++) {
-              want = v(prey.pos.x + prey.vel.x * ft, prey.pos.y + prey.vel.y * ft)
-              ft = clamp(dist(from, want), minR, maxR) / 200
-            }
+            want = this.leadIntercept(from, prey.pos, prey.vel, minR, maxR)
           } else if (atWar) {
             want = v(past.x, past.y)
           }
-          if (want) {
-            const wantA = Math.atan2(want.y - from.y, want.x - from.x)
-            const tr = gunTraverse(e.kind) * dt
-            p.aim += clamp(angleDiff(wantA, p.aim), -tr, tr)
-            const wantE = clamp(dist(from, want) / maxR, 0.5, 1)
-            const cur = p.elev ?? 1
-            p.elev = cur + clamp(wantE - cur, -ELEV_RATE * dt, ELEV_RATE * dt)
-          }
-          if (p.cooldown <= 0 && want) {
-            const dropR = maxR * (p.elev ?? 1)
-            const drop = v(from.x + Math.cos(p.aim) * dropR, from.y + Math.sin(p.aim) * dropR)
-            const covers = prey
-              ? dist(drop, want) < prey.r + SPLASH * 0.5
-              : this.onHull(drop, SPLASH * 0.5)
-            if (covers) {
-              this.enemyFire(e, p, from)
-              p.cooldown = p.pheno.period * 1.1 * (e.chillT > 0 ? 1.5 : 1) * rand(0.9, 1.15)
-            }
-          }
+          this.rangeInFire(
+            e,
+            p,
+            from,
+            want,
+            drop => (prey ? dist(drop, want!) < prey.r + SPLASH * 0.5 : this.onHull(drop, SPLASH * 0.5)),
+            dt
+          )
+          continue
+        }
+        if (e.kind === 'mortar') {
+          // a siege gun doesn't stand and hope, or flee and hope: it RANGES YOU
+          // IN for real — cranking elevation walks the reticule short of full
+          // reach, and it leads your course to where the shell will actually
+          // land. Only ever targets you, and only once it's got a slot
+          const maxR = p.pheno.range
+          const minR = maxR * 0.5
+          const atWar = e.mode === 'hunt' && e.engaged && !this.over
+          const want = atWar ? this.leadIntercept(from, this.ship.pos, this.ship.vel, minR, maxR) : null
+          this.rangeInFire(e, p, from, want, drop => this.onHull(drop, SPLASH * 0.5), dt)
           continue
         }
         if (e.mode === 'hunt' && !this.over) {
@@ -1796,6 +1844,44 @@ export class Game {
     // a nest whose pod drifted out of the world re-arms for the next visit
     for (const p of this.activePois) {
       if (p.kind === 'nest' && p.nestUp && !p.done && !this.enemies.some(e => e.home === p)) p.nestUp = false
+    }
+  }
+
+  /** fixed-point converge a shell's flight time against a moving target's
+   *  intercept point — flight time depends on the drop distance, which
+   *  depends on the intercept point, so a few rounds converge the two.
+   *  Shared by anything that RANGES IN instead of firing dumb along its aim */
+  private leadIntercept(from: Vec, targetPos: Vec, targetVel: Vec, minR: number, maxR: number): Vec {
+    let ft = clamp(dist(from, targetPos), minR, maxR) / 200
+    let want = targetPos
+    for (let it = 0; it < 3; it++) {
+      want = v(targetPos.x + targetVel.x * ft, targetPos.y + targetVel.y * ft)
+      ft = clamp(dist(from, want), minR, maxR) / 200
+    }
+    return want
+  }
+
+  /** crank elevation and traverse toward `want`, firing once the drop point
+   *  actually covers it (per the caller's `covers` test) — the doctrine
+   *  bastions and mortars share instead of holding a fixed reach and firing
+   *  dumb along whatever the aim happens to already be pointed */
+  private rangeInFire(e: EnemyShip, p: Plant, from: Vec, want: Vec | null, covers: (drop: Vec) => boolean, dt: number) {
+    const maxR = p.pheno.range
+    if (want) {
+      const wantA = Math.atan2(want.y - from.y, want.x - from.x)
+      const tr = gunTraverse(e.kind) * dt
+      p.aim += clamp(angleDiff(wantA, p.aim), -tr, tr)
+      const wantE = clamp(dist(from, want) / maxR, 0.5, 1)
+      const cur = p.elev ?? 1
+      p.elev = cur + clamp(wantE - cur, -ELEV_RATE * dt, ELEV_RATE * dt)
+    }
+    if (p.cooldown <= 0 && want) {
+      const dropR = maxR * (p.elev ?? 1)
+      const drop = v(from.x + Math.cos(p.aim) * dropR, from.y + Math.sin(p.aim) * dropR)
+      if (covers(drop)) {
+        this.enemyFire(e, p, from)
+        p.cooldown = p.pheno.period * 1.1 * (e.chillT > 0 ? 1.5 : 1) * rand(0.9, 1.15)
+      }
     }
   }
 

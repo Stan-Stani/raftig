@@ -598,6 +598,17 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
       ctx.arc(bx * e.r, 0, 3.2, 0, Math.PI * 2)
       ctx.fill()
     }
+  } else if (e.kind === 'mortar') {
+    // low and broad — a gun-barge built to sit still and take hits, not run
+    drawHull(ctx, e.r * 1.05, e.r * 1.05, frac, true, e.burnT)
+    // a squat brass turret amidships — the "it's cranking elevation" tell
+    ctx.fillStyle = '#5a4a30'
+    ctx.beginPath()
+    ctx.arc(0, 0, e.r * 0.5, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = '#c9a24b'
+    ctx.lineWidth = 2
+    ctx.stroke()
   } else {
     drawHull(ctx, e.r * 1.2, e.r * 0.8, frac, true, e.burnT)
   }
@@ -625,18 +636,13 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
     const p = g.gunPos(e, gun)
     drawPot(ctx, p.x, p.y)
     // raider mortars play by your rules: the red ring is where this gun's shells
-    // burst — bright when a hunting gun is loaded, faint while it reloads or roams
+    // burst — bright when a hunting gun is loaded, faint while it reloads or roams.
+    // A gun that ranges in (mortars, like bastions) has its ring pulled short of
+    // full reach by its cranked elevation; everyone else's elev stays unset (×1)
     const a = gun.plant.aim
+    const rr = gun.plant.pheno.range * (gun.plant.elev ?? 1)
     drawAim(ctx, p.x, p.y - 12, a, false, false, t, '255,105,90')
-    drawDropRing(
-      ctx,
-      p.x + Math.cos(a) * gun.plant.pheno.range,
-      p.y + Math.sin(a) * gun.plant.pheno.range,
-      SPLASH,
-      e.mode === 'hunt' && gun.plant.cooldown <= 0,
-      t,
-      '255,105,90'
-    )
+    drawDropRing(ctx, p.x + Math.cos(a) * rr, p.y + Math.sin(a) * rr, SPLASH, e.mode === 'hunt' && gun.plant.cooldown <= 0, t, '255,105,90')
     drawPlant(ctx, p.x, p.y, gun.plant, true, t)
   }
   // harriers fly a red pennant — the fast ones that row through any wind
