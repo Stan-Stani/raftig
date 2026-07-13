@@ -1966,6 +1966,10 @@ export class Game {
           if (b.element === 'ember') p.burnT = 3
           if (b.element === 'frost') this.chillT = 2.5
           if (b.element === 'venom') p.poisonT = 4
+          // a hit flower shreds leaves right at the mount, on top of the
+          // generic spark burst below — that's the tell for "that one got hit"
+          // versus a shell that only rattled the hull
+          for (let i = 0; i < 7; i++) this.shedLeaf(this.mountPos(m))
         }
       }
       if (this.onHull(at, splash * 0.5)) {
