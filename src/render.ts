@@ -1126,7 +1126,10 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
     ctx.fillStyle = '#e8f1f5'
     ctx.textAlign = 'center'
     ctx.font = 'bold 28px ui-monospace, monospace'
-    ctx.fillText('paused — P to resume', w / 2, h / 2)
+    ctx.fillText('paused — P or Esc to resume', w / 2, h / 2 - 40)
+    ctx.fillStyle = '#9fb8c8'
+    ctx.font = '14px ui-monospace, monospace'
+    CONTROL_LINES.forEach((l, i) => ctx.fillText(l, w / 2, h / 2 + i * 22))
   }
   if (g.over) drawGameOver(ctx, g, w, h, t)
 }
@@ -1695,6 +1698,15 @@ function rumorRecap(g: Game): string[] {
   })
 }
 
+/** the controls summary — shown in full on the start screen, and again
+ *  (that's the whole point) on the pause screen so it's never more than
+ *  one key away */
+const CONTROL_LINES = [
+  'A/D — helm · W — sheet in · S — back water · SPACE — FIRE guns · Z/X — gun range',
+  '1–2 — tools · Q/E — cycle seed · B — boil 1🪵 → 2💧 · U — refit',
+  'T — trade/parley · F — breed (port/hive/boat) · I — suggest something · P/Esc — pause · H — help',
+]
+
 function drawHelp(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number) {
   ctx.fillStyle = 'rgba(2,12,20,0.82)'
   ctx.fillRect(0, 0, w, h)
@@ -1707,8 +1719,7 @@ function drawHelp(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number) 
   ctx.fillText('a raft roguelike where your garden is the gun deck', w / 2, h * 0.16 + 28)
 
   const lines = [
-    'A/D — helm · W — sheet in · S — back water · SPACE — FIRE guns · Z/X — gun range · 1–2 tools',
-    'B — boil 1🪵 → 2💧 · U — refit · T — trade/parley · F — breed (port/hive/boat) · P pause · H help',
+    ...CONTROL_LINES,
     '',
     'RUMORS — some genes the sea gates by compass and depth: mutation never mints them,',
     'you sail to their waters and catch them wild. portmasters trade the gossip:',

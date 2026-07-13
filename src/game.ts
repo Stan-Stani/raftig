@@ -2551,6 +2551,7 @@ export class Game {
         if (!this.over) this.feedbackOpen = true
         break
       case 'KeyP':
+      case 'Escape':
         if (!this.over) this.paused = !this.paused
         break
       case 'KeyM':
