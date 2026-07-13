@@ -273,7 +273,8 @@ export interface Bullet {
   owner?: EnemyShip
   /** fired by a hive garrison: hits raiders too, and taints their salvage */
   bee?: boolean
-  /** inherited (homing quirk): shell curves toward the nearest raider in flight */
+  /** inherited (homing quirk): a friendly shell curves toward the nearest
+   *  raider in flight; an enemy one curves toward you */
   homing?: boolean
   /** firing heading, so an airburst's cluster radiates from the burst point */
   heading?: number
@@ -1180,14 +1181,26 @@ export class Game {
   }
 
   /** launch a plant's fanned volley of mortar shells from `from` along `heading`.
-   *  Each shell bursts at the plant's bred reach; homing/airburst ride along.
-   *  `muzzle` lifts the spawn to the deck; airburst cluster sub-shells pass
-   *  muzzle=false so they radiate from the burst point at ground level. */
-  private fireVolley(from: Vec, heading: number, p: Plant, friendly: boolean, dmgScale: number, muzzle: boolean) {
-    const speed = 260 // shells hang in the air — lead a moving target
+   *  Each shell bursts at the plant's bred reach; homing/airburst/pierce/leech
+   *  all ride along regardless of who's firing — an enemy gun's genome is just
+   *  as live as yours. `muzzle` lifts the spawn to the deck; airburst cluster
+   *  sub-shells pass muzzle=false so they radiate from the burst point at
+   *  ground level. `opts` carries the enemy-only extras: slower shell speed,
+   *  the firing ship (patience-on-landed-hit), and the hive-taint flag. */
+  private fireVolley(
+    from: Vec,
+    heading: number,
+    p: Plant,
+    friendly: boolean,
+    dmgScale: number,
+    muzzle: boolean,
+    opts: { speed?: number; owner?: EnemyShip; bee?: boolean } = {}
+  ) {
+    const speed = opts.speed ?? 260 // shells hang in the air — lead a moving target
     const homing = p.pheno.quirk === 'homing'
-    // the reach gene is the rangefinder; friendly guns fire at the battery elevation
-    const reach = friendly ? this.plantRange(p) : p.pheno.range
+    // the reach gene is the rangefinder; friendly guns fire at the battery
+    // elevation, enemy guns at their own (bastion gunners crank theirs in)
+    const reach = friendly ? this.plantRange(p) : p.pheno.range * (p.elev ?? 1)
     for (let i = 0; i < p.pheno.shots; i++) {
       const a = heading + (i - (p.pheno.shots - 1) / 2) * p.pheno.spread
       const drop = v(from.x + Math.cos(a) * reach + rand(-7, 7), from.y + Math.sin(a) * reach + rand(-7, 7))
@@ -1208,6 +1221,8 @@ export class Game {
         homing,
         heading: a,
         airburst: muzzle && p.pheno.airburst, // only the primary shell airbursts
+        owner: opts.owner,
+        bee: opts.bee,
       })
     }
   }
@@ -1846,29 +1861,15 @@ export class Game {
   }
 
   private enemyFire(e: EnemyShip, p: Plant, from: Vec) {
-    const speed = 200 // slower shells than yours — keep way on and slip the drop
-    // the mount lobs dead along its current heading, bursting at the bred reach
-    // (scaled by elevation on fortress guns) — no homing: read the red rings
-    // and don't be there when it lands
+    // the mount lobs along its current heading, bursting at the bred reach
+    // (scaled by elevation on fortress guns) — the bred quirk/barrel/burst ride
+    // along too, same machinery as your own guns: a raider can homing-snipe you
+    // or airburst a cluster same as you can on them
     // bee fortress gunners are drilled steady; ship crews throw looser shots
     const jitter = e.kind === 'bastion' ? 0.015 : 0.05
-    const scatter = e.kind === 'bastion' ? 4 : 8
     const a = p.aim + rand(-jitter, jitter)
-    const reach = p.pheno.range * (p.elev ?? 1)
-    const drop = v(from.x + Math.cos(a) * reach + rand(-scatter, scatter), from.y + Math.sin(a) * reach + rand(-scatter, scatter))
-    const pos = v(from.x, from.y - 16)
-    const flightT = dist(from, drop) / speed
-    this.bullets.push({
-      pos,
-      vel: v((drop.x - pos.x) / flightT, (drop.y - pos.y) / flightT),
-      dmg: p.pheno.dmg * (0.75 + e.danger * 0.06),
-      element: p.pheno.element,
-      quirk: 'none',
-      friendly: false,
-      life: flightT,
-      drop,
-      flightT,
-      splash: SPLASH,
+    this.fireVolley(from, a, p, false, 0.75 + e.danger * 0.06, true, {
+      speed: 200, // slower shells than yours — keep way on and slip the drop
       owner: e,
       bee: e.kind === 'bastion',
     })
@@ -1954,8 +1955,9 @@ export class Game {
   private updateBullets(dt: number) {
     const dead = new Set<Bullet>()
     for (const b of this.bullets) {
-      // homing: steer a friendly shell toward the nearest raider in flight,
-      // and let it burst the moment it reaches one
+      // homing: a friendly shell curves toward the nearest raider in flight,
+      // an enemy one curves toward you — either way it bursts the moment it
+      // reaches its mark
       if (b.homing && b.friendly && this.enemies.length) {
         let best: EnemyShip | null = null
         let bd = Infinity
@@ -1968,15 +1970,12 @@ export class Game {
           }
         }
         if (best) {
-          const speed = Math.hypot(b.vel.x, b.vel.y) || 1
-          const cur = Math.atan2(b.vel.y, b.vel.x)
-          const want = Math.atan2(best.pos.y - b.pos.y, best.pos.x - b.pos.x)
-          const na = cur + clamp(angleDiff(want, cur), -3.2 * dt, 3.2 * dt)
-          b.vel.x = Math.cos(na) * speed
-          b.vel.y = Math.sin(na) * speed
-          b.drop = v(b.pos.x + b.vel.x * b.life, b.pos.y + b.vel.y * b.life)
+          this.steerHoming(b, best.pos, dt)
           if (bd < best.r + 14) b.life = 0
         }
+      } else if (b.homing && !b.friendly) {
+        const d = this.steerHoming(b, this.ship.pos, dt)
+        if (d < this.tierDef().len * 0.7) b.life = 0
       }
       b.life -= dt
       if (b.life <= 0) {
@@ -1988,6 +1987,20 @@ export class Game {
       b.pos.y += b.vel.y * dt
     }
     this.bullets = this.bullets.filter(b => !dead.has(b))
+  }
+
+  /** bend a homing shell's flight toward `target`, redrawing its drop point to
+   *  match — returns the current distance so the caller can decide when it's
+   *  close enough to detonate early */
+  private steerHoming(b: Bullet, target: Vec, dt: number): number {
+    const speed = Math.hypot(b.vel.x, b.vel.y) || 1
+    const cur = Math.atan2(b.vel.y, b.vel.x)
+    const want = Math.atan2(target.y - b.pos.y, target.x - b.pos.x)
+    const na = cur + clamp(angleDiff(want, cur), -3.2 * dt, 3.2 * dt)
+    b.vel.x = Math.cos(na) * speed
+    b.vel.y = Math.sin(na) * speed
+    b.drop = v(b.pos.x + b.vel.x * b.life, b.pos.y + b.vel.y * b.life)
+    return dist(b.pos, target)
   }
 
   /** a shell comes down: splash damage to every hull and gun near the drop point */
@@ -2011,6 +2024,8 @@ export class Game {
           // generic spark burst below — that's the tell for "that one got hit"
           // versus a shell that only rattled the hull
           for (let i = 0; i < 7; i++) this.shedLeaf(this.mountPos(m))
+          // a leech-bred enemy gun drinks off its own hit same as yours would
+          if (b.quirk === 'leech' && b.src) this.leechProc(b.src, at)
         }
       }
       if (this.onHull(at, splash * 0.5)) {
@@ -2021,6 +2036,7 @@ export class Game {
         if (b.element === 'frost') this.chillT = 2.5
         this.shake = Math.min(8, this.shake + 1.5)
         if (this.ship.hp <= 0) this.gameOver()
+        if (b.quirk === 'leech' && b.src) this.leechProc(b.src, at)
       }
       // hive artillery hits raider hulls AND their mounted guns too — a stung
       // ship pays no salvage until its crew fully patches up (the bees claim
@@ -2057,6 +2073,9 @@ export class Game {
       } else {
         this.puff(at, '#bfe3f2', 5)
       }
+      // airburst locus: same as yours, the shell comes apart and scatters a
+      // cluster of sub-shells at the drop point
+      if (b.airburst && b.src) this.airburstCluster(b.src, at, false)
       return
     }
     for (const e of this.enemies) {
