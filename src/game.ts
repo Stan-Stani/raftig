@@ -58,7 +58,7 @@ export const HUNT_CAP = 3 // ships in full ⚔️ at once — the rest shadow ou
 export const DANGER_SCALE = 550 // px from home waters per +1 danger
 export const SLOOP_BOLD_FLEE_HP = 0.4 // a bold sloop only sheets away once hurt this badly
 export const SLOOP_KITE_PATIENCE_MULT = 1.6 // running scared burns patience faster than trading shots
-export const SLOOP_BOLD_STATION = 240 // a bold sloop brawls at this range, not its full bred glass
+export const SLOOP_BOLD_STATION = 400 // a bold sloop brawls at this range, not its full bred glass
 
 /** the named danger bands — geography the crew can point at */
 export function seaName(danger: number): string {
