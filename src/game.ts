@@ -58,6 +58,7 @@ export const HUNT_CAP = 3 // ships in full ⚔️ at once — the rest shadow ou
 export const DANGER_SCALE = 550 // px from home waters per +1 danger
 export const SLOOP_BOLD_FLEE_HP = 0.4 // a bold sloop only sheets away once hurt this badly
 export const SLOOP_KITE_PATIENCE_MULT = 1.6 // running scared burns patience faster than trading shots
+export const SLOOP_BOLD_STATION = 240 // a bold sloop brawls at this range, not its full bred glass
 
 /** the named danger bands — geography the crew can point at */
 export function seaName(danger: number): string {
@@ -1812,12 +1813,19 @@ export class Game {
   /** the gun whose firing station costs the least sailing — fixed mortars can't
    *  traverse, so the ship picks the battery whose burst ring is cheapest to walk
    *  onto you: engaged hunters station at that gun's bred reach (a spyglass line
-   *  is a proper artillery ship), shadowers hold off at 430 */
+   *  is a proper artillery ship), shadowers hold off at 430. A bold sloop is the
+   *  one exception: "stands and fights" only means something if the range it
+   *  fights at is one you can actually close — so it holds a brawling distance,
+   *  not the full glass a risk-averse sloop keeps you at */
   private bestGun(e: EnemyShip, center: Vec, engaged: boolean): { p: Plant; fp: Vec } | null {
     let best: { p: Plant; fp: Vec; d: number } | null = null
     for (const g of e.guns) {
       const p = g.plant
-      const standoff = engaged ? p.pheno.range : 430
+      const standoff = !engaged
+        ? 430
+        : e.kind === 'sloop' && !e.riskAverse
+          ? Math.min(p.pheno.range, SLOOP_BOLD_STATION)
+          : p.pheno.range
       const fp = v(center.x - Math.cos(p.aim) * standoff - g.x, center.y - Math.sin(p.aim) * standoff - g.y)
       const d = dist(e.pos, fp)
       if (!best || d < best.d) best = { p, fp, d }
