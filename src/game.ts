@@ -2014,6 +2014,8 @@ export class Game {
           if (b.element === 'frost') e.chillT = 2.5
           if (b.element === 'venom') p.poisonT = 4
           if (b.quirk === 'leech' && b.src) this.leechProc(b.src, at)
+          // same "that flower got hit" tell as your own mounts, right on their gun
+          for (let i = 0; i < 7; i++) this.shedLeaf(this.gunPos(e, g))
           if (p.hp <= 0) {
             this.killEnemyGun(e, g)
             this.checkScuttle(e)
