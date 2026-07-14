@@ -63,6 +63,8 @@ export const POD_WAKE_R = 340 // committing raiders stir roaming neighbours this
 export const CHASE_PATIENCE = 13 // seconds a hunter presses before you're not worth the powder
 export const HUNT_CAP = 3 // ships in full ⚔️ at once — the rest shadow outside gun range
 export const ENEMY_WAKE_S = 0.7 // seconds of course an enemy hull keeps for its (LOD) wake
+export const GARRISON_STANDDOWN = 10 // seconds a hive holds its walls after the last threat leaves, then reverts to bees
+export const GARRISON_HOLD_R = 1000 // a provoked hive keeps its garrison manned while the player is within this
 export const DANGER_SCALE = 550 // px from home waters per +1 danger
 export const SLOOP_BOLD_FLEE_HP = 0.4 // a bold sloop only sheets away once hurt this badly
 export const SLOOP_KITE_PATIENCE_MULT = 1.6 // running scared burns patience faster than trading shots
@@ -240,6 +242,9 @@ export interface EnemyShip {
   home?: POI
   /** short course history for its wake — lazily created once it's under way */
   trail?: { x: number; y: number; vx: number; vy: number; t: number }[]
+  /** a hive garrison counts this down once the threat that raised it (raiders, or
+   *  the player it has a grudge with) has left; at zero it stands back down to bees */
+  retreatT?: number
   /** holds one of the HUNT_CAP attack slots — shadowers wait outside gun range */
   engaged?: boolean
   /** mid-scuttle guard — the hull is going down, don't re-enter */
@@ -714,12 +719,25 @@ export class Game {
       if (p.kind === 'nest' && !p.nestUp && d < 1250) this.spawnNest(p)
       if (p.kind === 'calm' && !p.seeded && d < POI_SIGHT.calm) this.seedCalm(p)
       // a hive mans its walls only when there's actual shooting to do: a raider
-      // sail prowling its waters (below), or the player firing on it — the first
-      // burst calls provokeHive, which raises the garrison. Sailing into range no
-      // longer arms it: a standing grudge or the wider bee war doesn't turn the
-      // swarm into gun-flowers until a shot is actually fired
-      if (p.kind === 'hive' && this.enemies.some(e => e.kind !== 'bastion' && !e.sunk && dist(e.pos, p.pos) < 800)) {
-        this.garrison(p)
+      // sail prowling its waters, or the player firing on it — the first burst
+      // calls provokeHive, which raises the garrison. Sailing into range no longer
+      // arms it: a standing grudge or the wider bee war doesn't turn the swarm into
+      // gun-flowers until a shot is actually fired. Once raised, the walls stand
+      // back down GARRISON_STANDDOWN seconds after that threat clears
+      if (p.kind === 'hive') {
+        const raiderNear = this.enemies.some(e => e.kind !== 'bastion' && !e.sunk && dist(e.pos, p.pos) < 800)
+        if (raiderNear) this.garrison(p)
+        const bastion = this.hiveGarrison(p)
+        if (bastion) {
+          // still threatened while raiders prowl, or (for a hive you provoked) while
+          // you linger in range — that keeps the timer topped up; otherwise it drains
+          const threatened = raiderNear || (p.hostile && d < GARRISON_HOLD_R)
+          bastion.retreatT = threatened ? GARRISON_STANDDOWN : (bastion.retreatT ?? GARRISON_STANDDOWN) - dt
+          if (bastion.retreatT <= 0) {
+            const i = this.enemies.indexOf(bastion)
+            if (i >= 0) this.enemies.splice(i, 1) // retreat, not death — no loot, no kill
+          }
+        }
       }
     }
 
