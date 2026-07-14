@@ -53,7 +53,12 @@ function initFeedback(game: Game) {
       if (wasOpen) {
         msg.textContent = ''
         msg.style.color = ''
-        title.focus()
+        // only steal focus when the form was opened on purpose (I) — when it's
+        // just along for the ride on the pause screen, autofocusing meant a
+        // held/repeating P (or a fast second tap) typed straight into the title
+        // field once it grabbed focus, since the typing-guard lets real input
+        // through for whatever element is currently focused
+        if (game.feedbackOpen) title.focus()
       }
     }
     modal.classList.toggle('lowered', game.paused)
