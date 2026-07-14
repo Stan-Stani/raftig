@@ -15,21 +15,33 @@
         background: rgba(4, 16, 26, 0.72);
         align-items: center; justify-content: center;
         font: 14px/1.5 ui-monospace, monospace;
+        overflow-y: auto;
+        box-sizing: border-box;
+        padding: 16px 0;
       }
       #feedback.open { display: flex; }
       /* paused screen already draws its own dim + controls on the canvas —
-         the modal just sits below that, so drop the backdrop and push down */
+         the modal just sits below that, so drop the backdrop and push down.
+         The outer container scrolls (overflow-y: auto above) so on short
+         windows, where the pushed-down form runs past the bottom edge, it's
+         still reachable by scrolling instead of being stuck off-screen. */
       #feedback.lowered {
         background: transparent;
         align-items: flex-start;
-        padding-top: 64vh;
+        padding-top: 58vh;
       }
       #feedback form {
         width: min(440px, 90vw);
         background: #0a1c2b; color: #cfe7f2;
         border: 1px solid rgba(255,255,255,0.15); border-radius: 10px;
         padding: 18px 20px;
+        box-sizing: border-box;
+        flex-shrink: 0;
       }
+      #feedback.lowered form { padding: 12px 16px; }
+      #feedback.lowered h2 { font-size: 15px; }
+      #feedback.lowered p.sub { margin-bottom: 8px; }
+      #feedback.lowered label { margin: 6px 0 3px; }
       #feedback h2 { margin: 0 0 3px; color: #ffd257; font-size: 17px; }
       #feedback p.sub { margin: 0 0 14px; color: #7d97a8; font-size: 12.5px; }
       #feedback label { display: block; margin: 10px 0 4px; color: #9fb8c8; }
@@ -39,6 +51,7 @@
         font: inherit;
       }
       #feedback textarea { min-height: 64px; resize: vertical; }
+      #feedback.lowered textarea { min-height: 40px; }
       #feedback .row { display: flex; gap: 10px; align-items: center; margin-top: 14px; }
       #feedback button {
         background: #ffd257; color: #06141f; border: none; border-radius: 6px;
