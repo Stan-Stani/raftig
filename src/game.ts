@@ -457,6 +457,11 @@ export class Game {
   chillT = 0 // frost debuff on our ship
   shake = 0
   cam = v(0, 0)
+  /** sense-of-speed camera: eases back (zoom < 1) and leads forward as way comes
+   *  on, so the sea rushes past instead of crawling. Purely visual — g.cam stays
+   *  on the hull for gameplay (POI reach, danger bands, aiming) */
+  camZoom = 1
+  camLead = v(0, 0)
   hover = v(0, 0) // world coords of pointer
   hoverScreen = v(0, 0)
   hoverInfo: HoverInfo | null = null
@@ -530,6 +535,8 @@ export class Game {
     this.rumors = new Set()
     this.elev = 1
     this.leechToastT = -9
+    this.camZoom = 1
+    this.camLead = v(0, 0)
     this.shipTrail = []
     this.chillT = 0
     this.shake = 0
@@ -582,7 +589,11 @@ export class Game {
   }
 
   screenToWorld(mx: number, my: number): Vec {
-    return v(this.cam.x + mx - this.vw / 2, this.cam.y + my - this.vh / 2)
+    // invert the render camera (zoom + forward lead) so aiming stays true
+    return v(
+      this.cam.x + this.camLead.x + (mx - this.vw / 2) / this.camZoom,
+      this.cam.y + this.camLead.y + (my - this.vh / 2) / this.camZoom
+    )
   }
 
   /** difficulty of the waters at p — grows with distance from home (the spawn point) */
@@ -947,6 +958,16 @@ export class Game {
 
   private updateFx(dt: number) {
     this.shake = Math.max(0, this.shake - this.shake * 5 * dt - 2 * dt)
+    // sense of speed: ease the camera back and lead it forward as way comes on
+    const sp = Math.hypot(this.ship.vel.x, this.ship.vel.y)
+    const s01 = clamp((sp - 40) / 180, 0, 1) // 0 below ~40px/s, full by ~220
+    const zoomTarget = 1 - 0.11 * s01 // pull back up to 11%
+    this.camZoom += (zoomTarget - this.camZoom) * Math.min(1, 2.5 * dt)
+    const lx = sp > 1 ? this.ship.vel.x / sp : 0
+    const ly = sp > 1 ? this.ship.vel.y / sp : 0
+    const lead = 80 * s01 // look this far ahead of the bow at speed
+    this.camLead.x += (lx * lead - this.camLead.x) * Math.min(1, 1.8 * dt)
+    this.camLead.y += (ly * lead - this.camLead.y) * Math.min(1, 1.8 * dt)
     this.banner.t = Math.max(0, this.banner.t - dt)
     for (const p of this.particles) {
       p.pos.x += p.vel.x * dt

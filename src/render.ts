@@ -44,13 +44,18 @@ export function render(ctx: CanvasRenderingContext2D, g: Game) {
   const swayY = Math.sin(t * 0.27 + 1.7) * 1.2
 
   ctx.save()
-  ctx.translate(w / 2 - g.cam.x + shakeX + swayX, h / 2 - g.cam.y + shakeY + swayY)
+  // the camera pulls back (zoom < 1) and leads the bow at speed — see g.camZoom /
+  // g.camLead. Zoom around screen centre, then place the (lead-shifted) hull
+  ctx.translate(w / 2, h / 2)
+  ctx.scale(g.camZoom, g.camZoom)
+  ctx.translate(-g.cam.x + shakeX + swayX - g.camLead.x, -g.cam.y + shakeY + swayY - g.camLead.y)
 
   drawWaves(ctx, g, w, h, t)
   drawWake(ctx, g.shipTrail, g.tierDef().beam, t)
   // every moving hull trails its own wake — a lighter, shorter, haze-less LOD
   // version so a full fleet stays cheap (bastions sit still and carry no trail)
   for (const e of g.enemies) if (e.trail) drawWake(ctx, e.trail, e.r * 0.7, t, ENEMY_WAKE)
+  drawSpeedStreaks(ctx, g)
   for (const p of g.activePois) if (p.kind === 'calm') drawCalm(ctx, p, t)
   for (const p of g.activePois) if (p.kind !== 'calm') drawPOI(ctx, g, p, t)
   for (const l of g.loot) drawLoot(ctx, l.pos, l.kind, l.phase, l.ttl)
@@ -141,6 +146,52 @@ function drawWaves(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number,
     }
   }
   ctx.globalAlpha = 1
+}
+
+/** foam streaks that rush past the hull as way comes on — a sense-of-speed cue,
+ *  not real foam. Hash-placed on a fixed world grid so each sits still in the
+ *  water and streams past as the ship drives through, but only in a close band
+ *  hugging the hull (not the whole screen). Raked backward along the EASED travel
+ *  direction (camLead), so they don't snap around when the hull turns. Fade in
+ *  past ~80px/s and out at the band's inner and outer rim. */
+function drawSpeedStreaks(ctx: CanvasRenderingContext2D, g: Game) {
+  const sp = Math.hypot(g.ship.vel.x, g.ship.vel.y)
+  const s01 = Math.max(0, Math.min(1, (sp - 80) / 150)) // in from ~80, full by ~230
+  const lead = Math.hypot(g.camLead.x, g.camLead.y)
+  if (s01 <= 0 || lead < 1) return
+  const vx = g.camLead.x / lead // eased heading — lags turns smoothly, no snap
+  const vy = g.camLead.y / lead
+  const cx = g.ship.pos.x
+  const cy = g.ship.pos.y
+  const cell = 58
+  const inner = 78 // clear of the hull
+  const R = 300 // a close band, not the whole view
+  const gx0 = Math.floor((cx - R) / cell)
+  const gx1 = Math.floor((cx + R) / cell)
+  const gy0 = Math.floor((cy - R) / cell)
+  const gy1 = Math.floor((cy + R) / cell)
+  ctx.strokeStyle = '#e6f3fa'
+  ctx.lineCap = 'round'
+  for (let gx = gx0; gx <= gx1; gx++) {
+    for (let gy = gy0; gy <= gy1; gy++) {
+      const h1 = hash01(gx, gy)
+      if (h1 > 0.5) continue // ~half the cells carry a streak
+      const px = gx * cell + h1 * cell
+      const py = gy * cell + hash01(gy, gx) * cell
+      const d = Math.hypot(px - cx, py - cy)
+      if (d < inner || d > R) continue
+      const band = Math.min(1, (d - inner) / 40) * Math.min(1, (R - d) / 90) // fade at both rims
+      const len = (16 + 44 * s01) * (0.6 + 0.5 * hash01(gx * 1.7, gy * 1.3))
+      ctx.globalAlpha = s01 * band * 0.16 * (0.6 + 0.4 * hash01(gx * 2.3, gy * 0.7))
+      ctx.lineWidth = 1 + s01 * 0.6
+      ctx.beginPath()
+      ctx.moveTo(px, py)
+      ctx.lineTo(px - vx * len, py - vy * len) // rake backward along the eased course
+      ctx.stroke()
+    }
+  }
+  ctx.globalAlpha = 1
+  ctx.lineCap = 'butt'
 }
 
 /** draw a wake straight off a hull's recent course `trail` (each entry a fixed
