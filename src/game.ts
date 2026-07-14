@@ -65,6 +65,8 @@ export const HUNT_CAP = 3 // ships in full ⚔️ at once — the rest shadow ou
 export const ENEMY_WAKE_S = 0.7 // seconds of course an enemy hull keeps for its (LOD) wake
 export const GARRISON_STANDDOWN = 10 // seconds a hive holds its walls after the last threat leaves, then reverts to bees
 export const GARRISON_HOLD_R = 1000 // a provoked hive keeps its garrison manned while the player is within this
+export const BEE_STEP = 2 // danger bands deeper the swarm aims the next mark, past where you just proved yourself
+export const BEE_FIRST_MARK = 2 // bounties you fulfil before the swarm starts pointing you onward
 export const DANGER_SCALE = 550 // px from home waters per +1 danger
 export const SLOOP_BOLD_FLEE_HP = 0.4 // a bold sloop only sheets away once hurt this badly
 export const SLOOP_KITE_PATIENCE_MULT = 1.6 // running scared burns patience faster than trading shots
@@ -445,6 +447,12 @@ export class Game {
   contract: { need: number; got: number; pay: number; hive: POI } | null = null
   /** you broke a hive: every fortress is hostile and no bee pays you again this run */
   beesAngry = false
+  /** the swarm's progression pointer: a richer hive deeper out, marked after a
+   *  bounty and shown with an off-screen compass arrow, so the pollen trail keeps
+   *  drawing you into rougher water. Advances as you reach it */
+  beacon: POI | null = null
+  /** bounties fulfilled this run — gates the first onward pointer (BEE_FIRST_MARK) */
+  bountiesDone = 0
 
   firing = false // set by the fire key, consumed each frame → one broadside per press
   /** battery elevation, ELEV_MIN..1 — scales every gun's burst distance; Z lowers, X raises */
@@ -494,6 +502,8 @@ export class Game {
     this.water = 6
     this.pollen = POLLEN_START
     this.contract = null
+    this.beacon = null
+    this.bountiesDone = 0
     this.beesAngry = false
     // the sea re-deals its gene regions every run — rumors are the only map
     randomizeRegions()
@@ -906,6 +916,68 @@ export class Game {
     this.contract = { need, got: 0, pay, hive: p }
     this.toastAt(p.pos, `🐝 bounty struck: sink ${need} raiders → ${pay}🌼`, '#ffd257')
     sfx('build')
+  }
+
+  /** progression: after a bounty, point the player to a richer hive deeper out —
+   *  the first mark once you've proven yourself (BEE_FIRST_MARK bounties), then the
+   *  frontier pushes out each time you fulfil a bounty at (or past) the current
+   *  mark. A bounty shallower than the standing mark leaves it be (returns false,
+   *  so the caller shows the plain payout banner). */
+  private markNextHive(hive: POI, pay: number): boolean {
+    const hiveDanger = this.dangerAt(hive.pos)
+    const alive = this.beacon != null && !this.beacon.done
+    const beaconDanger = alive ? this.dangerAt(this.beacon!.pos) : 0
+    if (!alive && this.bountiesDone < BEE_FIRST_MARK) return false // not yet — earn a couple first
+    if (alive && hiveDanger < beaconDanger - 0.6) return false // haven't reached the mark yet
+    const target = Math.max(hiveDanger, beaconDanger) + BEE_STEP
+    const found = this.findDeeperHive(target)
+    if (!found) return false
+    found.discovered = true
+    this.beacon = found
+    const bearing = Math.atan2(found.pos.y - this.ship.pos.y, found.pos.x - this.ship.pos.x)
+    const lg = Math.round(dist(found.pos, this.ship.pos) / 100)
+    this.banner = {
+      title: '🍯 the swarm points you onward',
+      sub: `${pay}🌼 paid · a richer hive in the ${seaName(this.dangerAt(found.pos))} — bear ${compassWord(bearing)}, ~${lg} leagues`,
+      t: 4.5,
+    }
+    sfx('build')
+    return true
+  }
+
+  /** a still-standing hive whose danger sits as close to `targetDanger` as the map
+   *  allows (and always deeper than the player is now) — the next rung of the pollen
+   *  trail. Hives are sparse, so aim for the target band rather than just "the next
+   *  one out", or the danger would rocket. Scans deterministic cell POIs around the
+   *  ship; only the winner is stored/pinned. */
+  private findDeeperHive(targetDanger: number): POI | null {
+    const targetR = (targetDanger - 1) * DANGER_SCALE
+    const floorR = Math.hypot(this.ship.pos.x, this.ship.pos.y) + 200 // strictly deeper than now
+    const cR = Math.ceil((targetR + 4200) / POI_CELL) // scan out a bit past the target band
+    const scx = Math.round(this.ship.pos.x / POI_CELL)
+    const scy = Math.round(this.ship.pos.y / POI_CELL)
+    let bestKey = ''
+    let bestPoi: POI | null = null
+    let bestScore = Infinity
+    for (let cx = scx - cR; cx <= scx + cR; cx++) {
+      for (let cy = scy - cR; cy <= scy + cR; cy++) {
+        const key = gkey(cx, cy)
+        const poi = this.pois.get(key) ?? cellPOI(cx, cy) // transient unless already charted
+        if (!poi || poi.kind !== 'hive' || poi.done) continue
+        const rr = Math.hypot(poi.pos.x, poi.pos.y)
+        if (rr < Math.max(700, floorR)) continue // must be deeper than the player now
+        // closest to the target band, with a light pull toward nearer ones so the
+        // objective stays reachable when several sit at similar depth
+        const score = Math.abs(rr - targetR) + 0.15 * dist(poi.pos, this.ship.pos)
+        if (score < bestScore) {
+          bestScore = score
+          bestPoi = poi
+          bestKey = key
+        }
+      }
+    }
+    if (bestPoi) this.pois.set(bestKey, bestPoi) // pin the winner so it stays canonical
+    return bestPoi
   }
 
   /** the pollen price of standing a grudge-hive's walls back down — costs
@@ -2089,9 +2161,14 @@ export class Game {
       if (c.got >= c.need) {
         this.pollen += c.pay
         c.hive.bounties++ // repeat business — this hive asks steeper next time
+        this.bountiesDone++
         this.contract = null
-        this.banner = { title: '🐝 bounty fulfilled', sub: `the bees pay ${c.pay}🌼 pollen`, t: 3.5 }
         sfx('breed')
+        // the swarm points you to a richer hive deeper out; if it doesn't advance
+        // the frontier this time, just report the payout as usual
+        if (!this.markNextHive(c.hive, c.pay)) {
+          this.banner = { title: '🐝 bounty fulfilled', sub: `the bees pay ${c.pay}🌼 pollen`, t: 3.5 }
+        }
       } else {
         this.toastAt(e.pos, `🐝 ${c.got}/${c.need}`, '#ffd257')
       }

@@ -1342,6 +1342,7 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
 
   drawWindPill(ctx, g, w)
   if (!g.over) drawPOIMarkers(ctx, g, w, h)
+  if (!g.over) drawBeacon(ctx, g, w, h)
   drawMinimap(ctx, g, h)
 
   // right chips
@@ -1428,11 +1429,11 @@ function drawWindPill(ctx: CanvasRenderingContext2D, g: Game, w: number) {
 function drawPOIMarkers(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number) {
   const inset = 38
   for (const p of g.activePois) {
-    if (p.done) continue
+    if (p.done || p === g.beacon) continue // the beacon draws its own gold marker
     const d = dist(p.pos, g.cam)
     if (d > POI_SIGHT[p.kind]) continue
-    const sx = p.pos.x - g.cam.x + w / 2
-    const sy = p.pos.y - g.cam.y + h / 2
+    const sx = (p.pos.x - g.cam.x - g.camLead.x) * g.camZoom + w / 2
+    const sy = (p.pos.y - g.cam.y - g.camLead.y) * g.camZoom + h / 2
     if (sx > -20 && sx < w + 20 && sy > -20 && sy < h + 20) continue // on screen already
     // clamp toward the screen edge along the sightline
     const dx = sx - w / 2
@@ -1460,6 +1461,65 @@ function drawPOIMarkers(ctx: CanvasRenderingContext2D, g: Game, w: number, h: nu
     ctx.fillText(`${(d / 100).toFixed(1)}lg`, px, py + 27)
     ctx.globalAlpha = 1
   }
+}
+
+/** the swarm's progression pointer: a gold compass badge riding the screen edge
+ *  toward the richer hive it marked (g.beacon), from any distance, so the pollen
+ *  trail always has a heading. Softens to a pulsing ring once its waters are on
+ *  screen; the hive sprite and its own POI marker carry it from there. */
+function drawBeacon(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number) {
+  const b = g.beacon
+  if (!b || b.done) return
+  const sx = (b.pos.x - g.cam.x - g.camLead.x) * g.camZoom + w / 2
+  const sy = (b.pos.y - g.cam.y - g.camLead.y) * g.camZoom + h / 2
+  const d = dist(b.pos, g.ship.pos)
+  const pulse = 0.7 + 0.3 * Math.sin(g.time * 4)
+  if (sx > 44 && sx < w - 44 && sy > 44 && sy < h - 44) {
+    // its waters are on screen — a soft ring to pick it out, no edge badge
+    ctx.strokeStyle = `rgba(255,210,87,${0.25 + 0.2 * Math.sin(g.time * 4)})`
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.arc(sx, sy, 24 + 3 * Math.sin(g.time * 4), 0, Math.PI * 2)
+    ctx.stroke()
+    return
+  }
+  // clamp to the screen edge along the sightline, clear of the HUD furniture
+  const inset = 52
+  const dx = sx - w / 2
+  const dy = sy - h / 2
+  const tx = dx !== 0 ? (w / 2 - inset) / Math.abs(dx) : Infinity
+  const ty = dy !== 0 ? (h / 2 - inset) / Math.abs(dy) : Infinity
+  const k = Math.min(tx, ty)
+  const px = w / 2 + dx * k
+  const py = clamp(h / 2 + dy * k, 92, h - (w / 2 + dx * k < 220 ? 240 : 120))
+  const ang = Math.atan2(dy, dx)
+  ctx.globalAlpha = pulse
+  ctx.fillStyle = 'rgba(4,20,32,0.85)'
+  ctx.beginPath()
+  ctx.arc(px, py, 17, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.strokeStyle = '#ffd257'
+  ctx.lineWidth = 2
+  ctx.stroke()
+  // arrow blade pointing outward toward the hive
+  ctx.save()
+  ctx.translate(px, py)
+  ctx.rotate(ang)
+  ctx.fillStyle = '#ffd257'
+  ctx.beginPath()
+  ctx.moveTo(24, 0)
+  ctx.lineTo(15, -5)
+  ctx.lineTo(15, 5)
+  ctx.closePath()
+  ctx.fill()
+  ctx.restore()
+  ctx.font = '14px serif'
+  ctx.textAlign = 'center'
+  ctx.fillText('🍯', px, py + 5)
+  ctx.font = '10px ui-monospace, monospace'
+  ctx.fillStyle = '#ffd257'
+  ctx.fillText(`${(d / 100).toFixed(0)}lg`, px, py + 28)
+  ctx.globalAlpha = 1
 }
 
 // ---------- minimap ----------
