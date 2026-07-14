@@ -55,6 +55,7 @@ export const NOTICE_T = 1.0 // seconds of ❓ before a raider commits
 export const POD_WAKE_R = 340 // committing raiders stir roaming neighbours this close
 export const CHASE_PATIENCE = 13 // seconds a hunter presses before you're not worth the powder
 export const HUNT_CAP = 3 // ships in full ⚔️ at once — the rest shadow outside gun range
+export const ENEMY_WAKE_S = 0.7 // seconds of course an enemy hull keeps for its (LOD) wake
 export const DANGER_SCALE = 550 // px from home waters per +1 danger
 export const SLOOP_BOLD_FLEE_HP = 0.4 // a bold sloop only sheets away once hurt this badly
 export const SLOOP_KITE_PATIENCE_MULT = 1.6 // running scared burns patience faster than trading shots
@@ -230,6 +231,8 @@ export interface EnemyShip {
   armor?: 0 | 1 | 2
   /** ship belongs to a nest and stays tethered to it */
   home?: POI
+  /** short course history for its wake — lazily created once it's under way */
+  trail?: { x: number; y: number; vx: number; vy: number; t: number }[]
   /** holds one of the HUNT_CAP attack slots — shadowers wait outside gun range */
   engaged?: boolean
   /** mid-scuttle guard — the hull is going down, don't re-enter */
@@ -1748,6 +1751,12 @@ export class Game {
       }
       e.pos.x += e.vel.x * dt
       e.pos.y += e.vel.y * dt
+      // log a short course history so a moving hull can trail its own wake —
+      // a fortress never moves, so it never needs one
+      if (e.kind !== 'bastion') {
+        ;(e.trail ??= []).push({ x: e.pos.x, y: e.pos.y, vx: e.vel.x, vy: e.vel.y, t: this.time })
+        while (e.trail.length && e.trail[0].t < this.time - ENEMY_WAKE_S) e.trail.shift()
+      }
 
       // hull afire
       if (e.burnT > 0) {

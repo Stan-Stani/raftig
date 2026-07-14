@@ -1,4 +1,4 @@
-import { Game, TS, RANGE, SPLASH, TIERS, FOG_CELL, DANGER_SCALE, Plant, Bullet, EnemyShip, seaName } from './game'
+import { Game, TS, RANGE, SPLASH, TIERS, FOG_CELL, DANGER_SCALE, ENEMY_WAKE_S, Plant, Bullet, EnemyShip, seaName } from './game'
 import { describe, phenotype, Genome, Pheno, alleleDef } from './genetics'
 import { TOOLS, toolbarLayout, seedPanelRect, seedRowRects, restartRect, SEED_VISIBLE, boardLayout, BoardChip } from './ui'
 import { synergies, picksCost, DOCK_RANGE } from './breeding'
@@ -47,7 +47,10 @@ export function render(ctx: CanvasRenderingContext2D, g: Game) {
   ctx.translate(w / 2 - g.cam.x + shakeX + swayX, h / 2 - g.cam.y + shakeY + swayY)
 
   drawWaves(ctx, g, w, h, t)
-  drawWake(ctx, g)
+  drawWake(ctx, g.shipTrail, g.tierDef().beam, t)
+  // every moving hull trails its own wake — a lighter, shorter, haze-less LOD
+  // version so a full fleet stays cheap (bastions sit still and carry no trail)
+  for (const e of g.enemies) if (e.trail) drawWake(ctx, e.trail, e.r * 0.7, t, ENEMY_WAKE)
   for (const p of g.activePois) if (p.kind === 'calm') drawCalm(ctx, p, t)
   for (const p of g.activePois) if (p.kind !== 'calm') drawPOI(ctx, g, p, t)
   for (const l of g.loot) drawLoot(ctx, l.pos, l.kind, l.phase, l.ttl)
@@ -140,19 +143,31 @@ function drawWaves(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number,
   ctx.globalAlpha = 1
 }
 
-/** the wake, drawn straight off the ship's own recent course (the same
- *  shipTrail the enemy lookouts read) so it never gaps and curves through
+/** draw a wake straight off a hull's recent course `trail` (each entry a fixed
+ *  {x,y,vx,vy,t} the hull left behind), so it never gaps and curves through
  *  turns. Built like a real boat wake rather than two drawn lines: the bright
- *  cusp "edges" are actually a feather of short diagonal crest barbs stamped
- *  en echelon along the ~19.5° Kelvin envelope, the interior is filled with
- *  soft transverse crest arcs (the V's), and both sit in a haze of foam
- *  flecks. Every mark is jittered by a hash of its own fixed water position,
- *  so it reads as churn — not vector art — and stays put as the hull sails on. */
+ *  cusp "edges" are a feather of short diagonal crest barbs stamped en echelon
+ *  along the ~19.5° Kelvin envelope, the interior is soft transverse crest arcs
+ *  (the V's), and both sit in a haze of foam flecks. Every mark is jittered by a
+ *  hash of its own fixed water position, so it reads as churn — not vector art —
+ *  and stays put as the hull sails on. Shared by the player and the enemy fleet:
+ *  `opts.haze:false` drops the dense (and priciest) fleck layer and `opts.win`
+ *  shortens the trail span, for cheap LOD wakes on the AI ships. */
 const WAKE_TAN_HALF_ANGLE = 0.354 // tan(~19.5°), the real Kelvin wake half-angle
-function drawWake(ctx: CanvasRenderingContext2D, g: Game) {
-  const trail = g.shipTrail
+// enemy hulls get a cheap wake: no foam haze, a short trail, a touch dimmer
+const ENEMY_WAKE = { win: ENEMY_WAKE_S, haze: false, amp: 0.9 }
+function drawWake(
+  ctx: CanvasRenderingContext2D,
+  trail: { x: number; y: number; vx: number; vy: number; t: number }[],
+  beam: number,
+  time: number,
+  opts: { win?: number; haze?: boolean; amp?: number } = {},
+) {
   if (trail.length < 2) return
-  const beam = g.tierDef().beam
+  const win = opts.win ?? 1.5 // seconds of course the wake spans and fades over
+  const amp = opts.amp ?? 1 // overall opacity — enemies ride a touch dimmer
+  const haze = opts.haze ?? true // the dense foam-fleck layer; off for LOD wakes
+
   ctx.lineCap = 'round'
 
   // how far off the centerline each side sits at a trail point — grows with
@@ -169,8 +184,8 @@ function drawWake(ctx: CanvasRenderingContext2D, g: Game) {
     let lastBucket = NaN
     for (let i = trail.length - 1; i >= 0; i--) {
       const p = trail[i]
-      const age = g.time - p.t
-      if (age > 1.5) break
+      const age = time - p.t
+      if (age > win) break
       const spd = Math.hypot(p.vx, p.vy)
       if (spd < 25) continue
       // pin one barb per fixed course slice (not per fixed age) so each stays
@@ -178,7 +193,7 @@ function drawWake(ctx: CanvasRenderingContext2D, g: Game) {
       const bucket = Math.floor(p.t / BARB_SLICE)
       if (bucket === lastBucket) continue
       lastBucket = bucket
-      const fade = (1 - age / 1.5) * Math.min(1, age / 0.12) // ease in at the stern
+      const fade = (1 - age / win) * Math.min(1, age / 0.12) // ease in at the stern
       const off = offAt(spd, age)
       const h = Math.atan2(p.vy, p.vx)
       const nx = -Math.sin(h) * side
@@ -196,7 +211,7 @@ function drawWake(ctx: CanvasRenderingContext2D, g: Game) {
       const dn = Math.hypot(dx, dy) || 1
       dx /= dn
       dy /= dn
-      ctx.globalAlpha = fade * (0.2 + 0.2 * j2)
+      ctx.globalAlpha = amp * fade * (0.2 + 0.2 * j2)
       ctx.lineWidth = 1.1 + j * 0.9
       ctx.beginPath()
       ctx.moveTo(ex + (j - 0.5) * 2, ey + (j2 - 0.5) * 2)
@@ -216,8 +231,8 @@ function drawWake(ctx: CanvasRenderingContext2D, g: Game) {
   let lastBucket = NaN
   for (let i = trail.length - 1; i >= 0; i--) {
     const p = trail[i]
-    const age = g.time - p.t
-    if (age > 1.5) break
+    const age = time - p.t
+    if (age > win) break
     const spd = Math.hypot(p.vx, p.vy)
     if (spd < 25) continue
     const bucket = Math.floor(p.t / SLICE)
@@ -226,7 +241,7 @@ function drawWake(ctx: CanvasRenderingContext2D, g: Game) {
     const hb = hash01(bucket * 12.9 + 4.7, bucket * 3.3)
     if (hb < 0.28) continue // skip some slices → uneven gaps between crests
     const hb2 = hash01(bucket * 5.1, bucket * 8.7 + 1.3)
-    const fade = (1 - age / 1.5) * Math.min(1, age / 0.16) // ease in at the stern, out down-wake
+    const fade = (1 - age / win) * Math.min(1, age / 0.16) // ease in at the stern, out down-wake
     const off = offAt(spd, age)
     const h = Math.atan2(p.vy, p.vx)
     const px = -Math.sin(h)
@@ -251,7 +266,7 @@ function drawWake(ctx: CanvasRenderingContext2D, g: Game) {
       const u = 1 - t
       const qx = u * u * ax + 2 * u * t * cx + t * t * rx
       const qy = u * u * ay + 2 * u * t * cy + t * t * ry
-      ctx.globalAlpha = Math.max(0, fade * bright * (0.6 + hy))
+      ctx.globalAlpha = Math.max(0, amp * fade * bright * (0.6 + hy))
       ctx.beginPath()
       ctx.arc(qx + (hx - 0.5) * 6, qy + (hy - 0.5) * 6, 0.5 + hy * 1.4, 0, Math.PI * 2)
       ctx.fill()
@@ -259,29 +274,32 @@ function drawWake(ctx: CanvasRenderingContext2D, g: Game) {
   }
 
   // 3. foam haze: dim flecks scattered across the wake, brighter toward the
-  //    cusps and the churning stern — the noise that sells it as water
-  ctx.fillStyle = '#f2fbff'
-  for (let i = 0; i < trail.length; i++) {
-    const p = trail[i]
-    const spd = Math.hypot(p.vx, p.vy)
-    if (spd < 25) continue
-    const age = g.time - p.t
-    const fade = 1 - age / 1.5
-    if (fade <= 0) continue
-    const off = offAt(spd, age)
-    const h = Math.atan2(p.vy, p.vx)
-    const px = -Math.sin(h)
-    const py = Math.cos(h)
-    for (let k = 0; k < 5; k++) {
-      const hx = hash01(p.x * 1.9 + k * 21.3, p.y * 1.7 - k * 9.1)
-      const hy = hash01(p.y * 2.3 - k * 6.7, p.x * 1.3 + k * 8.9)
-      const lat = hx * 2 - 1 // -1..1 across the width
-      const x = p.x + px * lat * off + (hy - 0.5) * 4
-      const y = p.y + py * lat * off + (hy - 0.5) * 4
-      ctx.globalAlpha = fade * (0.06 + 0.14 * Math.abs(lat)) * (0.7 + 0.3 * fade)
-      ctx.beginPath()
-      ctx.arc(x, y, 0.6 + hy * 1.4, 0, Math.PI * 2)
-      ctx.fill()
+  //    cusps and the churning stern — the noise that sells it as water. This is
+  //    the priciest layer (a bead per trail point), so LOD wakes skip it
+  if (haze) {
+    ctx.fillStyle = '#f2fbff'
+    for (let i = 0; i < trail.length; i++) {
+      const p = trail[i]
+      const spd = Math.hypot(p.vx, p.vy)
+      if (spd < 25) continue
+      const age = time - p.t
+      const fade = 1 - age / win
+      if (fade <= 0) continue
+      const off = offAt(spd, age)
+      const h = Math.atan2(p.vy, p.vx)
+      const px = -Math.sin(h)
+      const py = Math.cos(h)
+      for (let k = 0; k < 5; k++) {
+        const hx = hash01(p.x * 1.9 + k * 21.3, p.y * 1.7 - k * 9.1)
+        const hy = hash01(p.y * 2.3 - k * 6.7, p.x * 1.3 + k * 8.9)
+        const lat = hx * 2 - 1 // -1..1 across the width
+        const x = p.x + px * lat * off + (hy - 0.5) * 4
+        const y = p.y + py * lat * off + (hy - 0.5) * 4
+        ctx.globalAlpha = amp * fade * (0.06 + 0.14 * Math.abs(lat)) * (0.7 + 0.3 * fade)
+        ctx.beginPath()
+        ctx.arc(x, y, 0.6 + hy * 1.4, 0, Math.PI * 2)
+        ctx.fill()
+      }
     }
   }
 
