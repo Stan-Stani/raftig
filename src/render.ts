@@ -123,39 +123,121 @@ function drawWaves(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number,
   ctx.globalAlpha = 1
 }
 
-/** the wake: two continuous lines drawn straight off the ship's own recent
- *  course (the same shipTrail enemy lookouts read), not discrete spawned
- *  puffs — so there's no gap between segments and turns curve naturally.
- *  Each side's offset from the centerline grows with how long ago that
- *  point was "now", at the real Kelvin wake's ~19.5° half-angle, so it's
- *  a shallow, gradually widening V rather than an arbitrary spread */
-const WAKE_TAN_HALF_ANGLE = 0.354
+/** the wake, drawn straight off the ship's own recent course (the same
+ *  shipTrail the enemy lookouts read) so it never gaps and curves through
+ *  turns. Built like a real boat wake rather than two drawn lines: the bright
+ *  cusp "edges" are actually a feather of short diagonal crest barbs stamped
+ *  en echelon along the ~19.5° Kelvin envelope, the interior is filled with
+ *  soft transverse crest arcs (the V's), and both sit in a haze of foam
+ *  flecks. Every mark is jittered by a hash of its own fixed water position,
+ *  so it reads as churn — not vector art — and stays put as the hull sails on. */
+const WAKE_TAN_HALF_ANGLE = 0.354 // tan(~19.5°), the real Kelvin wake half-angle
 function drawWake(ctx: CanvasRenderingContext2D, g: Game) {
   const trail = g.shipTrail
   if (trail.length < 2) return
   const beam = g.tierDef().beam
-  ctx.lineWidth = 2
   ctx.lineCap = 'round'
+
+  // how far off the centerline each side sits at a trail point — grows with
+  // how long ago the hull was there, opening the shallow V behind it
+  const offAt = (spd: number, age: number) => beam * 0.4 + spd * age * WAKE_TAN_HALF_ANGLE
+
+  // 1. divergent feather: short diagonal crest "barbs" stamped along each cusp
+  //    envelope, overlapping en echelon so the edge reads as a run of wavelets
+  //    rather than one continuous stroke. Each barb hangs inward-and-forward
+  //    off its envelope point and lengthens down-wake, like real divergent waves
   ctx.strokeStyle = '#eaf6fa'
   for (const side of [-1, 1]) {
-    for (let i = 1; i < trail.length; i++) {
-      const a = trail[i - 1]
-      const b = trail[i]
-      const spdA = Math.hypot(a.vx, a.vy)
-      const spdB = Math.hypot(b.vx, b.vy)
-      if (spdA < 25 || spdB < 25) continue
-      const offA = beam * 0.4 + spdA * (g.time - a.t) * WAKE_TAN_HALF_ANGLE
-      const offB = beam * 0.4 + spdB * (g.time - b.t) * WAKE_TAN_HALF_ANGLE
-      const hA = Math.atan2(a.vy, a.vx)
-      const hB = Math.atan2(b.vy, b.vx)
-      const age = (g.time - a.t + (g.time - b.t)) / 2
-      ctx.globalAlpha = Math.max(0, 0.42 * (1 - age / 1.5))
+    let nextAge = 0.06
+    for (let i = trail.length - 1; i >= 0; i--) {
+      const p = trail[i]
+      const age = g.time - p.t
+      if (age < nextAge) continue
+      nextAge += 0.05
+      const spd = Math.hypot(p.vx, p.vy)
+      if (spd < 25) continue
+      const fade = 1 - age / 1.5
+      if (fade <= 0) break
+      const off = offAt(spd, age)
+      const h = Math.atan2(p.vy, p.vx)
+      const nx = -Math.sin(h) * side
+      const ny = Math.cos(h) * side // outward normal on this side
+      const fx = Math.cos(h)
+      const fy = Math.sin(h) // toward the bow
+      const j = hash01(p.x * 0.8, p.y * 0.8)
+      const j2 = hash01(p.y * 0.7 + 3.1, p.x * 0.7 + 1.9)
+      const ex = p.x + nx * off // envelope (outer) point of the barb
+      const ey = p.y + ny * off
+      const len = 8 + off * 0.14 + j * 7 // barbs grow longer down-wake
+      const blend = 0.55 + j2 * 0.4 // how sharply the barb rakes forward
+      let dx = -nx * (1 - blend) + fx * blend // inward + forward
+      let dy = -ny * (1 - blend) + fy * blend
+      const dn = Math.hypot(dx, dy) || 1
+      dx /= dn
+      dy /= dn
+      ctx.globalAlpha = fade * (0.2 + 0.2 * j2)
+      ctx.lineWidth = 1.1 + j * 0.9
       ctx.beginPath()
-      ctx.moveTo(a.x - Math.sin(hA) * side * offA, a.y + Math.cos(hA) * side * offA)
-      ctx.lineTo(b.x - Math.sin(hB) * side * offB, b.y + Math.cos(hB) * side * offB)
+      ctx.moveTo(ex + (j - 0.5) * 3, ey + (j2 - 0.5) * 3)
+      ctx.lineTo(ex + dx * len, ey + dy * len)
       ctx.stroke()
     }
   }
+
+  // 2. transverse crests: soft arcs bowing toward the bow, spanning cusp to
+  //    cusp every so often — the "V's" filling the wake, curved not chevroned
+  ctx.lineWidth = 1.2
+  let nextAge = 0.26
+  for (let i = trail.length - 1; i >= 0; i--) {
+    const p = trail[i]
+    const age = g.time - p.t
+    if (age < nextAge) continue
+    nextAge += 0.16
+    const spd = Math.hypot(p.vx, p.vy)
+    if (spd < 25) continue
+    const fade = 1 - age / 1.5
+    if (fade <= 0) break
+    const off = offAt(spd, age)
+    const h = Math.atan2(p.vy, p.vx)
+    const px = -Math.sin(h)
+    const py = Math.cos(h)
+    const fx = Math.cos(h)
+    const fy = Math.sin(h)
+    const bow = off * 0.6 // control point reach → the crest passes ~0.3·off forward
+    ctx.globalAlpha = fade * 0.19
+    ctx.beginPath()
+    ctx.moveTo(p.x + px * off, p.y + py * off)
+    ctx.quadraticCurveTo(p.x + fx * bow, p.y + fy * bow, p.x - px * off, p.y - py * off)
+    ctx.stroke()
+  }
+
+  // 3. foam haze: dim flecks scattered across the wake, brighter toward the
+  //    cusps and the churning stern — the noise that sells it as water
+  ctx.fillStyle = '#f2fbff'
+  for (let i = 0; i < trail.length; i++) {
+    const p = trail[i]
+    const spd = Math.hypot(p.vx, p.vy)
+    if (spd < 25) continue
+    const age = g.time - p.t
+    const fade = 1 - age / 1.5
+    if (fade <= 0) continue
+    const off = offAt(spd, age)
+    const h = Math.atan2(p.vy, p.vx)
+    const px = -Math.sin(h)
+    const py = Math.cos(h)
+    for (let k = 0; k < 5; k++) {
+      const hx = hash01(p.x * 1.9 + k * 21.3, p.y * 1.7 - k * 9.1)
+      const hy = hash01(p.y * 2.3 - k * 6.7, p.x * 1.3 + k * 8.9)
+      const lat = hx * 2 - 1 // -1..1 across the width
+      const x = p.x + px * lat * off + (hy - 0.5) * 4
+      const y = p.y + py * lat * off + (hy - 0.5) * 4
+      ctx.globalAlpha = fade * (0.06 + 0.14 * Math.abs(lat)) * (0.7 + 0.3 * fade)
+      ctx.beginPath()
+      ctx.arc(x, y, 0.6 + hy * 1.4, 0, Math.PI * 2)
+      ctx.fill()
+    }
+  }
+
   ctx.globalAlpha = 1
   ctx.lineCap = 'butt'
 }
