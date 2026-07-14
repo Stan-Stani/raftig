@@ -1,4 +1,4 @@
-import { Vec, v, dist, clamp, rand, randInt, gkey, angleDiff, weighted, pick } from './util'
+import { Vec, v, dist, clamp, rand, randInt, gkey, angleDiff, weighted, pick, waveHeight } from './util'
 import {
   Genome,
   Seed,
@@ -440,6 +440,9 @@ export class Game {
   private shipTrail: { x: number; y: number; vx: number; vy: number; t: number }[] = []
   chillT = 0 // frost debuff on our ship
   shake = 0
+  /** wake-particle spawn countdown — ticks down faster at speed, so the trail
+   *  reads as a rate, not a fixed per-frame spray */
+  private wakeT = 0
   cam = v(0, 0)
   hover = v(0, 0) // world coords of pointer
   hoverScreen = v(0, 0)
@@ -985,6 +988,26 @@ export class Game {
     // log the course for the lookouts (enemy steering reads reactT seconds back)
     this.shipTrail.push({ x: this.ship.pos.x, y: this.ship.pos.y, vx: this.ship.vel.x, vy: this.ship.vel.y, t: this.time })
     while (this.shipTrail.length && this.shipTrail[0].t < this.time - 1.5) this.shipTrail.shift()
+
+    // wake: a few foam puffs off the stern while under real way, so speed
+    // reads in the water even before the HUD number registers
+    this.wakeT -= dt
+    if (sp > 25 && this.wakeT <= 0) {
+      this.wakeT = clamp(0.35 - sp / 900, 0.05, 0.35)
+      const len = this.tierDef().len
+      const back = v(this.ship.pos.x - Math.cos(this.ship.a) * len * 0.8, this.ship.pos.y - Math.sin(this.ship.a) * len * 0.8)
+      for (let i = 0; i < 2; i++) {
+        const spread = (Math.random() - 0.5) * 1.1
+        this.particles.push({
+          pos: v(back.x + (Math.random() - 0.5) * 6, back.y + (Math.random() - 0.5) * 6),
+          vel: v(-Math.cos(this.ship.a + spread) * 16, -Math.sin(this.ship.a + spread) * 16),
+          life: 0.85,
+          maxLife: 0.85,
+          size: 2 + Math.random() * 2,
+          color: '#dff3f7',
+        })
+      }
+    }
   }
 
   /** the ship as an enemy lookout remembers it — its course `ago` seconds back */

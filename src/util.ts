@@ -39,3 +39,14 @@ export function hash01(x: number, y: number): number {
   const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453
   return s - Math.floor(s)
 }
+
+/** compound swell: three sine waves at different wavelengths/angles/phases,
+ *  summed and normalized to roughly [-1, 1] — callers scale for amplitude.
+ *  Cheap stand-in for real wave displacement (same trick Wind Waker's ocean
+ *  used), sampled wherever a hull needs to bob or tilt with the sea. */
+export function waveHeight(x: number, y: number, t: number): number {
+  const s1 = Math.sin(x * 0.006 + y * 0.004 + t * 1.1)
+  const s2 = Math.sin(x * 0.012 - y * 0.014 + t * 1.7 + 2.1)
+  const s3 = Math.sin(-x * 0.018 + y * 0.01 + t * 0.65 + 5.4)
+  return (s1 + s2 * 0.6 + s3 * 0.4) / 2.1
+}

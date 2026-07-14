@@ -4,7 +4,7 @@ import { TOOLS, toolbarLayout, seedPanelRect, seedRowRects, restartRect, SEED_VI
 import { synergies, picksCost, DOCK_RANGE } from './breeding'
 import { POI, POI_SIGHT, POI_ICON, POI_COLOR, TRADE_COST, TRADE_RANGE, BREED_COST } from './poi'
 import { muted } from './audio'
-import { Vec, v, hash01, clamp, gkey, dist } from './util'
+import { Vec, v, hash01, clamp, gkey, dist, waveHeight } from './util'
 
 const ELEMENT_COLOR: Record<string, string> = {
   plain: '#ffd257',
@@ -38,9 +38,13 @@ export function render(ctx: CanvasRenderingContext2D, g: Game) {
 
   const shakeX = g.shake > 0.1 ? (Math.random() - 0.5) * g.shake : 0
   const shakeY = g.shake > 0.1 ? (Math.random() - 0.5) * g.shake : 0
+  // the world never sits perfectly still — a slow, low-amplitude sway even at
+  // a standstill, separate from the sharp hit-triggered shake above
+  const swayX = Math.sin(t * 0.35) * 1.2
+  const swayY = Math.sin(t * 0.27 + 1.7) * 1.2
 
   ctx.save()
-  ctx.translate(w / 2 - g.cam.x + shakeX, h / 2 - g.cam.y + shakeY)
+  ctx.translate(w / 2 - g.cam.x + shakeX + swayX, h / 2 - g.cam.y + shakeY + swayY)
 
   drawWaves(ctx, g, w, h, t)
   for (const p of g.activePois) if (p.kind === 'calm') drawCalm(ctx, p, t)
@@ -335,11 +339,18 @@ function drawHull(ctx: CanvasRenderingContext2D, len: number, beam: number, frac
 
 function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
   const tier = g.tierDef()
+  // rides the swell — hull, sail and every mounted gun bob together (one
+  // outer offset) while the hull silhouette alone gets a touch of roll, since
+  // the guns' own positions are computed in world space and shouldn't chase it
+  const bob = waveHeight(g.ship.pos.x, g.ship.pos.y, t) * 3
+  const tilt = waveHeight(g.ship.pos.x * 1.3, g.ship.pos.y * 1.3, t * 0.8 + 50) * 0.045
+  ctx.save()
+  ctx.translate(0, bob)
   // hull layer turns with the heading; sprites above stay upright at their
   // (rotated) mount positions so flowers and bars remain readable
   ctx.save()
   ctx.translate(g.ship.pos.x, g.ship.pos.y)
-  ctx.rotate(g.ship.a)
+  ctx.rotate(g.ship.a + tilt)
   drawHull(ctx, tier.len, tier.beam, g.ship.hp / tier.hull, false, g.burnT)
   // empty mount sockets read as places to sow
   for (const m of g.mounts) {
@@ -404,6 +415,7 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
     ctx.stroke()
   }
 
+  ctx.restore()
 }
 
 /** the ring a mortar's shells burst on — gold ones you walk over raiders,
@@ -551,11 +563,17 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
     }
     return
   }
+  // rides the swell same as the player hull — one outer bob for everything
+  // drawn at this ship's position, a touch of roll on the hull sprite alone
+  const bob = waveHeight(e.pos.x, e.pos.y, t) * 3
+  const tilt = waveHeight(e.pos.x * 1.3, e.pos.y * 1.3, t * 0.8 + 50) * 0.045
+  ctx.save()
+  ctx.translate(0, bob)
   // the hull sprite noses along its wake — cosmetic; the guns are world-fixed
   const ha = Math.atan2(e.vel.y, e.vel.x)
   ctx.save()
   ctx.translate(e.pos.x, e.pos.y)
-  ctx.rotate(ha)
+  ctx.rotate(ha + tilt)
   const frac = e.hp / e.maxHp
   // class silhouettes: sloops run slim and long, galleons broad with a gilded
   // sterncastle, fireships low with braziers alight; raiders keep the stock hull
@@ -674,6 +692,7 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
       ctx.fillText('⚔️', e.pos.x, e.pos.y - e.r - 14 + Math.sin(t * 5) * 2)
     }
   }
+  ctx.restore()
 }
 
 // ---------- points of interest ----------
