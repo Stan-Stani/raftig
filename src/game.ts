@@ -976,10 +976,11 @@ export class Game {
     const calm = this.calmAt(this.ship.pos)
     const gust = (0.5 + (0.5 * (this.wind.speed * calm)) / WIND_MAX) * (0.45 + 0.55 * calm)
     if (fwd) {
-      // sheet in: way comes on along the prow. Sail physics — full speed running
-      // with the wind, a crawl beating into it; tack across the wind (or wait for
-      // it to shift) instead of fighting it head-on
-      const eff = 0.3 + 0.7 * Math.pow((1 + Math.cos(angleDiff(this.ship.a, this.wind.a))) / 2, 1.5)
+      // sheet in: way comes on along the prow. Sail physics — fastest running with
+      // the wind, slower beating into it, so the wind still shapes a course. But the
+      // floor is high enough (0.5) that a headwind is a drag, not a dead crawl — you
+      // make way on any point of sail instead of grinding to a near-stop head-on
+      const eff = 0.5 + 0.5 * Math.pow((1 + Math.cos(angleDiff(this.ship.a, this.wind.a))) / 2, 1.5)
       this.sailEff = eff
       const maxSpeed = 240 * eff * gust * (this.chillT > 0 ? 0.55 : 1)
       this.ship.vel.x += Math.cos(this.ship.a) * 520 * eff * gust * dt
