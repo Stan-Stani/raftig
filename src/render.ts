@@ -86,25 +86,37 @@ function drawWaves(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number,
   const x1 = Math.floor((g.cam.x + w / 2) / cell) + 1
   const y0 = Math.floor((g.cam.y - h / 2) / cell) - 1
   const y1 = Math.floor((g.cam.y + h / 2) / cell) + 1
-  ctx.strokeStyle = '#ffffff'
-  ctx.lineWidth = 1.5
+  // gentle swell crests dotting the sea — little arcs of foam beads rather than
+  // stroked wire, stippled the same way (and same foam colour) as the wake so
+  // the whole surface reads as churn. Positions are hash-fixed per cell and just
+  // bob on a slow sine, so the beads drift with the swell without shimmering
+  ctx.fillStyle = '#eaf6fa'
   for (let gx = x0; gx <= x1; gx++) {
     for (let gy = y0; gy <= y1; gy++) {
       const r = hash01(gx, gy)
       if (r > 0.55) continue
       const x = gx * cell + r * 60
       const y = gy * cell + hash01(gy, gx) * 60 + Math.sin(t * 1.3 + r * 12) * 3
-      ctx.globalAlpha = 0.06 + 0.05 * Math.sin(t * 0.9 + r * 20)
-      ctx.beginPath()
-      ctx.arc(x, y, 7 + r * 8, Math.PI * 0.15, Math.PI * 0.85)
-      ctx.stroke()
+      const rad = 7 + r * 8
+      const pulse = 0.07 + 0.05 * Math.sin(t * 0.9 + r * 20)
+      const beads = 4 + Math.floor(r * 4) // 4–6 beads tracing the crest
+      for (let s = 0; s < beads; s++) {
+        const a = Math.PI * 0.15 + Math.PI * 0.7 * (s / (beads - 1))
+        const hj = hash01(gx * 7.1 + s * 3.3, gy * 5.7 + s * 1.9)
+        const hj2 = hash01(gy * 2.3 + s * 4.1, gx * 3.9 + s * 2.7)
+        ctx.globalAlpha = Math.max(0, pulse * (0.55 + 0.75 * hj))
+        ctx.beginPath()
+        ctx.arc(x + Math.cos(a) * rad + (hj - 0.5) * 3, y + Math.sin(a) * rad + (hj2 - 0.5) * 3, 0.6 + hj * 1.1, 0, Math.PI * 2)
+        ctx.fill()
+      }
     }
   }
-  // wind streaks sliding across the swell
+  // wind streaks sliding across the swell — a few foam dabs strung along the
+  // wind rather than a drawn line, so they match the beaded swell yet still
+  // read as a streak pointing downwind
   const wx = Math.cos(g.wind.a)
   const wy = Math.sin(g.wind.a)
   const slen = 10 + g.wind.speed * 0.45
-  ctx.lineWidth = 1
   for (let gx = x0; gx <= x1; gx++) {
     for (let gy = y0; gy <= y1; gy++) {
       const r = hash01(gx * 3.7 + 11.2, gy * 5.1 + 4.8)
@@ -113,11 +125,16 @@ function drawWaves(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number,
       const cx = gx * cell + r * 70 + wx * (ph - 0.5) * cell
       const cy = gy * cell + hash01(gy * 2.3, gx * 1.7) * 70 + wy * (ph - 0.5) * cell
       // the swell goes glassy inside becalmed pools
-      ctx.globalAlpha = Math.sin(ph * Math.PI) * 0.13 * g.calmAt(v(cx, cy))
-      ctx.beginPath()
-      ctx.moveTo(cx - wx * slen * 0.5, cy - wy * slen * 0.5)
-      ctx.lineTo(cx + wx * slen * 0.5, cy + wy * slen * 0.5)
-      ctx.stroke()
+      const a = Math.sin(ph * Math.PI) * 0.15 * g.calmAt(v(cx, cy))
+      if (a <= 0.002) continue
+      for (let s = 0; s < 3; s++) {
+        const f = s / 2 - 0.5 // -0.5..0.5 along the streak
+        const hj = hash01(gx * 5.3 + s * 6.1, gy * 4.7 + s * 2.9)
+        ctx.globalAlpha = a * (0.7 + 0.5 * hj)
+        ctx.beginPath()
+        ctx.arc(cx + wx * slen * f, cy + wy * slen * f, 0.5 + hj * 0.8, 0, Math.PI * 2)
+        ctx.fill()
+      }
     }
   }
   ctx.globalAlpha = 1
