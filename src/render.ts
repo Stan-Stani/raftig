@@ -841,9 +841,10 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
     // raider mortars play by your rules: the red ring is where this gun's shells
     // burst — bright when a hunting gun is loaded, faint while it reloads or roams.
     // A gun that ranges in (mortars, like bastions) has its ring pulled short of
-    // full reach by its cranked elevation; everyone else's elev stays unset (×1)
+    // full reach by its cranked elevation; plain hunters fire at the capped reach
+    // (just inside your own) so the ring shows exactly where the shell will land
     const a = gun.plant.aim
-    const rr = gun.plant.pheno.range * (gun.plant.elev ?? 1)
+    const rr = gun.plant.elev != null ? gun.plant.pheno.range * gun.plant.elev : g.enemyReach(gun.plant, e.danger)
     drawAim(ctx, p.x, p.y - 12, a, false, false, t, '255,105,90')
     drawDropRing(ctx, p.x + Math.cos(a) * rr, p.y + Math.sin(a) * rr, SPLASH, e.mode === 'hunt' && gun.plant.cooldown <= 0, t, '255,105,90')
     drawPlant(ctx, p.x, p.y, gun.plant, true, t)

@@ -38,6 +38,13 @@ import { sfx, toggleMute } from './audio'
 
 export const TS = 46 // legacy sprite scale (trader rafts, bars)
 export const RANGE = 280 // baseline reach, px — the inCombat() floor before scanning the deck
+// how far a hostile gun that out-guns you is made to close. In home waters it
+// pulls in to ~FRAC of your own reach (you out-range it); deeper waters let it
+// keep more of its bred glass, until by ENEMY_REACH_DANGER it snipes at full
+// range again — a spyglass raider stays a sniper, more so the further out you sail
+export const ENEMY_REACH_FRAC = 0.9 // home-waters floor: fraction of your reach an out-gunning ship closes to
+export const ENEMY_REACH_FLOOR = 0.3 // even at home it keeps this much of its reach-over-you (a spyglass still snipes a little)
+export const ENEMY_REACH_DANGER = 6 // danger at which it fights at full bred reach again
 export const SPLASH = 44 // mortar burst radius, px
 export const PLANT_HP = 40
 export const ELEV_MIN = 0.5 // lowest battery elevation — rings pull in to half reach
@@ -1175,13 +1182,35 @@ export class Game {
     this.board = null
   }
 
-  /** true while a raider sits within gun range of the ship — locks refits */
-  inCombat(): boolean {
-    // the longest glass on deck decides when the fight has started
+  /** the longest glass on deck — the range at which a fight is joined and,
+   *  scaled down, the range hostile ships are held to so you always out-reach them */
+  playerReach(): number {
     let reach = RANGE
     for (const m of this.mounts) {
       if (m.plant) reach = Math.max(reach, m.plant.pheno.range)
     }
+    return reach
+  }
+
+  /** a hostile gun's effective reach. A gun that doesn't out-range you fires at its
+   *  own bred reach. One that DOES out-gun you is made to close: in home waters it
+   *  pulls in to ~FRAC of your glass so you can hit back, but it keeps more of its
+   *  edge the deeper you are, sniping at full bred range again by ENEMY_REACH_DANGER
+   *  — so a spyglass raider isn't dragged into a beginner's face, and deep water
+   *  stays genuinely long-ranged. Mortars/bastions crank elevation to suit and keep
+   *  their own machinery (this only bites when their bred reach out-ranges you). */
+  enemyReach(p: Plant, danger: number): number {
+    const bred = p.pheno.range
+    const cap = this.playerReach() * ENEMY_REACH_FRAC
+    if (bred <= cap) return bred // already within your reach — fights at its own range
+    const ramp = clamp((danger - 1) / (ENEMY_REACH_DANGER - 1), 0, 1)
+    const keep = ENEMY_REACH_FLOOR + (1 - ENEMY_REACH_FLOOR) * ramp
+    return cap + (bred - cap) * keep
+  }
+
+  /** true while a raider sits within gun range of the ship — locks refits */
+  inCombat(): boolean {
+    const reach = this.playerReach()
     for (const e of this.enemies) {
       if (dist(this.ship.pos, e.pos) - e.r - this.tierDef().len < reach) return true
     }
@@ -1232,7 +1261,11 @@ export class Game {
     const homing = p.pheno.quirk === 'homing'
     // the reach gene is the rangefinder; friendly guns fire at the battery
     // elevation, enemy guns at their own (bastion gunners crank theirs in)
-    const reach = friendly ? this.plantRange(p) : p.pheno.range * (p.elev ?? 1)
+    // enemy shells burst at the gun's reach — mortars/bastions crank elevation so
+    // keep their ranged-in drop; plain hunters get the capped reach so a closer
+    // station still lands on you instead of overshooting
+    const reach =
+      friendly ? this.plantRange(p) : p.elev != null ? p.pheno.range * p.elev : this.enemyReach(p, opts.owner?.danger ?? 1)
     for (let i = 0; i < p.pheno.shots; i++) {
       const a = heading + (i - (p.pheno.shots - 1) / 2) * p.pheno.spread
       const drop = v(from.x + Math.cos(a) * reach + rand(-7, 7), from.y + Math.sin(a) * reach + rand(-7, 7))
@@ -1843,7 +1876,8 @@ export class Game {
         // same mortar rules as your deck: the shell bursts at the gun's bred reach,
         // so gunners hold fire until the burst ring sits on your hull
         if (p.cooldown <= 0 && e.mode === 'hunt' && e.engaged && !this.over) {
-          const drop = v(from.x + Math.cos(p.aim) * p.pheno.range, from.y + Math.sin(p.aim) * p.pheno.range)
+          const reach = this.enemyReach(p, e.danger)
+          const drop = v(from.x + Math.cos(p.aim) * reach, from.y + Math.sin(p.aim) * reach)
           if (this.onHull(drop, SPLASH * 0.5)) {
             this.enemyFire(e, p, from)
             const diffMult = Math.max(0.7, 1.5 - e.danger * 0.08)
@@ -1952,8 +1986,8 @@ export class Game {
       const standoff = !engaged
         ? 430
         : e.kind === 'sloop' && !e.riskAverse
-          ? Math.min(p.pheno.range, SLOOP_BOLD_STATION)
-          : p.pheno.range
+          ? Math.min(this.enemyReach(p, e.danger), SLOOP_BOLD_STATION)
+          : this.enemyReach(p, e.danger)
       const fp = v(center.x - Math.cos(p.aim) * standoff - g.x, center.y - Math.sin(p.aim) * standoff - g.y)
       const d = dist(e.pos, fp)
       if (!best || d < best.d) best = { p, fp, d }
