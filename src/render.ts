@@ -123,24 +123,41 @@ function drawWaves(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number,
   ctx.globalAlpha = 1
 }
 
-/** foam streaks trailing a hull's stern — flat on the water: elongated,
- *  flattened ellipses oriented along each streak's own drift, not the
- *  floating circular puffs the generic particle system draws elsewhere */
+/** the wake: two continuous lines drawn straight off the ship's own recent
+ *  course (the same shipTrail enemy lookouts read), not discrete spawned
+ *  puffs — so there's no gap between segments and turns curve naturally.
+ *  Each side's offset from the centerline grows with how long ago that
+ *  point was "now", at the real Kelvin wake's ~19.5° half-angle, so it's
+ *  a shallow, gradually widening V rather than an arbitrary spread */
+const WAKE_TAN_HALF_ANGLE = 0.354
 function drawWake(ctx: CanvasRenderingContext2D, g: Game) {
-  for (const wk of g.wake) {
-    const k = wk.life / wk.maxLife
-    const size = wk.size * (0.8 + 0.5 * (1 - k))
-    ctx.globalAlpha = k * 0.5
-    ctx.fillStyle = '#eaf6fa'
-    ctx.save()
-    ctx.translate(wk.pos.x, wk.pos.y)
-    ctx.rotate(wk.angle)
-    ctx.beginPath()
-    ctx.ellipse(0, 0, size * 2.4, size * 0.85, 0, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.restore()
+  const trail = g.shipTrail
+  if (trail.length < 2) return
+  const beam = g.tierDef().beam
+  ctx.lineWidth = 2
+  ctx.lineCap = 'round'
+  ctx.strokeStyle = '#eaf6fa'
+  for (const side of [-1, 1]) {
+    for (let i = 1; i < trail.length; i++) {
+      const a = trail[i - 1]
+      const b = trail[i]
+      const spdA = Math.hypot(a.vx, a.vy)
+      const spdB = Math.hypot(b.vx, b.vy)
+      if (spdA < 25 || spdB < 25) continue
+      const offA = beam * 0.4 + spdA * (g.time - a.t) * WAKE_TAN_HALF_ANGLE
+      const offB = beam * 0.4 + spdB * (g.time - b.t) * WAKE_TAN_HALF_ANGLE
+      const hA = Math.atan2(a.vy, a.vx)
+      const hB = Math.atan2(b.vy, b.vx)
+      const age = (g.time - a.t + (g.time - b.t)) / 2
+      ctx.globalAlpha = Math.max(0, 0.42 * (1 - age / 1.5))
+      ctx.beginPath()
+      ctx.moveTo(a.x - Math.sin(hA) * side * offA, a.y + Math.cos(hA) * side * offA)
+      ctx.lineTo(b.x - Math.sin(hB) * side * offB, b.y + Math.cos(hB) * side * offB)
+      ctx.stroke()
+    }
   }
   ctx.globalAlpha = 1
+  ctx.lineCap = 'butt'
 }
 
 function drawLoot(ctx: CanvasRenderingContext2D, pos: Vec, kind: string, phase: number, ttl: number) {
