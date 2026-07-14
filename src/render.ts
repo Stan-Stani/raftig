@@ -147,17 +147,21 @@ function drawWake(ctx: CanvasRenderingContext2D, g: Game) {
   //    rather than one continuous stroke. Each barb hangs inward-and-forward
   //    off its envelope point and lengthens down-wake, like real divergent waves
   ctx.strokeStyle = '#eaf6fa'
+  const BARB_SLICE = 0.045 // course between barbs — dense enough to feather
   for (const side of [-1, 1]) {
-    let nextAge = 0.06
+    let lastBucket = NaN
     for (let i = trail.length - 1; i >= 0; i--) {
       const p = trail[i]
       const age = g.time - p.t
-      if (age < nextAge) continue
-      nextAge += 0.05
+      if (age > 1.5) break
       const spd = Math.hypot(p.vx, p.vy)
       if (spd < 25) continue
-      const fade = 1 - age / 1.5
-      if (fade <= 0) break
+      // pin one barb per fixed course slice (not per fixed age) so each stays
+      // put in the water as the hull sails on, instead of dancing every frame
+      const bucket = Math.floor(p.t / BARB_SLICE)
+      if (bucket === lastBucket) continue
+      lastBucket = bucket
+      const fade = (1 - age / 1.5) * Math.min(1, age / 0.12) // ease in at the stern
       const off = offAt(spd, age)
       const h = Math.atan2(p.vy, p.vx)
       const nx = -Math.sin(h) * side
@@ -178,7 +182,7 @@ function drawWake(ctx: CanvasRenderingContext2D, g: Game) {
       ctx.globalAlpha = fade * (0.2 + 0.2 * j2)
       ctx.lineWidth = 1.1 + j * 0.9
       ctx.beginPath()
-      ctx.moveTo(ex + (j - 0.5) * 3, ey + (j2 - 0.5) * 3)
+      ctx.moveTo(ex + (j - 0.5) * 2, ey + (j2 - 0.5) * 2)
       ctx.lineTo(ex + dx * len, ey + dy * len)
       ctx.stroke()
     }
