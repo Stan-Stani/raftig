@@ -713,11 +713,13 @@ export class Game {
       if (p.kind === 'wreck' && d < p.r) this.salvageWreck(p)
       if (p.kind === 'nest' && !p.nestUp && d < 1250) this.spawnNest(p)
       if (p.kind === 'calm' && !p.seeded && d < POI_SIGHT.calm) this.seedCalm(p)
-      // a hive mans its walls when there's shooting to do: a grudge (or open war)
-      // against the player, or any raider sail prowling its waters
-      if (p.kind === 'hive') {
-        if ((p.hostile || this.beesAngry) && d < 1000) this.garrison(p)
-        else if (this.enemies.some(e => e.kind !== 'bastion' && !e.sunk && dist(e.pos, p.pos) < 800)) this.garrison(p)
+      // a hive mans its walls only when there's actual shooting to do: a raider
+      // sail prowling its waters (below), or the player firing on it — the first
+      // burst calls provokeHive, which raises the garrison. Sailing into range no
+      // longer arms it: a standing grudge or the wider bee war doesn't turn the
+      // swarm into gun-flowers until a shot is actually fired
+      if (p.kind === 'hive' && this.enemies.some(e => e.kind !== 'bastion' && !e.sunk && dist(e.pos, p.pos) < 800)) {
+        this.garrison(p)
       }
     }
 
