@@ -61,10 +61,36 @@ export interface Board {
   childGen: number
   /** pollen the player can spend on rare placements this cross (snapshot at open) */
   pollen: number
+  /** the mutation wildcards this docking surfaced, rolled ONCE when the board
+   *  opens and fixed for its whole life. They don't depend on which parents you
+   *  field, so swapping/re-clicking parents can't re-roll them — otherwise you
+   *  could spam the stock to fish for a good rare for free. A fresh cross (re-dock)
+   *  is the only way to roll again. */
+  wilds: Record<LocusId, string | null>
+}
+
+/** roll one wildcard slot per locus — the cross's fixed mutation offer */
+function rollWilds(premium: boolean, stock: BoardParent[]): Record<LocusId, string | null> {
+  const wildChance = premium ? 0.3 : 0.12
+  const owned = ownedRares(stock)
+  const wilds = {} as Record<LocusId, string | null>
+  for (const locus of LOCUS_ORDER) wilds[locus] = Math.random() < wildChance ? wildFor(locus, owned) : null
+  return wilds
 }
 
 export function openBoard(premium: boolean, stock: BoardParent[], pollen: number): Board {
-  return { premium, stock, scroll: 0, parents: [null, null], focus: 0, offer: null, picks: null, childGen: 1, pollen }
+  return {
+    premium,
+    stock,
+    scroll: 0,
+    parents: [null, null],
+    focus: 0,
+    offer: null,
+    picks: null,
+    childGen: 1,
+    pollen,
+    wilds: rollWilds(premium, stock),
+  }
 }
 
 /** the pollen price of putting `allele` into a child slot: the cheapest
@@ -142,13 +168,12 @@ function regenerate(board: Board) {
   }
   const offer = {} as Offer
   const picks = {} as Genome
-  const wildChance = board.premium ? 0.3 : 0.12
-  const owned = ownedRares(board.stock)
   for (const locus of LOCUS_ORDER) {
     const a: [string, string] = [pa.genome[locus][0], pa.genome[locus][1]]
     const b: [string, string] = [pb.genome[locus][0], pb.genome[locus][1]]
-    const wild = Math.random() < wildChance ? wildFor(locus, owned) : null
-    offer[locus] = { a, b, wild }
+    // the wildcard is fixed for the board's life — rolled once at openBoard, not
+    // here, so re-picking parents can't fish for a better mutation for free
+    offer[locus] = { a, b, wild: board.wilds[locus] }
     picks[locus] = ['', '']
   }
   board.offer = offer
