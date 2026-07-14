@@ -184,31 +184,57 @@ function drawWake(ctx: CanvasRenderingContext2D, g: Game) {
     }
   }
 
-  // 2. transverse crests: soft arcs bowing toward the bow, spanning cusp to
-  //    cusp every so often — the "V's" filling the wake, curved not chevroned
-  ctx.lineWidth = 1.2
-  let nextAge = 0.26
+  // 2. transverse crests: the "V's" filling the wake, bowing toward the bow —
+  //    beaded foam arcs, not wires. Each crest is pinned to a fixed slice of
+  //    the ship's course (so it sits still in the water as she sails on) and
+  //    every trait is hash-jittered per slice — some slices skipped for uneven
+  //    gaps, camber and brightness varied, apex leaned off-centre, beads broken
+  //    up — so the run of crests reads irregular and churny, not evenly ribbed
+  ctx.fillStyle = '#eaf6fa'
+  const SLICE = 0.13 // avg seconds of course between crests
+  let lastBucket = NaN
   for (let i = trail.length - 1; i >= 0; i--) {
     const p = trail[i]
     const age = g.time - p.t
-    if (age < nextAge) continue
-    nextAge += 0.16
+    if (age > 1.5) break
     const spd = Math.hypot(p.vx, p.vy)
     if (spd < 25) continue
-    const fade = 1 - age / 1.5
-    if (fade <= 0) break
+    const bucket = Math.floor(p.t / SLICE)
+    if (bucket === lastBucket) continue
+    lastBucket = bucket
+    const hb = hash01(bucket * 12.9 + 4.7, bucket * 3.3)
+    if (hb < 0.28) continue // skip some slices → uneven gaps between crests
+    const hb2 = hash01(bucket * 5.1, bucket * 8.7 + 1.3)
+    const fade = (1 - age / 1.5) * Math.min(1, age / 0.16) // ease in at the stern, out down-wake
     const off = offAt(spd, age)
     const h = Math.atan2(p.vy, p.vx)
     const px = -Math.sin(h)
     const py = Math.cos(h)
     const fx = Math.cos(h)
     const fy = Math.sin(h)
-    const bow = off * 0.6 // control point reach → the crest passes ~0.3·off forward
-    ctx.globalAlpha = fade * 0.19
-    ctx.beginPath()
-    ctx.moveTo(p.x + px * off, p.y + py * off)
-    ctx.quadraticCurveTo(p.x + fx * bow, p.y + fy * bow, p.x - px * off, p.y - py * off)
-    ctx.stroke()
+    const bow = off * (0.4 + hb * 0.5) // camber varies crest to crest
+    const skew = (hb2 - 0.5) * 0.5 * off // apex leans off-centre
+    const ax = p.x + px * off
+    const ay = p.y + py * off // one cusp
+    const rx = p.x - px * off
+    const ry = p.y - py * off // the other cusp
+    const cx = p.x + fx * bow + px * skew
+    const cy = p.y + fy * bow + py * skew // control point, cambered and skewed
+    const beads = Math.max(5, Math.round(off / 6))
+    const bright = 0.09 + hb2 * 0.12
+    for (let s = 1; s < beads; s++) {
+      const hx = hash01(bucket * 91 + s * 12.7, s * 4.3)
+      const hy = hash01(s * 7.9 + 2.3, bucket * 53 + s * 3.1)
+      if (hx < 0.28) continue // drop beads unevenly → a broken, gappy crest
+      const t = s / beads
+      const u = 1 - t
+      const qx = u * u * ax + 2 * u * t * cx + t * t * rx
+      const qy = u * u * ay + 2 * u * t * cy + t * t * ry
+      ctx.globalAlpha = Math.max(0, fade * bright * (0.6 + hy))
+      ctx.beginPath()
+      ctx.arc(qx + (hx - 0.5) * 6, qy + (hy - 0.5) * 6, 0.5 + hy * 1.4, 0, Math.PI * 2)
+      ctx.fill()
+    }
   }
 
   // 3. foam haze: dim flecks scattered across the wake, brighter toward the
