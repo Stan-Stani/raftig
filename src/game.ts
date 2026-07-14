@@ -304,6 +304,17 @@ export interface Particle {
   color: string
 }
 
+/** a foam streak off a hull's stern — flat on the water, not a floating puff,
+ *  so it's drawn as an elongated ellipse along `angle` rather than a Particle's circle */
+export interface Wake {
+  pos: Vec
+  vel: Vec
+  life: number
+  maxLife: number
+  size: number
+  angle: number
+}
+
 export interface FloatText {
   pos: Vec
   text: string
@@ -393,6 +404,7 @@ export class Game {
   bullets: Bullet[] = []
   loot: Loot[] = []
   particles: Particle[] = []
+  wake: Wake[] = []
   texts: FloatText[] = []
 
   wind: Wind = { a: 0, speed: 30, targetA: 0, targetSpeed: 30, shiftT: 8 }
@@ -488,6 +500,7 @@ export class Game {
     this.bullets = []
     this.loot = []
     this.particles = []
+    this.wake = []
     this.texts = []
     const wa = rand(Math.PI * 2)
     this.wind = { a: wa, speed: rand(26, 44), targetA: wa, targetSpeed: rand(26, 44), shiftT: rand(7, 15) }
@@ -928,6 +941,14 @@ export class Game {
       p.life -= dt
     }
     this.particles = this.particles.filter(p => p.life > 0)
+    for (const wk of this.wake) {
+      wk.pos.x += wk.vel.x * dt
+      wk.pos.y += wk.vel.y * dt
+      wk.vel.x *= 1 - 1.2 * dt
+      wk.vel.y *= 1 - 1.2 * dt
+      wk.life -= dt
+    }
+    this.wake = this.wake.filter(wk => wk.life > 0)
     for (const t of this.texts) {
       t.pos.y -= 22 * dt
       t.life -= dt
@@ -989,22 +1010,31 @@ export class Game {
     this.shipTrail.push({ x: this.ship.pos.x, y: this.ship.pos.y, vx: this.ship.vel.x, vy: this.ship.vel.y, t: this.time })
     while (this.shipTrail.length && this.shipTrail[0].t < this.time - 1.5) this.shipTrail.shift()
 
-    // wake: a few foam puffs off the stern while under real way, so speed
-    // reads in the water even before the HUD number registers
+    // wake: a pair of foam streaks fanning out from the hull's aft quarters
+    // while under real way, so speed reads in the water even before the HUD
+    // number registers — flat on the surface (Wake, elongated ellipses), not
+    // floating puffs. Spawns off the actual sides of the hull, not a pinched
+    // point behind the stern, and trails at a shallow angle off the heading
+    // rather than the sharp kink you get from just pointing along velocity
     this.wakeT -= dt
     if (sp > 25 && this.wakeT <= 0) {
-      this.wakeT = clamp(0.35 - sp / 900, 0.05, 0.35)
-      const len = this.tierDef().len
-      const back = v(this.ship.pos.x - Math.cos(this.ship.a) * len * 0.8, this.ship.pos.y - Math.sin(this.ship.a) * len * 0.8)
-      for (let i = 0; i < 2; i++) {
-        const spread = (Math.random() - 0.5) * 1.1
-        this.particles.push({
-          pos: v(back.x + (Math.random() - 0.5) * 6, back.y + (Math.random() - 0.5) * 6),
-          vel: v(-Math.cos(this.ship.a + spread) * 16, -Math.sin(this.ship.a + spread) * 16),
-          life: 0.85,
-          maxLife: 0.85,
-          size: 2 + Math.random() * 2,
-          color: '#dff3f7',
+      this.wakeT = clamp(0.28 - sp / 1000, 0.05, 0.28)
+      const tier = this.tierDef()
+      const back = v(this.ship.pos.x - Math.cos(this.ship.a) * tier.len * 0.55, this.ship.pos.y - Math.sin(this.ship.a) * tier.len * 0.55)
+      const perp = v(-Math.sin(this.ship.a), Math.cos(this.ship.a))
+      for (const side of [-1, 1]) {
+        const spawnSpread = tier.beam * 0.42 + Math.random() * tier.beam * 0.15
+        const outSpeed = 14 + Math.random() * 10
+        const backSpeed = 4 + Math.random() * 4
+        const vx = perp.x * side * outSpeed - Math.cos(this.ship.a) * backSpeed
+        const vy = perp.y * side * outSpeed - Math.sin(this.ship.a) * backSpeed
+        this.wake.push({
+          pos: v(back.x + perp.x * side * spawnSpread, back.y + perp.y * side * spawnSpread),
+          vel: v(vx, vy),
+          life: 1.3,
+          maxLife: 1.3,
+          size: 2.5 + Math.random(),
+          angle: this.ship.a + side * 0.4,
         })
       }
     }

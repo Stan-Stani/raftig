@@ -47,6 +47,7 @@ export function render(ctx: CanvasRenderingContext2D, g: Game) {
   ctx.translate(w / 2 - g.cam.x + shakeX + swayX, h / 2 - g.cam.y + shakeY + swayY)
 
   drawWaves(ctx, g, w, h, t)
+  drawWake(ctx, g)
   for (const p of g.activePois) if (p.kind === 'calm') drawCalm(ctx, p, t)
   for (const p of g.activePois) if (p.kind !== 'calm') drawPOI(ctx, g, p, t)
   for (const l of g.loot) drawLoot(ctx, l.pos, l.kind, l.phase, l.ttl)
@@ -118,6 +119,26 @@ function drawWaves(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number,
       ctx.lineTo(cx + wx * slen * 0.5, cy + wy * slen * 0.5)
       ctx.stroke()
     }
+  }
+  ctx.globalAlpha = 1
+}
+
+/** foam streaks trailing a hull's stern — flat on the water: elongated,
+ *  flattened ellipses oriented along each streak's own drift, not the
+ *  floating circular puffs the generic particle system draws elsewhere */
+function drawWake(ctx: CanvasRenderingContext2D, g: Game) {
+  for (const wk of g.wake) {
+    const k = wk.life / wk.maxLife
+    const size = wk.size * (0.8 + 0.5 * (1 - k))
+    ctx.globalAlpha = k * 0.5
+    ctx.fillStyle = '#eaf6fa'
+    ctx.save()
+    ctx.translate(wk.pos.x, wk.pos.y)
+    ctx.rotate(wk.angle)
+    ctx.beginPath()
+    ctx.ellipse(0, 0, size * 2.4, size * 0.85, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
   }
   ctx.globalAlpha = 1
 }
