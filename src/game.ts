@@ -73,7 +73,8 @@ export const SLOOP_KITE_PATIENCE_MULT = 1.6 // running scared burns patience fas
 export const SLOOP_BOLD_STATION = 400 // a bold sloop brawls at this range, not its full bred glass
 export const SURGE_PERIOD = 9 // seconds for a plain hunter's close-in/back-out breathing cycle
 export const SURGE_MIN_FRAC = 0.55 // closest a surge pulls a hunter's station and shot reach, as a fraction of its full reach
-export const HUNTER_LEAD_CAP = 130 // px a plain hunter's lead can pull its aim off your lagged position — turning hard swings the true intercept further than this, so the gun settles for a bounded nudge instead of chasing a wild solve it can never traverse onto
+export const HUNTER_LEAD_TURN_RATE = 2.4 // rad/s a plain hunter's belief about your heading can update — a hard turn can't swing the direction the lead is cast along faster than this
+export const HUNTER_LEAD_FT_CAP = 0.6 // seconds a plain hunter trusts its lead out to — short enough that a sustained turn can't walk it far from the truth, long enough that a fast runner still earns a real lead (speed * this)
 export const HUNTER_FIRE_TOL = SPLASH // a plain hunter pulls the trigger this close to dead-on — looser than a bastion/mortar's careful ranging, so a crew that's still catching up to a jinking target fires eager and often instead of holding out for a shot that a slow traverse may never quite reach
 
 /** the named danger bands — geography the crew can point at */
@@ -202,6 +203,10 @@ export interface EGun {
   x: number
   y: number
   plant: Plant
+  /** a plain hunter's eased read of your heading, in radians — the lead
+   *  distance itself always tracks your true speed, but the direction it's
+   *  cast along catches up to a turn instead of snapping with it */
+  leadHeadingA?: number
 }
 
 export interface EnemyShip {
@@ -1991,21 +1996,23 @@ export class Game {
           // gunners work off the same stale picture as the helm — the rings
           // chase where you were, not the stick in your hand — but they lead
           // that lagged read same as a mortar leads a live one, so holding a
-          // steady course still walks you into the ring. A hard turn swings
-          // the true intercept far faster than a crude gun can traverse, so
-          // the lead itself is capped to a bounded nudge — enough to punish
-          // a straight run, not so much the gun chases a solve it can never
-          // catch and goes quiet
+          // steady course still walks you into the ring. A crude gun only
+          // trusts that lead a short way out (a fast runner still earns a
+          // bigger lead than a slow one — it's the horizon that's capped, not
+          // the reach), and it eases the direction it's cast along rather
+          // than snapping onto a turn, so a hard turn can't swing the aim
+          // faster than the traverse can ever follow
+          const speed = Math.hypot(past.vx, past.vy)
           const maxR = p.pheno.range
-          const led = this.leadIntercept(from, v(past.x, past.y), v(past.vx, past.vy), maxR * 0.5, maxR)
-          let lx = led.x - past.x
-          let ly = led.y - past.y
-          const lm = Math.hypot(lx, ly)
-          if (lm > HUNTER_LEAD_CAP) {
-            lx = (lx / lm) * HUNTER_LEAD_CAP
-            ly = (ly / lm) * HUNTER_LEAD_CAP
-          }
-          const want = Math.atan2(past.y + ly - from.y, past.x + lx - from.x)
+          const ft = Math.min(clamp(dist(from, v(past.x, past.y)), maxR * 0.5, maxR) / 200, HUNTER_LEAD_FT_CAP)
+          const leadDist = speed * ft
+          const rawHeadingA = speed > 1 ? Math.atan2(past.vy, past.vx) : (g.leadHeadingA ?? 0)
+          g.leadHeadingA =
+            g.leadHeadingA == null
+              ? rawHeadingA
+              : g.leadHeadingA + clamp(angleDiff(rawHeadingA, g.leadHeadingA), -HUNTER_LEAD_TURN_RATE * dt, HUNTER_LEAD_TURN_RATE * dt)
+          const wantPt = v(past.x + Math.cos(g.leadHeadingA) * leadDist, past.y + Math.sin(g.leadHeadingA) * leadDist)
+          const want = Math.atan2(wantPt.y - from.y, wantPt.x - from.x)
           const tr = gunTraverse(e.kind) * dt
           p.aim += clamp(angleDiff(want, p.aim), -tr, tr)
         }
