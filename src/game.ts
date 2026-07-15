@@ -1987,8 +1987,12 @@ export class Game {
         }
         if (e.mode === 'hunt' && !this.over) {
           // gunners work off the same stale picture as the helm — the rings
-          // chase where you were, not the stick in your hand
-          const want = Math.atan2(past.y - from.y, past.x - from.x)
+          // chase where you were, not the stick in your hand — but they lead
+          // that lagged read same as a mortar leads a live one, so holding a
+          // steady course still walks you into the ring. Juking is what beats it
+          const maxR = p.pheno.range
+          const wantPt = this.leadIntercept(from, v(past.x, past.y), v(past.vx, past.vy), maxR * 0.5, maxR)
+          const want = Math.atan2(wantPt.y - from.y, wantPt.x - from.x)
           const tr = gunTraverse(e.kind) * dt
           p.aim += clamp(angleDiff(want, p.aim), -tr, tr)
         }
