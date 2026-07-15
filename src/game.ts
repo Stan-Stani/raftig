@@ -73,6 +73,8 @@ export const SLOOP_KITE_PATIENCE_MULT = 1.6 // running scared burns patience fas
 export const SLOOP_BOLD_STATION = 400 // a bold sloop brawls at this range, not its full bred glass
 export const SURGE_PERIOD = 9 // seconds for a plain hunter's close-in/back-out breathing cycle
 export const SURGE_MIN_FRAC = 0.55 // closest a surge pulls a hunter's station and shot reach, as a fraction of its full reach
+export const HUNTER_LEAD_CAP = 130 // px a plain hunter's lead can pull its aim off your lagged position — turning hard swings the true intercept further than this, so the gun settles for a bounded nudge instead of chasing a wild solve it can never traverse onto
+export const HUNTER_FIRE_TOL = SPLASH // a plain hunter pulls the trigger this close to dead-on — looser than a bastion/mortar's careful ranging, so a crew that's still catching up to a jinking target fires eager and often instead of holding out for a shot that a slow traverse may never quite reach
 
 /** the named danger bands — geography the crew can point at */
 export function seaName(danger: number): string {
@@ -1989,10 +1991,21 @@ export class Game {
           // gunners work off the same stale picture as the helm — the rings
           // chase where you were, not the stick in your hand — but they lead
           // that lagged read same as a mortar leads a live one, so holding a
-          // steady course still walks you into the ring. Juking is what beats it
+          // steady course still walks you into the ring. A hard turn swings
+          // the true intercept far faster than a crude gun can traverse, so
+          // the lead itself is capped to a bounded nudge — enough to punish
+          // a straight run, not so much the gun chases a solve it can never
+          // catch and goes quiet
           const maxR = p.pheno.range
-          const wantPt = this.leadIntercept(from, v(past.x, past.y), v(past.vx, past.vy), maxR * 0.5, maxR)
-          const want = Math.atan2(wantPt.y - from.y, wantPt.x - from.x)
+          const led = this.leadIntercept(from, v(past.x, past.y), v(past.vx, past.vy), maxR * 0.5, maxR)
+          let lx = led.x - past.x
+          let ly = led.y - past.y
+          const lm = Math.hypot(lx, ly)
+          if (lm > HUNTER_LEAD_CAP) {
+            lx = (lx / lm) * HUNTER_LEAD_CAP
+            ly = (ly / lm) * HUNTER_LEAD_CAP
+          }
+          const want = Math.atan2(past.y + ly - from.y, past.x + lx - from.x)
           const tr = gunTraverse(e.kind) * dt
           p.aim += clamp(angleDiff(want, p.aim), -tr, tr)
         }
@@ -2001,7 +2014,7 @@ export class Game {
         if (p.cooldown <= 0 && e.mode === 'hunt' && e.engaged && !this.over) {
           const reach = this.enemyReach(p, e.danger) * this.surgeFrac(e)
           const drop = v(from.x + Math.cos(p.aim) * reach, from.y + Math.sin(p.aim) * reach)
-          if (this.onHull(drop, SPLASH * 0.5)) {
+          if (this.onHull(drop, HUNTER_FIRE_TOL)) {
             this.enemyFire(e, p, from)
             const diffMult = Math.max(0.7, 1.5 - e.danger * 0.08)
             p.cooldown = p.pheno.period * diffMult * (e.chillT > 0 ? 1.5 : 1) * rand(0.9, 1.15)
