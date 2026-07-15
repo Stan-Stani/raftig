@@ -74,7 +74,7 @@ export const SLOOP_BOLD_STATION = 400 // a bold sloop brawls at this range, not 
 export const SURGE_PERIOD = 9 // seconds for a plain hunter's close-in/back-out breathing cycle
 export const SURGE_MIN_FRAC = 0.55 // closest a surge pulls a hunter's station and shot reach, as a fraction of its full reach
 export const HUNTER_LEAD_TURN_RATE = 2.4 // rad/s a plain hunter's belief about your heading can update — a hard turn can't swing the direction the lead is cast along faster than this
-export const HUNTER_LEAD_FT_CAP = 0.6 // seconds a plain hunter trusts its lead out to — short enough that a sustained turn can't walk it far from the truth, long enough that a fast runner still earns a real lead (speed * this)
+export const HUNTER_LEAD_FT_CAP = 1.3 // seconds a plain hunter trusts its lead out to (reactT staleness + shell flight time, combined) — long enough to actually close the gap between the stale read and where you'll really be, capped so a sustained turn can't walk the guess far from the truth
 export const HUNTER_FIRE_TOL = SPLASH // a plain hunter pulls the trigger this close to dead-on — looser than a bastion/mortar's careful ranging, so a crew that's still catching up to a jinking target fires eager and often instead of holding out for a shot that a slow traverse may never quite reach
 
 /** the named danger bands — geography the crew can point at */
@@ -1996,16 +1996,19 @@ export class Game {
           // gunners work off the same stale picture as the helm — the rings
           // chase where you were, not the stick in your hand — but they lead
           // that lagged read same as a mortar leads a live one, so holding a
-          // steady course still walks you into the ring. A crude gun only
-          // trusts that lead a short way out (a fast runner still earns a
-          // bigger lead than a slow one — it's the horizon that's capped, not
-          // the reach), and it eases the direction it's cast along rather
+          // steady course still walks you into the ring. The picture is
+          // already reactT stale by the time they start ranging on it, so the
+          // lead has to close that gap on top of the shell's own flight time
+          // or it's aiming at where you were, not where you'll be. A crude
+          // gun only trusts the total that far out (a fast runner still earns
+          // a bigger lead than a slow one — it's the horizon that's capped,
+          // not the reach), and it eases the direction it's cast along rather
           // than snapping onto a turn, so a hard turn can't swing the aim
           // faster than the traverse can ever follow
           const speed = Math.hypot(past.vx, past.vy)
           const maxR = p.pheno.range
-          const ft = Math.min(clamp(dist(from, v(past.x, past.y)), maxR * 0.5, maxR) / 200, HUNTER_LEAD_FT_CAP)
-          const leadDist = speed * ft
+          const ft = clamp(dist(from, v(past.x, past.y)), maxR * 0.5, maxR) / 200
+          const leadDist = speed * Math.min(e.reactT + ft, HUNTER_LEAD_FT_CAP)
           const rawHeadingA = speed > 1 ? Math.atan2(past.vy, past.vx) : (g.leadHeadingA ?? 0)
           g.leadHeadingA =
             g.leadHeadingA == null
@@ -2015,11 +2018,20 @@ export class Game {
           const want = Math.atan2(wantPt.y - from.y, wantPt.x - from.x)
           const tr = gunTraverse(e.kind) * dt
           p.aim += clamp(angleDiff(want, p.aim), -tr, tr)
+          // range in the same way you crank Z/X on your own battery: walk the
+          // elevation toward your actual distance instead of just trusting the
+          // bred/surged reach blind, so a station that's a little short or a
+          // little long still corrects the shot instead of over/undershooting
+          const maxDropR = this.enemyReach(p, e.danger) * this.surgeFrac(e)
+          const elevCeil = maxDropR / p.pheno.range
+          const wantElev = clamp(dist(from, this.ship.pos) / p.pheno.range, Math.min(ELEV_MIN, elevCeil), elevCeil)
+          const curElev = p.elev ?? 1
+          p.elev = curElev + clamp(wantElev - curElev, -ELEV_RATE * dt, ELEV_RATE * dt)
         }
-        // same mortar rules as your deck: the shell bursts at the gun's bred reach,
-        // so gunners hold fire until the burst ring sits on your hull
+        // same mortar rules as your deck: the shell bursts at the gun's ranged-in
+        // reach, so gunners hold fire until the burst ring sits on your hull
         if (p.cooldown <= 0 && e.mode === 'hunt' && e.engaged && !this.over) {
-          const reach = this.enemyReach(p, e.danger) * this.surgeFrac(e)
+          const reach = p.pheno.range * (p.elev ?? 1)
           const drop = v(from.x + Math.cos(p.aim) * reach, from.y + Math.sin(p.aim) * reach)
           if (this.onHull(drop, HUNTER_FIRE_TOL)) {
             this.enemyFire(e, p, from)
