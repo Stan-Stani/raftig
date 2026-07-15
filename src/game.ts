@@ -71,6 +71,8 @@ export const DANGER_SCALE = 550 // px from home waters per +1 danger
 export const SLOOP_BOLD_FLEE_HP = 0.4 // a bold sloop only sheets away once hurt this badly
 export const SLOOP_KITE_PATIENCE_MULT = 1.6 // running scared burns patience faster than trading shots
 export const SLOOP_BOLD_STATION = 400 // a bold sloop brawls at this range, not its full bred glass
+export const SURGE_PERIOD = 9 // seconds for a plain hunter's close-in/back-out breathing cycle
+export const SURGE_MIN_FRAC = 0.55 // closest a surge pulls a hunter's station and shot reach, as a fraction of its full reach
 
 /** the named danger bands — geography the crew can point at */
 export function seaName(danger: number): string {
@@ -260,6 +262,9 @@ export interface EnemyShip {
   /** a jumpy sloop crew: sheets away on proximity alone, full health or not.
    *  bold sloops (the rest) stand and trade until they're actually hurt */
   riskAverse?: boolean
+  /** a plain hunter's phase in its close-in/back-out breathing cycle, so a pack
+   *  of raiders doesn't surge and retreat in lockstep */
+  surgePhase?: number
 }
 
 export interface Wind {
@@ -1990,7 +1995,7 @@ export class Game {
         // same mortar rules as your deck: the shell bursts at the gun's bred reach,
         // so gunners hold fire until the burst ring sits on your hull
         if (p.cooldown <= 0 && e.mode === 'hunt' && e.engaged && !this.over) {
-          const reach = this.enemyReach(p, e.danger)
+          const reach = this.enemyReach(p, e.danger) * this.surgeFrac(e)
           const drop = v(from.x + Math.cos(p.aim) * reach, from.y + Math.sin(p.aim) * reach)
           if (this.onHull(drop, SPLASH * 0.5)) {
             this.enemyFire(e, p, from)
@@ -2056,6 +2061,18 @@ export class Game {
     return reach * 0.62
   }
 
+  /** a plain hunter (raider/harrier/galleon) doesn't just lock one range and
+   *  hold it — sloops kite, mortars/bastions range you in for real, so the
+   *  brawlers get the third doctrine: breathe in and out of their own reach.
+   *  Ties the sailed-to station and the fired shot's reach to the same value,
+   *  so a surge is a real close-in burst, not just repositioning */
+  private surgeFrac(e: EnemyShip): number {
+    if (e.kind === 'sloop' || e.kind === 'mortar' || e.kind === 'bastion' || e.kind === 'fireship') return 1
+    e.surgePhase ??= rand(Math.PI * 2)
+    const s = 0.5 + 0.5 * Math.sin((this.time * Math.PI * 2) / SURGE_PERIOD + e.surgePhase)
+    return SURGE_MIN_FRAC + (1 - SURGE_MIN_FRAC) * s
+  }
+
   /** contact: the fireship goes up against your hull — blast, flames, gone.
    *  No loot; everything it carried is burning with it. */
   private fireshipBlast(e: EnemyShip) {
@@ -2101,7 +2118,7 @@ export class Game {
         ? 430
         : e.kind === 'sloop' && !e.riskAverse
           ? Math.min(this.enemyReach(p, e.danger), SLOOP_BOLD_STATION)
-          : this.enemyReach(p, e.danger)
+          : this.enemyReach(p, e.danger) * this.surgeFrac(e)
       const fp = v(center.x - Math.cos(p.aim) * standoff - g.x, center.y - Math.sin(p.aim) * standoff - g.y)
       const d = dist(e.pos, fp)
       if (!best || d < best.d) best = { p, fp, d }
