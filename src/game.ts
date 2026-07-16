@@ -74,8 +74,13 @@ export const SLOOP_BOLD_STATION = 400 // a bold sloop brawls at this range, not 
 export const SURGE_PERIOD = 9 // seconds for a plain hunter's close-in/back-out breathing cycle
 export const SURGE_MIN_FRAC = 0.55 // closest a surge pulls a hunter's station and shot reach, as a fraction of its full reach
 export const HUNTER_LEAD_TURN_RATE = 2.4 // rad/s a plain hunter's belief about your heading can update — a hard turn can't swing the direction the lead is cast along faster than this
-export const HUNTER_LEAD_FT_CAP = 1.3 // seconds a plain hunter trusts its lead out to (reactT staleness + shell flight time, combined) — long enough to actually close the gap between the stale read and where you'll really be, capped so a sustained turn can't walk the guess far from the truth
+export const HUNTER_LEAD_FT_CAP = 2.2 // seconds a plain hunter trusts its lead out to (reactT staleness + shell flight time, combined) — enough to cover a full-reach shot's real gap; the eased heading is what keeps a turn from exploiting it, not this cap
 export const HUNTER_FIRE_TOL = SPLASH // a plain hunter pulls the trigger this close to dead-on — looser than a bastion/mortar's careful ranging, so a crew that's still catching up to a jinking target fires eager and often instead of holding out for a shot that a slow traverse may never quite reach
+export const HUNTER_DRILL_PER_DANGER = 0.08 // deeper waters ship sharper gun crews: traverse and elevation cranking speed up this much per danger band past home…
+export const HUNTER_DRILL_CAP = 1.5 // …capped at half again the home-waters pace
+export const ENEMY_SHELL_SPEED = 200 // px/s a home-waters crew's shells fly — slower than yours; keep way on and slip the drop
+export const ENEMY_SHELL_SPEED_DANGER = 18 // px/s of shell speed per danger band past home — deep-water powder arrives fast enough that a flat sprint stops being a shield
+export const ENEMY_SHELL_SPEED_MAX = 320
 
 /** the named danger bands — geography the crew can point at */
 export function seaName(danger: number): string {
@@ -207,6 +212,9 @@ export interface EGun {
    *  distance itself always tracks your true speed, but the direction it's
    *  cast along catches up to a turn instead of snapping with it */
   leadHeadingA?: number
+  /** where this gunner believes you'll be when the shell lands — the point the
+   *  whole solution (aim, elevation, fire gate) converges on together */
+  leadPt?: Vec
 }
 
 export interface EnemyShip {
@@ -377,6 +385,12 @@ function gunTraverse(kind: EnemyShip['kind']): number {
           : kind === 'mortar'
             ? 0.55
             : 0.5
+}
+
+/** how fast a crew's shells fly, px/s — home waters keep the slow, slippable
+ *  powder; deep-water crews sling shot fast enough to actually lead a runner */
+function enemyShellSpeed(danger: number): number {
+  return Math.min(ENEMY_SHELL_SPEED_MAX, ENEMY_SHELL_SPEED + (danger - 1) * ENEMY_SHELL_SPEED_DANGER)
 }
 
 function makePlant(genome: Genome, gen: number): Plant {
@@ -1966,7 +1980,7 @@ export class Game {
           const atWar = e.mode === 'hunt' && !this.over
           let want: Vec | null = null
           if (prey) {
-            want = this.leadIntercept(from, prey.pos, prey.vel, minR, maxR)
+            want = this.leadIntercept(from, prey.pos, prey.vel, minR, maxR, enemyShellSpeed(e.danger))
           } else if (atWar) {
             want = v(past.x, past.y)
           }
@@ -1988,7 +2002,7 @@ export class Game {
           const maxR = p.pheno.range
           const minR = maxR * 0.5
           const atWar = e.mode === 'hunt' && e.engaged && !this.over
-          const want = atWar ? this.leadIntercept(from, this.ship.pos, this.ship.vel, minR, maxR) : null
+          const want = atWar ? this.leadIntercept(from, this.ship.pos, this.ship.vel, minR, maxR, enemyShellSpeed(e.danger)) : null
           this.rangeInFire(e, p, from, want, drop => this.onHull(drop, SPLASH * 0.5), dt)
           continue
         }
@@ -2005,9 +2019,10 @@ export class Game {
           // not the reach), and it eases the direction it's cast along rather
           // than snapping onto a turn, so a hard turn can't swing the aim
           // faster than the traverse can ever follow
+          const drill = Math.min(HUNTER_DRILL_CAP, 1 + (e.danger - 1) * HUNTER_DRILL_PER_DANGER)
           const speed = Math.hypot(past.vx, past.vy)
           const maxR = p.pheno.range
-          const ft = clamp(dist(from, v(past.x, past.y)), maxR * 0.5, maxR) / 200
+          const ft = clamp(dist(from, v(past.x, past.y)), maxR * 0.5, maxR) / enemyShellSpeed(e.danger)
           const leadDist = speed * Math.min(e.reactT + ft, HUNTER_LEAD_FT_CAP)
           const rawHeadingA = speed > 1 ? Math.atan2(past.vy, past.vx) : (g.leadHeadingA ?? 0)
           g.leadHeadingA =
@@ -2015,25 +2030,33 @@ export class Game {
               ? rawHeadingA
               : g.leadHeadingA + clamp(angleDiff(rawHeadingA, g.leadHeadingA), -HUNTER_LEAD_TURN_RATE * dt, HUNTER_LEAD_TURN_RATE * dt)
           const wantPt = v(past.x + Math.cos(g.leadHeadingA) * leadDist, past.y + Math.sin(g.leadHeadingA) * leadDist)
+          g.leadPt = wantPt
           const want = Math.atan2(wantPt.y - from.y, wantPt.x - from.x)
-          const tr = gunTraverse(e.kind) * dt
+          const tr = gunTraverse(e.kind) * drill * dt
           p.aim += clamp(angleDiff(want, p.aim), -tr, tr)
-          // range in the same way you crank Z/X on your own battery: walk the
-          // elevation toward your actual distance instead of just trusting the
-          // bred/surged reach blind, so a station that's a little short or a
-          // little long still corrects the shot instead of over/undershooting
-          const maxDropR = this.enemyReach(p, e.danger) * this.surgeFrac(e)
-          const elevCeil = maxDropR / p.pheno.range
-          const wantElev = clamp(dist(from, this.ship.pos) / p.pheno.range, Math.min(ELEV_MIN, elevCeil), elevCeil)
+          // range in the same way you crank Z/X on your own battery — and range
+          // on the belief, not on where you are right now: a shot that lands
+          // where you're GOING has to be ranged longer than the ground between
+          // the two hulls, or every shell in a chase falls in your old wake.
+          // The surge cycle moves the STATION the hull sails for, never the
+          // shot: the hull is rarely at its station (you move too), and a
+          // gunner capped to the station's range goes silent whenever the
+          // surge points short of where you actually are
+          const elevCeil = this.enemyReach(p, e.danger) / p.pheno.range
+          const wantElev = clamp(dist(from, wantPt) / p.pheno.range, Math.min(ELEV_MIN, elevCeil), elevCeil)
           const curElev = p.elev ?? 1
-          p.elev = curElev + clamp(wantElev - curElev, -ELEV_RATE * dt, ELEV_RATE * dt)
+          p.elev = curElev + clamp(wantElev - curElev, -ELEV_RATE * drill * dt, ELEV_RATE * drill * dt)
         }
-        // same mortar rules as your deck: the shell bursts at the gun's ranged-in
-        // reach, so gunners hold fire until the burst ring sits on your hull
+        // pull the lanyard when the ranged solution covers the gunner's belief
+        // of where you'll be as the shell lands — or your hull outright. Gating
+        // on the CURRENT hull alone fought the lead: the better the gunner led
+        // a runner, the further his ring sat from where you were, and the gate
+        // told him to hold a fire that was actually dialed in
         if (p.cooldown <= 0 && e.mode === 'hunt' && e.engaged && !this.over) {
           const reach = p.pheno.range * (p.elev ?? 1)
           const drop = v(from.x + Math.cos(p.aim) * reach, from.y + Math.sin(p.aim) * reach)
-          if (this.onHull(drop, HUNTER_FIRE_TOL)) {
+          const onBelief = g.leadPt != null && dist(drop, g.leadPt) < this.tierDef().len + HUNTER_FIRE_TOL
+          if (onBelief || this.onHull(drop, HUNTER_FIRE_TOL)) {
             this.enemyFire(e, p, from)
             const diffMult = Math.max(0.7, 1.5 - e.danger * 0.08)
             p.cooldown = p.pheno.period * diffMult * (e.chillT > 0 ? 1.5 : 1) * rand(0.9, 1.15)
@@ -2055,12 +2078,12 @@ export class Game {
    *  intercept point — flight time depends on the drop distance, which
    *  depends on the intercept point, so a few rounds converge the two.
    *  Shared by anything that RANGES IN instead of firing dumb along its aim */
-  private leadIntercept(from: Vec, targetPos: Vec, targetVel: Vec, minR: number, maxR: number): Vec {
-    let ft = clamp(dist(from, targetPos), minR, maxR) / 200
+  private leadIntercept(from: Vec, targetPos: Vec, targetVel: Vec, minR: number, maxR: number, shellSpd = ENEMY_SHELL_SPEED): Vec {
+    let ft = clamp(dist(from, targetPos), minR, maxR) / shellSpd
     let want = targetPos
     for (let it = 0; it < 3; it++) {
       want = v(targetPos.x + targetVel.x * ft, targetPos.y + targetVel.y * ft)
-      ft = clamp(dist(from, want), minR, maxR) / 200
+      ft = clamp(dist(from, want), minR, maxR) / shellSpd
     }
     return want
   }
@@ -2171,7 +2194,7 @@ export class Game {
     const jitter = e.kind === 'bastion' ? 0.015 : 0.05
     const a = p.aim + rand(-jitter, jitter)
     this.fireVolley(from, a, p, false, 0.75 + e.danger * 0.06, true, {
-      speed: 200, // slower shells than yours — keep way on and slip the drop
+      speed: enemyShellSpeed(e.danger), // home crews sling slow, slippable shot; deep-water powder outpaces even a full sprint
       owner: e,
       bee: e.kind === 'bastion',
     })
