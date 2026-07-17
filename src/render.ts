@@ -913,6 +913,15 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
     ctx.arc(e.pos.x, e.pos.y, e.r, 0, Math.PI * 2)
     ctx.fill()
   }
+  // pressing: a red flare rings the hull while it charges to knife range —
+  // the telegraph that says answer with the helm, not the anchor
+  if ((e.pressT ?? 0) > 0) {
+    ctx.strokeStyle = `rgba(255,110,90,${0.32 + 0.26 * Math.sin(t * 9)})`
+    ctx.lineWidth = 2.5
+    ctx.beginPath()
+    ctx.arc(e.pos.x, e.pos.y, e.r + 7, 0, Math.PI * 2)
+    ctx.stroke()
+  }
   // stung by hive artillery: this hull pays no salvage until its crew patches up
   if (e.beeHit) {
     ctx.font = '12px serif'

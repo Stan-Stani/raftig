@@ -290,6 +290,11 @@ export interface EnemyShip {
   frostStacks?: number
   /** seconds until a clean (unchilled) spell clears the frost stacks */
   frostRecoverT?: number
+  /** seconds this engaged plain hunter has gone without getting a shot off —
+   *  taking fire on top of a long silence triggers a press (see maybePress) */
+  sinceFired?: number
+  /** pressing: seconds left of the flat-out charge to knife range */
+  pressT?: number
 }
 
 export interface Wind {
@@ -1775,11 +1780,24 @@ export class Game {
       e.flashT = Math.max(0, (e.flashT ?? 0) - dt)
       e.frostRecoverT = Math.max(0, (e.frostRecoverT ?? 0) - dt)
       if (e.frostRecoverT <= 0) e.frostStacks = 0
+      // a raked hunter counts the seconds since it last answered (maybePress);
+      // shedding the slot — or the hunt — resets the grudge
+      if (e.mode === 'hunt' && e.engaged && (e.kind === 'raider' || e.kind === 'harrier' || e.kind === 'galleon')) {
+        e.sinceFired = (e.sinceFired ?? 0) + dt
+      } else {
+        e.sinceFired = 0
+        e.pressT = 0
+      }
+      if ((e.pressT ?? 0) > 0) e.pressT = Math.max(0, e.pressT! - dt)
       // rowers sprint, then blow — a sustained chase dulls the harrier's edge
       if (e.kind === 'harrier') {
         e.row = e.mode === 'hunt' ? Math.max(0, e.row - dt / 10) : Math.min(1, e.row + dt / 15)
       }
-      const spd = e.speed * (e.chillT > 0 ? 0.5 : 1) * (e.kind === 'harrier' ? 0.6 + 0.4 * e.row : 1)
+      const spd =
+        e.speed *
+        (e.chillT > 0 ? 0.5 : 1) *
+        (e.kind === 'harrier' ? 0.6 + 0.4 * e.row : 1) *
+        ((e.pressT ?? 0) > 0 ? 1.15 : 1) // a press puts its back into the oars
       const dx = center.x - e.pos.x
       const dy = center.y - e.pos.y
       const d = Math.hypot(dx, dy) || 1
@@ -2230,9 +2248,11 @@ export class Game {
       const p = g.plant
       const standoff = !engaged
         ? 430
-        : e.kind === 'sloop' && !e.riskAverse
-          ? Math.min(this.enemyReach(p, e.danger), SLOOP_BOLD_STATION)
-          : this.enemyReach(p, e.danger) * this.surgeFrac(e)
+        : (e.pressT ?? 0) > 0
+          ? this.enemyReach(p, e.danger) * 0.3 // pressing: eat the rake, force the knife fight
+          : e.kind === 'sloop' && !e.riskAverse
+            ? Math.min(this.enemyReach(p, e.danger), SLOOP_BOLD_STATION)
+            : this.enemyReach(p, e.danger) * this.surgeFrac(e)
       const fp = v(center.x - Math.cos(p.aim) * standoff - g.x, center.y - Math.sin(p.aim) * standoff - g.y)
       const d = dist(e.pos, fp)
       if (!best || d < best.d) best = { p, fp, d }
@@ -2240,7 +2260,23 @@ export class Game {
     return best
   }
 
+  /** an engaged plain hunter that eats a hit after ~5s without getting a shot
+   *  off stops queuing politely: it PRESSES — abandons its surge station and
+   *  sails flat-out to knife range (telegraphed by a red flare) until it gets
+   *  a volley away. Out-ranging the fleet still buys time and chip damage; it
+   *  stops being a free win in home waters */
+  private maybePress(e: EnemyShip) {
+    if (e.kind !== 'raider' && e.kind !== 'harrier' && e.kind !== 'galleon') return
+    if (e.mode !== 'hunt' || !e.engaged) return
+    if ((e.pressT ?? 0) > 0 || (e.sinceFired ?? 0) < 5) return
+    e.pressT = 8
+    this.toastAt(e.pos, '⚔️ pressing in!', '#ff6e5a')
+    sfx('spot')
+  }
+
   private enemyFire(e: EnemyShip, p: Plant, from: Vec) {
+    e.sinceFired = 0
+    e.pressT = 0 // it got its answer off — back to doctrine
     // the mount lobs along its current heading, bursting at the bred reach
     // (scaled by elevation on fortress guns) — the bred quirk/barrel/burst ride
     // along too, same machinery as your own guns: a raider can homing-snipe you
@@ -2487,6 +2523,7 @@ export class Game {
           hitAny = true
           this.aggro(e)
           e.patience = e.patience0 // you drew blood — now they're invested
+          this.maybePress(e)
           const dealt = b.dmg * (b.element === 'venom' ? 1.6 : 1)
           p.hp -= dealt
           p.flashT = 0.09
@@ -2507,6 +2544,7 @@ export class Game {
         hitAny = true
         this.aggro(e)
         e.patience = e.patience0 // you drew blood — now they're invested
+        this.maybePress(e)
         this.damageEnemyHull(e, b)
         if (b.quirk === 'leech' && b.src) this.leechProc(b.src, at)
       }
