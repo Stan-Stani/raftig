@@ -1400,11 +1400,7 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
   x2 += chip(ctx, x2, 44, `${low ? '⚠ ' : ''}⛵ ${tier.name} ${Math.ceil(g.ship.hp)}/${tier.hull}`) + 6
   const next = TIERS[g.tier + 1]
   if (next) x2 += chip(ctx, x2, 44, `U refit → ${next.name} (${next.cost}🪵)`) + 6
-  x2 += chip(ctx, x2, 44, 'B boil 1🪵→2💧') + 6
-  // manual fire: reminder chip, lit gold when a loaded gun has a target to fire on
-  const ready = g.mounts.some(m => m.plant && m.plant.water > 0 && m.plant.cooldown <= 0)
-  const litFire = ready && g.inCombat() && 0.5 + 0.5 * Math.sin(t * 6) > 0.35
-  chip(ctx, x2, 44, '␣ fire · A/D+␣ one rail', litFire ? '#ffd257' : undefined)
+  chip(ctx, x2, 44, 'B boil 1🪵→2💧')
 
   // sea status
   const mins = Math.floor(g.stats.time / 60)
@@ -1437,6 +1433,13 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
   const elevTxt = `Z/X range ${Math.round(g.elev * 100)}%`
   const ew = ctx.measureText(elevTxt).width + 18
   chip(ctx, w - ew - 12, 44, elevTxt, g.elev < 0.995 ? '#7fd8ff' : undefined)
+  // manual fire: reminder chip under it (the gunnery corner), lit gold when a
+  // loaded gun has a target — the old centre spot collided with the wind pill
+  const ready = g.mounts.some(m => m.plant && m.plant.water > 0 && m.plant.cooldown <= 0)
+  const litFire = ready && g.inCombat() && 0.5 + 0.5 * Math.sin(t * 6) > 0.35
+  const fireTxt = '␣ fire · A/D+␣ rail'
+  const fw = ctx.measureText(fireTxt).width + 18
+  chip(ctx, w - fw - 12, 76, fireTxt, litFire ? '#ffd257' : undefined)
 
   // banner
   if (g.banner.t > 0) {
