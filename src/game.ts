@@ -489,6 +489,9 @@ export class Game {
   pendingDigT = 0
   /** the plant awaiting its second 🎯 click — the one whose range gets trimmed */
   trimSel: Mount | null = null
+  /** any volley fired yet this run — gates the one-time hold-fire teaching toast */
+  firedEver = false
+  holdFireHinted = false
   /** the channeling board — non-null while docked at a port/breeder, breeding */
   board: Board | null = null
   /** feedback line drawn on the channeling board — world toasts hide behind the modal */
@@ -605,6 +608,8 @@ export class Game {
     this.seedSel = 0
     this.seedScroll = 0
     this.trimSel = null
+    this.firedEver = false
+    this.holdFireHinted = false
     this.board = null
     this.boardMsg = null
     this.rumors = new Set()
@@ -1469,6 +1474,7 @@ export class Game {
    *  where they land. No rig: the phenotype IS the weapon. */
   private firePlant(m: Mount, from: Vec) {
     const p = m.plant!
+    this.firedEver = true
     p.activeT = 4
     const heading = this.ship.a + p.aim // hull-relative: turning walks the burst
     this.fireVolley(from, heading, p, true, 1, true)
@@ -1790,6 +1796,12 @@ export class Game {
     e.deaggroR = Math.max(e.deaggroR, dist(e.pos, this.ship.pos) + 240)
     this.toastAt(e.pos, '⚔️ committed!', '#ff9d9d')
     sfx('spot')
+    // teach the quiet-guns play once: silence is a verb — nothing fires
+    // until the lanyard, so slipping away is always on the table
+    if (!this.firedEver && !this.holdFireHinted) {
+      this.holdFireHinted = true
+      this.toastAt(this.ship.pos, '⚓ your guns are silent until ␣ — you can still slip away', '#9fb8c8')
+    }
     // stirring one ship wakes its podmates — pick where you engage
     for (const o of this.enemies) {
       if (o !== e && o.mode === 'roam' && dist(o.pos, e.pos) < POD_WAKE_R) this.notice(o, rand(0.7, 1.2))

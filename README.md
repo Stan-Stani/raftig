@@ -48,6 +48,11 @@ npm run dev
   ring off each gun marks where its shells come down. **Space** pulls the
   lanyard — every loaded gun lobs a volley, then **reloads** on its own rate
   gene (an amber gauge winds up around the flower; a green ring means loaded).
+  Hold **A/D with Space** to fire just the port or starboard rail (centreline
+  chasers join any volley) — keep one broadside loaded while the other lands.
+  **Z/X** crank the whole battery's elevation live (rings pull in to half
+  reach); the **🎯 trim** tool sets each mount's own ranging out of combat —
+  click a plant, then the sea — so a mixed deck holds different rings.
   Steering the burst rings over a raider and timing the volley is the whole
   skill: the helm is the weapon, and the reach gene is your rangefinder —
   breed short brawlers for the rail and spyglass snipers for standoff. Raider
@@ -80,7 +85,7 @@ npm run dev
 
 ## Genetics (the plantig part)
 
-Every plant is diploid: two alleles per locus, seven loci.
+Every plant is diploid: two alleles per locus, eight loci.
 
 | locus   | common                | uncommon        | rare recessive |
 | ------- | --------------------- | --------------- | -------------- |
@@ -90,7 +95,8 @@ Every plant is diploid: two alleles per locus, seven loci.
 | reach   | short (260)           | long (340)      | **spyglass (440)** |
 | element | plain                 | ember/frost/venom | —            |
 | thirst  | thirsty (1.8/s)       | hardy (0.9/s)   | **camel (0.35/s)** |
-| quirk   | none                  | —               | **pierce / leech / magnet** |
+| quirk   | none                  | —               | **pierce / leech / magnet / homing / ward** |
+| burst   | direct                | —               | **airburst**   |
 
 - Dominant alleles mask recessives; the best traits are rare recessives, so
   they hide in **carrier lines** ([bH] shows single, breeds hydra) until the
@@ -98,9 +104,17 @@ Every plant is diploid: two alleles per locus, seven loci.
 - Meiosis takes one allele from each parent per locus; ~6% of inherited
   alleles mutate, and a third of mutations jackpot into a rare allele.
 - Elements ride the shells: **ember** burns hulls over time, **frost**
-  chills ships and fire rates, **venom** shreds enemy plants.
+  chills ships and fire rates (with diminishing returns — a chilled crew
+  shakes off repeat frost faster), **venom** shreds enemy plants but only
+  wilts them down to a thread: the killing blow must be shot in, so a venom
+  broadside can't scuttle a ship on its own.
 - Quirks: **pierce** packs shrapnel (wider burst), **leech** waters its own
-  plant per hit, **magnet** pulls floating loot toward your ship.
+  plant per hit, **magnet** pulls floating loot toward your ship, **homing**
+  curves shells toward the nearest raider, and **ward** turns the plant into
+  point-defense — it never fires, it swats incoming shells out of its facing
+  arc instead (a mount slot traded for safety; raider wards do it to you).
+- **Airburst** (the burst locus) re-casts the plant's own volley in a cluster
+  where the shell lands — a bred cluster-mortar, not a rigged one.
 - Kill an enemy plant carrying a rare allele and it may drop its seed — sail
   far from home to steal wild genes where rare alleles run hotter, then sow
   the stolen line and let the bees fold it into your stock.
@@ -111,8 +125,9 @@ Every plant is diploid: two alleles per locus, seven loci.
 ## Controls
 
 A/D (or ←/→) helm · W (↑) sheet in · S (↓) back water · **Space fires the
-guns** · 1–2 tools (🌱💧) · B boils wood into water · U refits the hull ·
-T trades with a nearby trader · Q/E or wheel picks seeds · H help ·
+guns** (A/D+Space — one rail) · **Z/X battery elevation** · 1–3 tools
+(🌱💧🎯) · B boils wood into water · U refits the hull · T trades with a
+nearby trader · F docks to breed · Q/E or wheel picks seeds · H help ·
 P pause · M mute · R restart after sinking.
 
 Hover any plant — yours or theirs — to read its full genotype.

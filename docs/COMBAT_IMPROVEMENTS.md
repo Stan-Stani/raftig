@@ -1,5 +1,19 @@
 # Combat improvements — prioritized plan (v2)
 
+> **Status (2026-07-16): implemented on this branch.** Everything below
+> shipped as working code in the commits that follow the plan: the Phase 1
+> legibility pass (damage numbers, hp bars, hit-flash, muzzle recoil, kill
+> and scuttle feedback, low-hull alarm, the hold-fire teaching toast); Phase
+> 2's frost diminishing returns and the anti-kite **press**, plus a venom
+> rebalance the plan missed (playtesting showed toxin killed every gun and
+> forced the scuttle jackpot — poison now wilts a plant to 1hp but never
+> fells it, the killing blow must be shot in); Phase 3's per-mount 🎯 range
+> trim and A/D+Space broadside rails; Phase 4's `ward` point-defense gene;
+> and the Phase 5 README/controls fixes. Still open: the dangling pity-floor
+> comment in `game.ts` (breeding scope), and tuning passes on the new
+> numbers (press trigger 5s/charge 8s, frost ×0.75 per stack, ward arc ±1
+> rad) once they've been felt in real runs.
+
 *Rewritten against the actual current tip (`b25dae2`, "Deep-water gunnery
 actually threatens a moving player"). The first version of this doc was
 mistakenly written against a 6-day-stale `main` (`f3b92e3`) and argued against

@@ -2089,8 +2089,8 @@ function fit(ctx: CanvasRenderingContext2D, s: string, maxW: number): string {
  *  (that's the whole point) on the pause screen so it's never more than
  *  one key away */
 const CONTROL_LINES = [
-  'A/D — helm · W — sheet in · S — back water · SPACE — FIRE guns · Z/X — gun range',
-  '1–2 — tools · Q/E — cycle seed · B — boil 1🪵 → 2💧 · U — refit',
+  'A/D — helm · W — sheet in · S — back water · SPACE — FIRE (A/D+SPACE — one rail) · Z/X — gun range',
+  '1–3 — tools (🌱 sow · 💧 water · 🎯 trim a gun’s range) · Q/E — cycle seed · B — boil 1🪵 → 2💧 · U — refit',
   'T — trade/parley · F — breed (port/hive/boat) · I — suggest something · P/Esc — pause · H — help',
 ]
 
