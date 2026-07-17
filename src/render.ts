@@ -1,4 +1,4 @@
-import { Game, TS, RANGE, SPLASH, TIERS, FOG_CELL, DANGER_SCALE, ENEMY_WAKE_S, Plant, Bullet, EnemyShip, seaName } from './game'
+import { Game, TS, RANGE, SPLASH, WARD_ARC, TIERS, FOG_CELL, DANGER_SCALE, ENEMY_WAKE_S, Plant, Bullet, EnemyShip, seaName } from './game'
 import { describe, phenotype, Genome, Pheno, alleleDef } from './genetics'
 import { TOOLS, toolbarLayout, seedPanelRect, seedRowRects, restartRect, SEED_VISIBLE, boardLayout, BoardChip } from './ui'
 import { synergies, picksCost, DOCK_RANGE } from './breeding'
@@ -642,15 +642,22 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
     // and Z/X (battery elevation) pull it in short of that.
     const a = g.ship.a + plant.aim
     const reach = g.plantRange(plant)
-    drawAim(ctx, p.x, p.y - 12, a, g.tool === 'trim', g.trimSel === m, t)
-    drawDropRing(
-      ctx,
-      p.x + Math.cos(a) * reach,
-      p.y + Math.sin(a) * reach,
-      g.plantSplash(plant),
-      plant.cooldown <= 0 && plant.water > 0,
-      t
-    )
+    if (plant.pheno.quirk === 'ward') {
+      // a ward doesn't bombard: its telegraph is the shield arc it can swat
+      // shells out of, not a drop ring
+      drawWardArc(ctx, p.x, p.y, reach, a, plant.cooldown <= 0 && plant.water > 0, t)
+      if (g.tool === 'trim') drawAim(ctx, p.x, p.y - 12, a, true, g.trimSel === m, t)
+    } else {
+      drawAim(ctx, p.x, p.y - 12, a, g.tool === 'trim', g.trimSel === m, t)
+      drawDropRing(
+        ctx,
+        p.x + Math.cos(a) * reach,
+        p.y + Math.sin(a) * reach,
+        g.plantSplash(plant),
+        plant.cooldown <= 0 && plant.water > 0,
+        t
+      )
+    }
     // muzzle recoil: the sprite kicks back along -aim as a volley leaves
     const rec = plant.recoilT > 0 ? (plant.recoilT / 0.12) * 3 : 0
     drawPlant(ctx, p.x - Math.cos(a) * rec, p.y - Math.sin(a) * rec, plant, false, t)
@@ -707,6 +714,18 @@ function drawDropRing(
   ctx.beginPath()
   ctx.arc(x, y, 2.2, 0, Math.PI * 2)
   ctx.fill()
+}
+
+/** a ward plant's shield arc — the slice of sky it can swat shells out of.
+ *  Icy, so it reads as defense next to the gold/red drop rings */
+function drawWardArc(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, a: number, ready: boolean, t: number) {
+  ctx.strokeStyle = ready ? `rgba(191,227,242,${0.4 + 0.2 * Math.sin(t * 5)})` : 'rgba(191,227,242,0.14)'
+  ctx.lineWidth = ready ? 2 : 1.2
+  ctx.setLineDash([4, 7])
+  ctx.beginPath()
+  ctx.arc(x, y, r, a - WARD_ARC, a + WARD_ARC)
+  ctx.stroke()
+  ctx.setLineDash([])
 }
 
 /** short arrow from a plant showing where it will fire */
@@ -819,8 +838,12 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
       const a = gun.plant.aim
       // fortress gunners range in: the ring sits at the cranked elevation
       const rr = gun.plant.pheno.range * (gun.plant.elev ?? 1)
-      drawAim(ctx, p.x, p.y - 12, a, false, false, t, '255,105,90')
-      drawDropRing(ctx, p.x + Math.cos(a) * rr, p.y + Math.sin(a) * rr, SPLASH, gun.plant.cooldown <= 0, t, '255,105,90')
+      if (gun.plant.pheno.quirk === 'ward') {
+        drawWardArc(ctx, p.x, p.y, rr, a, gun.plant.cooldown <= 0, t)
+      } else {
+        drawAim(ctx, p.x, p.y - 12, a, false, false, t, '255,105,90')
+        drawDropRing(ctx, p.x + Math.cos(a) * rr, p.y + Math.sin(a) * rr, SPLASH, gun.plant.cooldown <= 0, t, '255,105,90')
+      }
       const rec = gun.plant.recoilT > 0 ? (gun.plant.recoilT / 0.12) * 3 : 0
     drawPlant(ctx, p.x - Math.cos(a) * rec, p.y - Math.sin(a) * rec, gun.plant, true, t)
     }
@@ -938,8 +961,12 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
     // (just inside your own) so the ring shows exactly where the shell will land
     const a = gun.plant.aim
     const rr = gun.plant.elev != null ? gun.plant.pheno.range * gun.plant.elev : g.enemyReach(gun.plant, e.danger)
-    drawAim(ctx, p.x, p.y - 12, a, false, false, t, '255,105,90')
-    drawDropRing(ctx, p.x + Math.cos(a) * rr, p.y + Math.sin(a) * rr, SPLASH, e.mode === 'hunt' && gun.plant.cooldown <= 0, t, '255,105,90')
+    if (gun.plant.pheno.quirk === 'ward') {
+      drawWardArc(ctx, p.x, p.y, gun.plant.pheno.range * (gun.plant.elev ?? 1), a, e.mode !== 'roam' && gun.plant.cooldown <= 0, t)
+    } else {
+      drawAim(ctx, p.x, p.y - 12, a, false, false, t, '255,105,90')
+      drawDropRing(ctx, p.x + Math.cos(a) * rr, p.y + Math.sin(a) * rr, SPLASH, e.mode === 'hunt' && gun.plant.cooldown <= 0, t, '255,105,90')
+    }
     const rec = gun.plant.recoilT > 0 ? (gun.plant.recoilT / 0.12) * 3 : 0
     drawPlant(ctx, p.x - Math.cos(a) * rec, p.y - Math.sin(a) * rec, gun.plant, true, t)
   }

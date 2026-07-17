@@ -46,6 +46,7 @@ export const ENEMY_REACH_FRAC = 0.9 // home-waters floor: fraction of your reach
 export const ENEMY_REACH_FLOOR = 0.3 // even at home it keeps this much of its reach-over-you (a spyglass still snipes a little)
 export const ENEMY_REACH_DANGER = 6 // danger at which it fights at full bred reach again
 export const SPLASH = 44 // mortar burst radius, px
+export const WARD_ARC = 1.0 // half-angle, rad, of a ward plant's shield arc around its facing
 export const PLANT_HP = 40
 export const ELEV_MIN = 0.5 // lowest battery elevation — rings pull in to half reach
 export const ELEV_RATE = 0.45 // elevation change per second while Z/X is held
@@ -1276,6 +1277,12 @@ export class Game {
       // the lanyard (Space). Each shell bursts at the plant's bred reach scaled by
       // the battery elevation — the helm walks the burst rings over a target, the
       // reach gene caps the ring, Z/X pull it in, and firing starts the reload.
+      // a ward plant is point-defense, not artillery: it never joins a volley,
+      // it swats incoming shells out of its arc on its own reload instead
+      if (p.pheno.quirk === 'ward') {
+        this.wardIntercept(p, this.mountPos(m), this.ship.a + p.aim, true)
+        continue
+      }
       const inVolley = this.firing === 1 || m.y === 0 || (this.firing === 2 ? m.y < 0 : m.y > 0)
       if (this.firing && inVolley && p.water > 0 && p.cooldown <= 0) {
         this.firePlant(m, this.mountPos(m))
@@ -1429,6 +1436,31 @@ export class Game {
    *  🎯 trim × the live battery elevation. Raider guns keep their own machinery. */
   plantRange(p: Plant): number {
     return p.pheno.range * p.trim * this.elev
+  }
+
+  /** the ward quirk: a loaded ward detonates one incoming shell inside its
+   *  range and facing arc (±WARD_ARC), then reloads on its rate gene and sips
+   *  water per intercept. The mount's facing is the shield — the helm aims
+   *  the defense the same way it aims every gun. Runs for raider wards too:
+   *  their genome is just as live as yours (`friendly` is the ward's side). */
+  private wardIntercept(p: Plant, from: Vec, heading: number, friendly: boolean) {
+    if (p.cooldown > 0 || p.water <= 0) return
+    const reach = friendly ? this.plantRange(p) : p.pheno.range * (p.elev ?? 1)
+    for (let i = 0; i < this.bullets.length; i++) {
+      const b = this.bullets[i]
+      if (b.friendly === friendly) continue
+      const d = dist(b.pos, from)
+      if (d > reach || d < 14) continue
+      if (Math.abs(angleDiff(Math.atan2(b.pos.y - from.y, b.pos.x - from.x), heading)) > WARD_ARC) continue
+      this.bullets.splice(i, 1)
+      p.cooldown = p.pheno.period
+      p.water = Math.max(0, p.water - 0.5)
+      p.activeT = 4
+      p.recoilT = 0.12
+      this.burst(v(b.pos.x, b.pos.y), '#bfe3f2', 8)
+      sfx('break')
+      return
+    }
   }
 
   /** pull the lanyard on one mount: fire the plant's gene-gun. Every projectile
@@ -2043,6 +2075,12 @@ export class Game {
         }
         p.cooldown -= dt
         const from = this.gunPos(e, g)
+        // a ward gene on a raider gun is just as live: their point-defense
+        // swats your shells out of the sky while the crew is awake
+        if (p.pheno.quirk === 'ward') {
+          if (e.mode !== 'roam') this.wardIntercept(p, from, p.aim, false)
+          continue
+        }
         // a hunting mount grinds toward you while the hull holds range — slow
         // enough that keeping way on still slips the ring, but a ship you circle
         // is no longer helpless. Roamers don't track: sneaking past stays a play

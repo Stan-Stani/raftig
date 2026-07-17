@@ -12,7 +12,9 @@ export const LOCUS_ORDER: LocusId[] = ['power', 'rate', 'barrel', 'reach', 'elem
 export type Element = 'plain' | 'ember' | 'frost' | 'venom'
 // projectile "tricks" — one per plant (the quirk locus). homing joins the old
 // three: the wand rig's behaviours are genes now, hiding in carrier lines.
-export type Quirk = 'none' | 'pierce' | 'leech' | 'magnet' | 'homing'
+// ward turns the plant into point-defense: it swats incoming shells instead
+// of bombarding — a mount slot traded for safety, bred like everything else.
+export type Quirk = 'none' | 'pierce' | 'leech' | 'magnet' | 'homing' | 'ward'
 
 export interface AlleleDef {
   id: string
@@ -87,6 +89,7 @@ export const LOCI: Record<LocusId, AlleleDef[]> = {
     { id: 'leech', sym: 'L', label: 'leech', dom: 0, w: 0.5, rare: true, quirk: 'leech' },
     { id: 'magnet', sym: 'M', label: 'magnet', dom: 0, w: 0.5, rare: true, quirk: 'magnet' },
     { id: 'homing', sym: 'G', label: 'homing', dom: 0, w: 0.5, rare: true, quirk: 'homing' },
+    { id: 'ward', sym: 'D', label: 'ward', dom: 0, w: 0.5, rare: true, quirk: 'ward' },
   ],
   // burst: how the shell lands. direct is the common flush hit; airburst is a
   // rare recessive that re-casts the plant's own volley where the shell bursts —
@@ -116,6 +119,7 @@ export const REGION_LOCKS: RegionLock[] = [
   { locus: 'power', allele: 'titan', heading: Math.PI, minDanger: 5 },
   { locus: 'element', allele: 'frost', heading: -Math.PI / 2, minDanger: 6 },
   { locus: 'quirk', allele: 'homing', heading: 0, minDanger: 7 },
+  { locus: 'quirk', allele: 'ward', heading: null, minDanger: 8 },
   { locus: 'burst', allele: 'airburst', heading: null, minDanger: 9 },
 ]
 
@@ -141,6 +145,7 @@ export function randomizeRegions() {
     { heading: dirs[1], minDanger: 5 },
     { heading: dirs[2], minDanger: 6 },
     { heading: dirs[3], minDanger: 7 },
+    { heading: null, minDanger: 8 },
     { heading: null, minDanger: 9 },
   ])
   REGION_LOCKS.forEach((lock, i) => {
@@ -223,6 +228,7 @@ export function cultivarName(g: Genome): string {
  *  A homing/airburst trick prefixes the base role (a bred "cluster sniper"). */
 function roleOf(power: AlleleDef, rate: AlleleDef, barrel: AlleleDef, reach: AlleleDef, quirk: AlleleDef, burst: AlleleDef): string {
   const base = (() => {
+    if (quirk.quirk === 'ward') return 'warden' // it doesn't bombard at all
     if (reach.id === 'spyglass') return power.id === 'titan' ? 'siege sniper' : 'sniper'
     if (barrel.id === 'hydra') return reach.id === 'short' ? 'scattergun' : 'sprayer'
     if (power.id === 'titan') return 'siege gun'
