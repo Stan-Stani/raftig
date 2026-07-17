@@ -642,7 +642,7 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
     // and Z/X (battery elevation) pull it in short of that.
     const a = g.ship.a + plant.aim
     const reach = g.plantRange(plant)
-    drawAim(ctx, p.x, p.y - 12, a, false, false, t)
+    drawAim(ctx, p.x, p.y - 12, a, g.tool === 'trim', g.trimSel === m, t)
     drawDropRing(
       ctx,
       p.x + Math.cos(a) * reach,
@@ -1377,7 +1377,7 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
   // manual fire: reminder chip, lit gold when a loaded gun has a target to fire on
   const ready = g.mounts.some(m => m.plant && m.plant.water > 0 && m.plant.cooldown <= 0)
   const litFire = ready && g.inCombat() && 0.5 + 0.5 * Math.sin(t * 6) > 0.35
-  chip(ctx, x2, 44, '␣ SPACE fire', litFire ? '#ffd257' : undefined)
+  chip(ctx, x2, 44, '␣ fire · A/D+␣ one rail', litFire ? '#ffd257' : undefined)
 
   // sea status
   const mins = Math.floor(g.stats.time / 60)

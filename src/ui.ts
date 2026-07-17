@@ -4,7 +4,7 @@
 import { Board, BoardParent, slotChoices, slotSwitchCost, picksCost } from './breeding'
 import { Genome, LocusId, LOCUS_ORDER, expressed, alleleDef } from './genetics'
 
-export type Tool = 'plant' | 'water'
+export type Tool = 'plant' | 'water' | 'trim'
 
 export interface ToolDef {
   tool: Tool
@@ -16,6 +16,12 @@ export interface ToolDef {
 export const TOOLS: ToolDef[] = [
   { tool: 'plant', icon: '🌱', name: 'plant', tip: 'pick a seed (Q/E or wheel), click an empty mount to sow · click a planted mount twice to dig it up' },
   { tool: 'water', icon: '💧', name: 'water', tip: 'click a plant to water it (1💧) — dry plants wilt and die · B boils 1🪵 → 2💧' },
+  {
+    tool: 'trim',
+    icon: '🎯',
+    name: 'trim',
+    tip: 'click a plant, then the sea, to trim how far its shells range (out of combat) · Z/X still trims the whole battery live',
+  },
 ]
 
 export interface Rect {
