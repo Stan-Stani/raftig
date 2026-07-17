@@ -119,6 +119,10 @@ export interface Plant {
   dryTime: number
   burnT: number
   poisonT: number
+  /** white hit-flash, seconds left */
+  flashT: number
+  /** muzzle recoil, seconds left — the sprite kicks back along -aim */
+  recoilT: number
   wobble: number // render phase
   /** firing heading, radians. Hull-relative on your ship (always the mount's
    *  natural facing — the helm is the only traverse); world-fixed on raider
@@ -280,6 +284,12 @@ export interface EnemyShip {
   /** a plain hunter's phase in its close-in/back-out breathing cycle, so a pack
    *  of raiders doesn't surge and retreat in lockstep */
   surgePhase?: number
+  /** white hit-flash, seconds left */
+  flashT?: number
+  /** frost resistance: each fresh chill sticks for less while these stand */
+  frostStacks?: number
+  /** seconds until a clean (unchilled) spell clears the frost stacks */
+  frostRecoverT?: number
 }
 
 export interface Wind {
@@ -346,6 +356,10 @@ export interface FloatText {
   text: string
   life: number
   color: string
+  /** font px — damage numbers scale with the blow (default 13) */
+  size?: number
+  /** horizontal drift, px/s — keeps a hydra volley's numbers from stacking */
+  vx?: number
 }
 
 export interface HoverInfo {
@@ -406,6 +420,8 @@ function makePlant(genome: Genome, gen: number): Plant {
     dryTime: 0,
     burnT: 0,
     poisonT: 0,
+    flashT: 0,
+    recoilT: 0,
     wobble: rand(Math.PI * 2),
     aim: -Math.PI / 2, // overwritten at sowing with the mount's facing
   }
@@ -489,6 +505,13 @@ export class Game {
    *  and the wake trail draws straight off it instead of keeping its own history */
   shipTrail: { x: number; y: number; vx: number; vy: number; t: number }[] = []
   chillT = 0 // frost debuff on our ship
+  /** frost resistance — same diminishing returns the raiders get */
+  frostStacks = 0
+  frostRecoverT = 0
+  /** white hit-flash on our hull, seconds left */
+  hullFlashT = 0
+  /** low-hull heartbeat timer — beats while the hull is below a quarter */
+  alarmT = 0
   shake = 0
   cam = v(0, 0)
   /** sense-of-speed camera: eases back (zoom < 1) and leads forward as way comes
@@ -575,6 +598,10 @@ export class Game {
     this.camLead = v(0, 0)
     this.shipTrail = []
     this.chillT = 0
+    this.frostStacks = 0
+    this.frostRecoverT = 0
+    this.hullFlashT = 0
+    this.alarmT = 0
     this.shake = 0
     this.over = false
     this.paused = false
@@ -688,6 +715,8 @@ export class Game {
     this.time += dt
     this.stats.time += dt
     this.chillT = Math.max(0, this.chillT - dt)
+    this.frostRecoverT = Math.max(0, this.frostRecoverT - dt)
+    if (this.frostRecoverT <= 0) this.frostStacks = 0
     if (this.pendingDig) {
       this.pendingDigT -= dt
       if (this.pendingDigT <= 0) this.pendingDig = null
@@ -1077,8 +1106,10 @@ export class Game {
     this.particles = this.particles.filter(p => p.life > 0)
     for (const t of this.texts) {
       t.pos.y -= 22 * dt
+      t.pos.x += (t.vx ?? 0) * dt
       t.life -= dt
     }
+    this.hullFlashT = Math.max(0, this.hullFlashT - dt)
     this.texts = this.texts.filter(t => t.life > 0)
     if (this.boardMsg && (this.boardMsg.t -= dt) <= 0) this.boardMsg = null
   }
@@ -1167,6 +1198,17 @@ export class Game {
       }
       if (this.ship.hp <= 0) return this.gameOver()
     }
+    // low-hull alarm: a slow heartbeat under a red vignette (render) while the
+    // hull is below a quarter — deaths shouldn't feel sudden
+    if (this.ship.hp < this.tierDef().hull * 0.25 && !this.over) {
+      this.alarmT -= dt
+      if (this.alarmT <= 0) {
+        this.alarmT = 1.4
+        sfx('alarm')
+      }
+    } else {
+      this.alarmT = 0
+    }
     // out of the fight the crew patches the hull — same rule the raiders play by
     const fighting = this.inCombat()
     if (!fighting && this.burnT <= 0 && this.ship.hp < this.tierDef().hull) {
@@ -1189,6 +1231,8 @@ export class Game {
       const thirst = p.activeT > 0 ? 0.3 : 0.04
       p.water = Math.max(0, p.water - p.pheno.drain * thirst * dt)
 
+      p.flashT = Math.max(0, p.flashT - dt)
+      p.recoilT = Math.max(0, p.recoilT - dt)
       // damage over time
       if (p.burnT > 0) {
         p.burnT -= dt
@@ -1196,7 +1240,9 @@ export class Game {
       }
       if (p.poisonT > 0) {
         p.poisonT -= dt
-        p.hp -= 2.5 * dt
+        // poison wilts a stem down to a thread but never fells it — venom
+        // softens a battery, the killing blow still has to be shot in
+        if (p.hp > 1) p.hp = Math.max(1, p.hp - 2.5 * dt)
       }
       // the gardener splints scorched stems once the shooting stops
       if (!fighting && p.burnT <= 0 && p.poisonT <= 0 && p.hp < p.maxHp) {
@@ -1205,6 +1251,7 @@ export class Game {
       if (p.hp <= 0) {
         m.plant = null
         this.toastAt(this.mountPos(m), '🥀', '#c5b8a0')
+        sfx('break')
         continue
       }
 
@@ -1399,6 +1446,7 @@ export class Game {
   ) {
     const speed = opts.speed ?? 260 // shells hang in the air — lead a moving target
     const homing = p.pheno.quirk === 'homing'
+    if (muzzle) p.recoilT = 0.12 // the sprite kicks back along -aim as the volley leaves
     // the reach gene is the rangefinder; friendly guns fire at the battery
     // elevation, enemy guns at their own (bastion gunners crank theirs in)
     // enemy shells burst at the gun's reach — mortars/bastions crank elevation so
@@ -1724,6 +1772,9 @@ export class Game {
     }
     for (const e of this.enemies) {
       e.chillT = Math.max(0, e.chillT - dt)
+      e.flashT = Math.max(0, (e.flashT ?? 0) - dt)
+      e.frostRecoverT = Math.max(0, (e.frostRecoverT ?? 0) - dt)
+      if (e.frostRecoverT <= 0) e.frostStacks = 0
       // rowers sprint, then blow — a sustained chase dulls the harrier's edge
       if (e.kind === 'harrier') {
         e.row = e.mode === 'hunt' ? Math.max(0, e.row - dt / 10) : Math.min(1, e.row + dt / 15)
@@ -1944,13 +1995,17 @@ export class Game {
 
       for (const g of [...e.guns]) {
         const p = g.plant
+        p.flashT = Math.max(0, p.flashT - dt)
+        p.recoilT = Math.max(0, p.recoilT - dt)
         if (p.burnT > 0) {
           p.burnT -= dt
           p.hp -= 3 * dt
         }
         if (p.poisonT > 0) {
           p.poisonT -= dt
-          p.hp -= 2.5 * dt
+          // same floor your own plants get: poison wilts, direct hits fell —
+          // a venom broadside can't scuttle a ship all on its own
+          if (p.hp > 1) p.hp = Math.max(1, p.hp - 2.5 * dt)
         }
         if (p.hp <= 0) {
           this.killEnemyGun(e, g)
@@ -2202,8 +2257,10 @@ export class Game {
 
   private damageEnemyHull(e: EnemyShip, b: Bullet) {
     e.hp -= b.dmg
+    e.flashT = 0.09
+    this.dmgText(b.drop, b.dmg, b.element, false)
     if (b.element === 'ember') e.burnT = 3
-    if (b.element === 'frost') e.chillT = 2.5
+    if (b.element === 'frost') this.chillEnemy(e)
     if (e.hp <= 0) this.sinkShip(e)
   }
 
@@ -2255,11 +2312,16 @@ export class Game {
     }
   }
 
-  /** a ship with no guns left has no fight left — the crew scuttles it */
+  /** a ship with no guns left has no fight left — the crew scuttles it.
+   *  This is the jackpot kill (the whole wreck is yours), so it gets its own
+   *  fanfare on top of the ordinary sinking */
   private checkScuttle(e: EnemyShip) {
     if (e.scuttling || e.sunk || e.guns.length > 0) return
     e.scuttling = true
-    this.toastAt(e.pos, 'defenseless — crew scuttles!', '#ffd257')
+    this.toastAt(e.pos, '⚑ defenseless — crew scuttles!', '#ffd257')
+    this.burst(e.pos, '#ffd257', 18)
+    this.shake = Math.min(10, this.shake + 3)
+    sfx('scuttle')
     this.sinkShip(e)
   }
 
@@ -2269,6 +2331,7 @@ export class Game {
     e.guns.splice(i, 1)
     const pos = this.gunPos(e, g)
     this.burst(pos, '#4e9a5f', 8)
+    sfx('break')
     if (e.beeHit) return // a stung ship's lines go down with it — the bees' claim
     // your own bees keep the pouch fed — only a line worth stealing floats free,
     // and deeper waters carry hotter genomes, so range is still the gene hunt
@@ -2346,9 +2409,12 @@ export class Game {
         if (dist(at, this.mountPos(m)) < splash) {
           hitAny = true
           if (b.owner && !b.owner.sunk) b.owner.patience = b.owner.patience0 // a burst that tells keeps them keen
-          p.hp -= b.dmg * (b.element === 'venom' ? 1.6 : 1)
+          const dealt = b.dmg * (b.element === 'venom' ? 1.6 : 1)
+          p.hp -= dealt
+          p.flashT = 0.09
+          this.dmgText(this.mountPos(m), dealt, b.element, true)
           if (b.element === 'ember') p.burnT = 3
-          if (b.element === 'frost') this.chillT = 2.5
+          if (b.element === 'frost') this.chillShip()
           if (b.element === 'venom') p.poisonT = 4
           // a hit flower shreds leaves right at the mount, on top of the
           // generic spark burst below — that's the tell for "that one got hit"
@@ -2362,8 +2428,10 @@ export class Game {
         hitAny = true
         if (b.owner && !b.owner.sunk) b.owner.patience = b.owner.patience0 // a burst that tells keeps them keen
         this.ship.hp -= b.dmg
+        this.hullFlashT = 0.09
+        this.dmgText(at, b.dmg, b.element, true)
         if (b.element === 'ember') this.burnT = 3
-        if (b.element === 'frost') this.chillT = 2.5
+        if (b.element === 'frost') this.chillShip()
         this.shake = Math.min(8, this.shake + 1.5)
         if (this.ship.hp <= 0) this.gameOver()
         if (b.quirk === 'leech' && b.src) this.leechProc(b.src, at)
@@ -2379,9 +2447,12 @@ export class Game {
             if (dist(at, this.gunPos(o, eg)) < splash) {
               hitAny = true
               o.beeHit = true
-              gp.hp -= b.dmg * (b.element === 'venom' ? 1.6 : 1)
+              const dealt = b.dmg * (b.element === 'venom' ? 1.6 : 1)
+              gp.hp -= dealt
+              gp.flashT = 0.09
+              this.dmgText(this.gunPos(o, eg), dealt, b.element, false)
               if (b.element === 'ember') gp.burnT = 3
-              if (b.element === 'frost') o.chillT = 2.5
+              if (b.element === 'frost') this.chillEnemy(o)
               if (b.element === 'venom') gp.poisonT = 4
               for (let i = 0; i < 7; i++) this.shedLeaf(this.gunPos(o, eg))
               if (gp.hp <= 0) {
@@ -2416,9 +2487,12 @@ export class Game {
           hitAny = true
           this.aggro(e)
           e.patience = e.patience0 // you drew blood — now they're invested
-          p.hp -= b.dmg * (b.element === 'venom' ? 1.6 : 1)
+          const dealt = b.dmg * (b.element === 'venom' ? 1.6 : 1)
+          p.hp -= dealt
+          p.flashT = 0.09
+          this.dmgText(this.gunPos(e, g), dealt, b.element, false)
           if (b.element === 'ember') p.burnT = 3
-          if (b.element === 'frost') e.chillT = 2.5
+          if (b.element === 'frost') this.chillEnemy(e)
           if (b.element === 'venom') p.poisonT = 4
           if (b.quirk === 'leech' && b.src) this.leechProc(b.src, at)
           // same "that flower got hit" tell as your own mounts, right on their gun
@@ -2813,6 +2887,49 @@ export class Game {
 
   toastAt(pos: Vec, text: string, color: string) {
     this.texts.push({ pos: v(pos.x, pos.y - 20), text, life: 1.6, color })
+  }
+
+  /** float the damage a burst dealt — the genetics payoff made visible: a titan
+   *  ball thumps in big type, a mild one taps. Colored by element; red-tinged
+   *  when it's YOUR hull paying. DoT ticks don't float (the tint halos carry those) */
+  private dmgText(at: Vec, dmg: number, element: Bullet['element'], hurtYou: boolean) {
+    const color =
+      element === 'ember'
+        ? '#ffb26b'
+        : element === 'frost'
+          ? '#a5e4ff'
+          : element === 'venom'
+            ? '#c9a0ff'
+            : hurtYou
+              ? '#ff9d9d'
+              : '#fff3c4'
+    this.texts.push({
+      pos: v(at.x + rand(-9, 9), at.y - 22 + rand(-5, 5)),
+      text: String(Math.round(dmg * 10) / 10),
+      life: 0.8,
+      color,
+      size: 11 + Math.min(9, dmg * 0.5),
+      vx: rand(-10, 10),
+    })
+  }
+
+  /** frost carries diminishing returns: every fresh chill sticks for less while
+   *  the stacks stand, and a ~6s spell without a new hit shakes them all off —
+   *  a frost broadside is strong control, not a permanent lock */
+  private chillDur(stacks: number): number {
+    return Math.max(0.5, 2.5 * Math.pow(0.75, stacks))
+  }
+
+  private chillShip() {
+    this.chillT = Math.max(this.chillT, this.chillDur(this.frostStacks))
+    this.frostStacks++
+    this.frostRecoverT = 6
+  }
+
+  private chillEnemy(e: EnemyShip) {
+    e.chillT = Math.max(e.chillT, this.chillDur(e.frostStacks ?? 0))
+    e.frostStacks = (e.frostStacks ?? 0) + 1
+    e.frostRecoverT = 6
   }
 
   /** the mount under a world point, if any */

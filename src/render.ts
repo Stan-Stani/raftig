@@ -71,10 +71,10 @@ export function render(ctx: CanvasRenderingContext2D, g: Game) {
   }
   ctx.globalAlpha = 1
 
-  // floating texts
+  // floating texts — damage numbers carry their own size (big blows, big type)
   ctx.textAlign = 'center'
-  ctx.font = 'bold 13px ui-monospace, monospace'
   for (const ft of g.texts) {
+    ctx.font = `bold ${ft.size ?? 13}px ui-monospace, monospace`
     ctx.globalAlpha = Math.max(0, Math.min(1, ft.life))
     ctx.fillStyle = '#00000088'
     ctx.fillText(ft.text, ft.pos.x + 1, ft.pos.y + 1)
@@ -463,6 +463,14 @@ function drawPlant(ctx: CanvasRenderingContext2D, x: number, y: number, p: Plant
   ctx.fill()
   ctx.globalAlpha = 1
 
+  // fresh hit: the whole head flashes white for a frame or two
+  if (p.flashT > 0) {
+    ctx.fillStyle = `rgba(255,255,255,${0.7 * Math.min(1, p.flashT / 0.09)})`
+    ctx.beginPath()
+    ctx.arc(headX, headY, r + 3, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
   // reload gauge (our guns only) — manual fire means the crew reloads between
   // volleys: an amber arc winds up as it reloads, a dim green ring = loaded & ready
   if (!hostile && !dry) {
@@ -534,8 +542,9 @@ function hullPath(ctx: CanvasRenderingContext2D, len: number, beam: number) {
   ctx.closePath()
 }
 
-/** one solid hull — damage darkens her, fire licks the deck. Caller rotates the ctx */
-function drawHull(ctx: CanvasRenderingContext2D, len: number, beam: number, frac: number, hostile: boolean, burnT: number) {
+/** one solid hull — damage darkens her, fire licks the deck, a fresh hit
+ *  flashes her white for a frame or two. Caller rotates the ctx */
+function drawHull(ctx: CanvasRenderingContext2D, len: number, beam: number, frac: number, hostile: boolean, burnT: number, flash = 0) {
   hullPath(ctx, len, beam)
   ctx.fillStyle = hostile ? '#4f3d2c' : '#8a6a45'
   ctx.fill()
@@ -571,6 +580,22 @@ function drawHull(ctx: CanvasRenderingContext2D, len: number, beam: number, frac
     ctx.fillStyle = `rgba(255,120,40,${0.22 + 0.13 * Math.sin(burnT * 20)})`
     ctx.fill()
   }
+  if (flash > 0) {
+    hullPath(ctx, len, beam)
+    ctx.fillStyle = `rgba(255,255,255,${0.65 * Math.min(1, flash)})`
+    ctx.fill()
+  }
+}
+
+/** slim hp sliver over a damaged hull — the precise read the tooltip used to hoard */
+function drawHpBar(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, frac: number) {
+  const f = Math.max(0, Math.min(1, frac))
+  ctx.fillStyle = 'rgba(0,0,0,0.5)'
+  roundRect(ctx, x - w / 2, y, w, 4, 2)
+  ctx.fill()
+  ctx.fillStyle = f > 0.5 ? '#8fd07a' : f > 0.25 ? '#ffd257' : '#ff6e5a'
+  roundRect(ctx, x - w / 2 + 0.5, y + 0.5, Math.max(1.5, (w - 1) * f), 3, 1.5)
+  ctx.fill()
 }
 
 function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
@@ -587,7 +612,7 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
   ctx.save()
   ctx.translate(g.ship.pos.x, g.ship.pos.y)
   ctx.rotate(g.ship.a + tilt)
-  drawHull(ctx, tier.len, tier.beam, g.ship.hp / tier.hull, false, g.burnT)
+  drawHull(ctx, tier.len, tier.beam, g.ship.hp / tier.hull, false, g.burnT, g.hullFlashT / 0.09)
   // empty mount sockets read as places to sow
   for (const m of g.mounts) {
     ctx.fillStyle = m.plant ? '#00000018' : '#00000033'
@@ -626,7 +651,9 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
       plant.cooldown <= 0 && plant.water > 0,
       t
     )
-    drawPlant(ctx, p.x, p.y, plant, false, t)
+    // muzzle recoil: the sprite kicks back along -aim as a volley leaves
+    const rec = plant.recoilT > 0 ? (plant.recoilT / 0.12) * 3 : 0
+    drawPlant(ctx, p.x - Math.cos(a) * rec, p.y - Math.sin(a) * rec, plant, false, t)
     drawWaterBar(ctx, p.x, p.y, plant)
     // armed to dig: a pulsing ring so a half-finished click reads as a warning,
     // not a silent no-op, before the confirming second click lands
@@ -638,6 +665,10 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
       ctx.stroke()
     }
   })
+
+  // below half hull she wears her own bar — the HUD chip is easy to miss mid-fight
+  const hullFrac = g.ship.hp / tier.hull
+  if (hullFrac < 0.5 && !g.over) drawHpBar(ctx, g.ship.pos.x, g.ship.pos.y - tier.len - 12, tier.len * 1.2, hullFrac)
 
   // hovering a plant → show its full genetic reach (theirs too — know the sniper)
   const hi = g.hoverInfo
@@ -790,12 +821,14 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
       const rr = gun.plant.pheno.range * (gun.plant.elev ?? 1)
       drawAim(ctx, p.x, p.y - 12, a, false, false, t, '255,105,90')
       drawDropRing(ctx, p.x + Math.cos(a) * rr, p.y + Math.sin(a) * rr, SPLASH, gun.plant.cooldown <= 0, t, '255,105,90')
-      drawPlant(ctx, p.x, p.y, gun.plant, true, t)
+      const rec = gun.plant.recoilT > 0 ? (gun.plant.recoilT / 0.12) * 3 : 0
+    drawPlant(ctx, p.x - Math.cos(a) * rec, p.y - Math.sin(a) * rec, gun.plant, true, t)
     }
+    if (e.hp < e.maxHp) drawHpBar(ctx, e.pos.x, e.pos.y - e.r - 8, e.r * 1.4, frac0)
     if (e.mode === 'hunt') {
       ctx.font = '15px serif'
       ctx.textAlign = 'center'
-      ctx.fillText('⚔️', e.pos.x, e.pos.y - e.r - 14 + Math.sin(t * 5) * 2)
+      ctx.fillText('⚔️', e.pos.x, e.pos.y - e.r - 18 + Math.sin(t * 5) * 2)
     }
     return
   }
@@ -814,7 +847,7 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
   // class silhouettes: sloops run slim and long, galleons broad with a gilded
   // sterncastle, fireships low with braziers alight; raiders keep the stock hull
   if (e.kind === 'sloop') {
-    drawHull(ctx, e.r * 1.45, e.r * 0.55, frac, true, e.burnT)
+    drawHull(ctx, e.r * 1.45, e.r * 0.55, frac, true, e.burnT, (e.flashT ?? 0) / 0.09)
     // a fore-and-aft sail amidships — the cut that lets her flee any brawl
     ctx.fillStyle = 'rgba(238,229,205,0.85)'
     ctx.beginPath()
@@ -823,7 +856,7 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
     ctx.quadraticCurveTo(e.r * 0.1, e.r * 0.12, e.r * 0.95, 0)
     ctx.fill()
   } else if (e.kind === 'galleon') {
-    drawHull(ctx, e.r * 1.25, e.r * 0.95, frac, true, e.burnT)
+    drawHull(ctx, e.r * 1.25, e.r * 0.95, frac, true, e.burnT, (e.flashT ?? 0) / 0.09)
     // sterncastle and gold strakes — money and menace
     ctx.fillStyle = '#3a2c1e'
     roundRect(ctx, -e.r * 0.95, -e.r * 0.5, e.r * 0.55, e.r, 3)
@@ -837,7 +870,7 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
       ctx.stroke()
     }
   } else if (e.kind === 'fireship') {
-    drawHull(ctx, e.r * 1.1, e.r * 0.7, frac, true, e.burnT)
+    drawHull(ctx, e.r * 1.1, e.r * 0.7, frac, true, e.burnT, (e.flashT ?? 0) / 0.09)
     // plating rims the hull: bronze takes two normal hits, iron three
     if (e.armor) {
       hullPath(ctx, e.r * 1.1, e.r * 0.7)
@@ -854,7 +887,7 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
     }
   } else if (e.kind === 'mortar') {
     // low and broad — a gun-barge built to sit still and take hits, not run
-    drawHull(ctx, e.r * 1.05, e.r * 1.05, frac, true, e.burnT)
+    drawHull(ctx, e.r * 1.05, e.r * 1.05, frac, true, e.burnT, (e.flashT ?? 0) / 0.09)
     // a squat brass turret amidships — the "it's cranking elevation" tell
     ctx.fillStyle = '#5a4a30'
     ctx.beginPath()
@@ -864,7 +897,7 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
     ctx.lineWidth = 2
     ctx.stroke()
   } else {
-    drawHull(ctx, e.r * 1.2, e.r * 0.8, frac, true, e.burnT)
+    drawHull(ctx, e.r * 1.2, e.r * 0.8, frac, true, e.burnT, (e.flashT ?? 0) / 0.09)
   }
   ctx.restore()
   // the fireship's glow reads at a distance — sink it before it closes
@@ -898,7 +931,8 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
     const rr = gun.plant.elev != null ? gun.plant.pheno.range * gun.plant.elev : g.enemyReach(gun.plant, e.danger)
     drawAim(ctx, p.x, p.y - 12, a, false, false, t, '255,105,90')
     drawDropRing(ctx, p.x + Math.cos(a) * rr, p.y + Math.sin(a) * rr, SPLASH, e.mode === 'hunt' && gun.plant.cooldown <= 0, t, '255,105,90')
-    drawPlant(ctx, p.x, p.y, gun.plant, true, t)
+    const rec = gun.plant.recoilT > 0 ? (gun.plant.recoilT / 0.12) * 3 : 0
+    drawPlant(ctx, p.x - Math.cos(a) * rec, p.y - Math.sin(a) * rec, gun.plant, true, t)
   }
   // harriers fly a red pennant — the fast ones that row through any wind
   if (e.kind === 'harrier') {
@@ -917,6 +951,8 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
     ctx.closePath()
     ctx.fill()
   }
+  // hull bar: only once she's marked you AND taken damage — roamers keep a clean horizon
+  if (e.mode !== 'roam' && e.hp < e.maxHp) drawHpBar(ctx, e.pos.x, e.pos.y - e.r - 8, e.r * 1.6, e.hp / e.maxHp)
   if (e.mode !== 'roam') {
     ctx.font = '15px serif'
     ctx.textAlign = 'center'
@@ -1300,6 +1336,17 @@ function chip(ctx: CanvasRenderingContext2D, x: number, y: number, text: string,
 }
 
 function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t: number) {
+  // low-hull alarm: a red vignette breathes at the screen edge under a quarter
+  // hull, paired with the heartbeat sfx — the ⚠ chip alone was easy to miss
+  const alarmFrac = g.ship.hp / g.tierDef().hull
+  if (!g.over && alarmFrac < 0.25) {
+    const a = 0.14 + 0.22 * (1 - alarmFrac / 0.25) + 0.08 * Math.sin(t * 4.5)
+    const vg = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.36, w / 2, h / 2, Math.max(w, h) * 0.6)
+    vg.addColorStop(0, 'rgba(160,20,20,0)')
+    vg.addColorStop(1, `rgba(160,20,20,${Math.max(0, a)})`)
+    ctx.fillStyle = vg
+    ctx.fillRect(0, 0, w, h)
+  }
   // resources
   let x = 12
   x += chip(ctx, x, 12, `🪵 ${g.wood}`) + 6

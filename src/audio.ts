@@ -49,6 +49,8 @@ export type SfxName =
   | 'spot'
   | 'notice'
   | 'salvage'
+  | 'scuttle'
+  | 'alarm'
 
 export function sfx(name: SfxName) {
   if (!actx || muted) return
@@ -101,6 +103,18 @@ export function sfx(name: SfxName) {
       tone(523, 0.1, 'sine', 0.05, 0, 0.09)
       tone(659, 0.16, 'sine', 0.05, 0, 0.18)
       tone(120, 0.25, 'triangle', 0.05, -30, 0.02)
+      break
+    case 'scuttle':
+      // the jackpot kill: a crunch, then a rising three-note prize call
+      tone(110, 0.25, 'sawtooth', 0.07, -50)
+      tone(440, 0.1, 'sine', 0.05, 0, 0.12)
+      tone(554, 0.1, 'sine', 0.05, 0, 0.22)
+      tone(659, 0.2, 'sine', 0.06, 0, 0.32)
+      break
+    case 'alarm':
+      // low double heartbeat under the red vignette — quiet, felt not heard
+      tone(70, 0.16, 'sine', 0.08)
+      tone(64, 0.2, 'sine', 0.06, 0, 0.22)
       break
   }
 }
