@@ -2601,8 +2601,8 @@ export class Game {
         wood -= n
       }
       if (Math.random() < 0.6) this.dropLoot('water', 1 + Math.floor(e.danger / 6), scatter())
+      this.dropLoot('pollen', 1, scatter()) // pollen is the player's kill reward, not the swarm's
     }
-    this.dropLoot('pollen', 1, scatter()) // a pinch of pollen off every kill, bee-stung or not
     this.stats.sunk++
     this.shake = Math.min(10, this.shake + 5)
     this.burst(e.pos, '#8a6a45', 16)
