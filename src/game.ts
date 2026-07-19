@@ -235,6 +235,9 @@ export interface EGun {
   leadPt?: Vec
 }
 
+export type EncounterKind = 'convoy' | 'pincer' | 'bombardment' | 'fireship-raid' | 'patrol' | 'broken-fleet'
+export type EncounterRole = 'anchor' | 'escort' | 'flank' | 'screen' | 'artillery' | 'reserve' | 'patrol' | 'fleeing' | 'reinforcement'
+
 export interface EnemyShip {
   pos: Vec
   vel: Vec
@@ -322,6 +325,19 @@ export interface EnemyShip {
   floodTickT: number
   rudderT: number
   zoneImmune: Record<HullZone, number>
+  /** authored fleet composition; ships with the same id coordinate instead of
+   *  merely happening to spawn near one another */
+  encounterId?: number
+  encounterKind?: EncounterKind
+  encounterRole?: EncounterRole
+  /** desired offset from the encounter leader while roaming */
+  formation?: Vec
+  /** common travel heading for patrols/convoys */
+  encounterHeading?: number
+  /** delayed entrants stay quiet until this counts down after the fleet wakes */
+  reserveT?: number
+  /** broken fleets run toward this rally point and wake its reinforcements */
+  rally?: Vec
 }
 
 export type HullZone = 'bow' | 'midships' | 'stern'
@@ -511,6 +527,8 @@ export class Game {
   sailEff: number | null = null // sailing efficiency while steering, for the HUD
   ambientT = 2
   spawnT = 3
+  private encounterSeq = 1
+  private encountersSeen = new Set<number>()
 
   /** materialized POIs by world cell (null = cell checked, empty) */
   pois = new Map<string, POI | null>()
@@ -623,6 +641,8 @@ export class Game {
     this.seeds = []
 
     this.enemies = []
+    this.encountersSeen.clear()
+    this.encounterSeq = 1
     this.bullets = []
     this.loot = []
     this.particles = []
@@ -1689,7 +1709,19 @@ export class Game {
     return weighted(table, t => t.w).kind
   }
 
-  spawnEnemyShip(opts: { at?: Vec; kind?: EnemyShip['kind']; home?: POI; dangerBonus?: number } = {}) {
+  spawnEnemyShip(opts: {
+    at?: Vec
+    kind?: EnemyShip['kind']
+    home?: POI
+    dangerBonus?: number
+    encounterId?: number
+    encounterKind?: EncounterKind
+    encounterRole?: EncounterRole
+    formation?: Vec
+    encounterHeading?: number
+    reserveT?: number
+    rally?: Vec
+  } = {}): EnemyShip {
     const c = this.ship.pos
     let pos = opts.at
     if (!pos) {
@@ -1788,7 +1820,7 @@ export class Game {
               : kind === 'bastion'
                 ? 40
                 : CHASE_PATIENCE
-    this.enemies.push({
+    const ship: EnemyShip = {
       pos,
       vel: v(0, 0),
       a: gunA,
@@ -1842,6 +1874,13 @@ export class Game {
       floodTickT: 0.5,
       rudderT: 0,
       zoneImmune: { bow: 0, midships: 0, stern: 0 },
+      encounterId: opts.encounterId,
+      encounterKind: opts.encounterKind,
+      encounterRole: opts.encounterRole,
+      formation: opts.formation,
+      encounterHeading: opts.encounterHeading,
+      reserveT: opts.reserveT,
+      rally: opts.rally,
       home: opts.home,
       // some crews aren't dumb: sloops always shy off hive guns, fireships never
       // (the crew is already dead), the rest split roughly half and half
@@ -1849,30 +1888,95 @@ export class Game {
       // jumpy crews get more common the deeper you push — rougher waters breed
       // sloops that won't give a brawler a fair fight even at full health
       riskAverse: kind === 'sloop' && Math.random() < clamp(0.2 + danger * 0.07, 0.2, 0.85),
-    })
+    }
+    this.enemies.push(ship)
+    return ship
   }
 
-  /** some sails travel in pods — waking one means waking the neighbourhood */
+  /** Authored fleet encounters: existing classes gain meaning from composition,
+   *  geometry and timing instead of arriving as an interchangeable blob. */
   private spawnPod() {
     const c = this.ship.pos
     const angle = rand(Math.PI * 2)
     const away = rand(700, 1050)
     const anchor = v(c.x + Math.cos(angle) * away, c.y + Math.sin(angle) * away)
-    const n = randInt(2, 3)
-    for (let i = 0; i < n; i++) {
-      const a = rand(Math.PI * 2)
-      this.spawnEnemyShip({ at: v(anchor.x + Math.cos(a) * rand(90, 180), anchor.y + Math.sin(a) * rand(90, 180)) })
+    const danger = this.dangerAt(anchor)
+    const id = this.encounterSeq++
+    const heading = angle + Math.PI / 2 + rand(-0.45, 0.45)
+    const fx = Math.cos(heading)
+    const fy = Math.sin(heading)
+    const px = -fy
+    const py = fx
+    const at = (forward: number, side: number) => v(anchor.x + fx * forward + px * side, anchor.y + fy * forward + py * side)
+    const choices: EncounterKind[] = ['convoy', 'pincer', 'patrol', 'broken-fleet']
+    if (danger > 3.2) choices.push('bombardment')
+    if (danger > 2.6) choices.push('fireship-raid')
+    const kind = choices[randInt(0, choices.length - 1)]
+    const spawn = (shipKind: EnemyShip['kind'], role: EncounterRole, forward: number, side: number, extra: Partial<Pick<EnemyShip, 'reserveT' | 'rally'>> = {}) =>
+      this.spawnEnemyShip({
+        at: at(forward, side),
+        kind: shipKind,
+        encounterId: id,
+        encounterKind: kind,
+        encounterRole: role,
+        formation: v(forward, side),
+        encounterHeading: heading,
+        reserveT: extra.reserveT,
+        rally: extra.rally,
+      })
+
+    if (kind === 'convoy') {
+      spawn(danger > 4.2 ? 'galleon' : 'raider', 'anchor', 0, 0)
+      spawn('harrier', 'escort', -80, -125)
+      spawn(danger > 2.5 ? 'sloop' : 'raider', 'escort', -80, 125)
+    } else if (kind === 'pincer') {
+      spawn(danger > 2.4 ? 'sloop' : 'raider', 'flank', 30, -190)
+      spawn('harrier', 'flank', 30, 190, { reserveT: 1.8 })
+      if (danger > 4.5) spawn('raider', 'reserve', -210, 0, { reserveT: 3 })
+    } else if (kind === 'bombardment') {
+      spawn('mortar', 'artillery', -190, 0)
+      spawn('raider', 'screen', 80, -130)
+      spawn(danger > 4.8 ? 'galleon' : 'harrier', 'screen', 80, 130)
+    } else if (kind === 'fireship-raid') {
+      spawn('raider', 'screen', 70, -125)
+      spawn('harrier', 'screen', 70, 125)
+      spawn('fireship', 'reserve', -220, 0, { reserveT: 2.8 })
+    } else if (kind === 'patrol') {
+      spawn('raider', 'patrol', 0, 0)
+      spawn(danger > 2 ? 'harrier' : 'raider', 'patrol', -125, -90)
+      spawn(danger > 3.5 ? 'sloop' : 'raider', 'patrol', -250, 90)
+    } else {
+      const rally = at(-420, 0)
+      const a = spawn('raider', 'fleeing', 80, -70, { rally })
+      const b = spawn(danger > 2.5 ? 'sloop' : 'raider', 'fleeing', 20, 80, { rally })
+      a.hp *= rand(0.38, 0.62)
+      b.hp *= rand(0.45, 0.7)
+      spawn(danger > 4 ? 'galleon' : 'raider', 'reinforcement', -420, 0, { reserveT: 6, rally })
     }
   }
 
   private notice(e: EnemyShip, t = NOTICE_T) {
     if (e.mode !== 'roam') return
+    if ((e.reserveT ?? 0) > 0) return
     // a garrison at peace ignores the player entirely — its guns are for raiders
     if (e.kind === 'bastion' && !this.beesAngry && !e.home?.hostile) return
     e.mode = 'notice'
     // the eager classes commit fast: rowers smell blood, fireships exist to burn
     e.noticeT = e.kind === 'harrier' || e.kind === 'fireship' ? t * 0.6 : t
     e.noticeD = dist(e.pos, this.ship.pos)
+    if (e.encounterId != null && e.encounterKind && !this.encountersSeen.has(e.encounterId)) {
+      this.encountersSeen.add(e.encounterId)
+      const names: Record<EncounterKind, [string, string]> = {
+        convoy: ['◆ convoy sighted', 'the prize is running behind escorts'],
+        pincer: ['↔ pincer', 'one sail shows; watch the opposite horizon'],
+        bombardment: ['◎ bombardment screen', 'break the screen or weather the mortar'],
+        'fireship-raid': ['🔥 fireship raid', 'the first wave is making room for something'],
+        patrol: ['— patrol line', 'cross quietly or wake the whole formation'],
+        'broken-fleet': ['⚑ broken fleet', 'damaged sails are running toward help'],
+      }
+      const [title, sub] = names[e.encounterKind]
+      this.banner = { title, sub, t: 3 }
+    }
     this.toastAt(e.pos, '❓', '#ffd257')
     sfx('notice')
   }
@@ -1893,12 +1997,22 @@ export class Game {
     }
     // stirring one ship wakes its podmates — pick where you engage
     for (const o of this.enemies) {
-      if (o !== e && o.mode === 'roam' && dist(o.pos, e.pos) < POD_WAKE_R) this.notice(o, rand(0.7, 1.2))
+      if (o !== e && o.mode === 'roam' && (o.reserveT ?? 0) <= 0 && dist(o.pos, e.pos) < POD_WAKE_R) this.notice(o, rand(0.7, 1.2))
     }
   }
 
   private updateEnemies(dt: number) {
     const center = this.ship.pos
+    // Delayed wings and fireships enter only after another member reveals the
+    // encounter. Their countdown is the ambush telegraph and prevents one
+    // proximity check from turning every composition back into a blob.
+    for (const e of this.enemies) {
+      if ((e.reserveT ?? 0) <= 0 || e.encounterId == null) continue
+      const awake = this.enemies.some(o => o !== e && o.encounterId === e.encounterId && (o.mode === 'notice' || o.mode === 'hunt'))
+      if (!awake) continue
+      e.reserveT = Math.max(0, e.reserveT! - dt)
+      if (e.reserveT <= 0) this.notice(e, e.kind === 'fireship' ? 0.35 : 0.7)
+    }
     // only a few press the attack — the rest shadow outside gun range and wait
     // for a slot. Slots are sticky (held until the hunter breaks off or sinks)
     // so the pack doesn't churn; fights stay fights, not dogpiles
@@ -1916,7 +2030,10 @@ export class Game {
     if (slots < HUNT_CAP) {
       const shadowers = this.enemies
         .filter(e => e.kind !== 'bastion' && e.mode === 'hunt' && !e.engaged)
-        .sort((a, b) => dist(a.pos, center) - dist(b.pos, center))
+        .sort((a, b) => {
+          const priority = (e: EnemyShip) => e.encounterRole === 'screen' || e.encounterRole === 'escort' ? 0 : e.encounterRole === 'flank' ? 1 : 2
+          return priority(a) - priority(b) || dist(a.pos, center) - dist(b.pos, center)
+        })
       for (const s of shadowers.slice(0, HUNT_CAP - slots)) s.engaged = true
     }
     for (const e of this.enemies) {
@@ -2015,7 +2132,23 @@ export class Game {
         if (e.patience <= 0) this.breakOff(e, ux, uy, 'not worth the powder')
       }
 
-      if (e.mode === 'hunt' && e.kind === 'fireship') {
+      if (e.mode === 'hunt' && e.encounterKind === 'convoy' && e.encounterRole === 'anchor') {
+        // The prize runs while its escorts spend the attack slots. Catching it
+        // is a navigation problem, not another ship patiently circling in range.
+        e.vel.x = -ux * spd + -uy * e.orbitDir * spd * 0.18
+        e.vel.y = -uy * spd + ux * e.orbitDir * spd * 0.18
+      } else if (e.mode === 'hunt' && e.encounterRole === 'fleeing' && e.rally) {
+        const rx = e.rally.x - e.pos.x
+        const ry = e.rally.y - e.pos.y
+        const rd = Math.hypot(rx, ry) || 1
+        e.vel.x = (rx / rd) * spd
+        e.vel.y = (ry / rd) * spd
+        if (rd < 260 && e.encounterId != null) {
+          for (const o of this.enemies) {
+            if (o.encounterId === e.encounterId && o.encounterRole === 'reinforcement' && (o.reserveT ?? 0) > 0) o.reserveT = 0
+          }
+        }
+      } else if (e.mode === 'hunt' && e.kind === 'fireship') {
         // the fireship IS the shell: charge the intercept point flat out and burn
         // together on contact. Its flame wake says where it's pointed — turn away
         const lx = lead.x - e.pos.x
@@ -2051,6 +2184,16 @@ export class Game {
         if (gun) {
           let tx = gun.fp.x
           let ty = gun.fp.y
+          // Pincer wings preserve opposite approach lanes instead of converging
+          // on the same cheapest station. Screens deliberately occupy the near
+          // lane so artillery and convoy anchors read behind them.
+          if (e.encounterRole === 'flank') {
+            tx += -uy * e.orbitDir * 150
+            ty += ux * e.orbitDir * 150
+          } else if (e.encounterRole === 'screen' || e.encounterRole === 'escort') {
+            tx += ux * 70
+            ty += uy * 70
+          }
           // never plot a course through the player's deck: if the straight run
           // to the firing point crosses the hull, swing wide and come around
           const sx = tx - e.pos.x
@@ -2100,6 +2243,22 @@ export class Game {
           e.wanderT = rand(3, 8)
           e.wanderA = rand(Math.PI * 2)
         }
+        // Encounter members hold authored lines/wedges around a leader while
+        // roaming. Once combat starts their role doctrine above takes over.
+        const leader = e.encounterId == null
+          ? null
+          : this.enemies.find(o => o.encounterId === e.encounterId && !o.sunk && (o.encounterRole === 'anchor' || o.encounterRole === 'artillery' || o.encounterRole === 'patrol'))
+        if (leader && leader !== e && e.formation && leader.formation) {
+          const h = leader.encounterHeading ?? leader.wanderA
+          const f = e.formation.x - leader.formation.x
+          const s = e.formation.y - leader.formation.y
+          const tx = leader.pos.x + Math.cos(h) * f - Math.sin(h) * s
+          const ty = leader.pos.y + Math.sin(h) * f + Math.cos(h) * s
+          if (dist(e.pos, v(tx, ty)) > 45) e.wanderA = Math.atan2(ty - e.pos.y, tx - e.pos.x)
+        } else if (e.encounterHeading != null) {
+          e.wanderA += clamp(angleDiff(e.encounterHeading, e.wanderA), -0.45 * dt, 0.45 * dt)
+        }
+        if (e.encounterRole === 'fleeing' && e.rally) e.wanderA = Math.atan2(e.rally.y - e.pos.y, e.rally.x - e.pos.x)
         // nest ships stay tethered to their totem
         if (e.home && dist(e.pos, e.home.pos) > 470) {
           e.wanderA = Math.atan2(e.home.pos.y - e.pos.y, e.home.pos.x - e.pos.x)
@@ -2594,7 +2753,7 @@ export class Game {
     // loot scales a touch faster than the threat — pushing one ring out is always
     // tempting. But a bee-stung hull is the swarm's kill: it pays nothing
     if (!e.beeHit) {
-      let wood = e.size * randInt(2, 3) + Math.floor(e.danger * 0.8)
+      let wood = e.size * randInt(2, 3) + Math.floor(e.danger * 0.8) + (e.encounterRole === 'anchor' ? e.size + 3 : 0)
       while (wood > 0) {
         const n = Math.min(wood, randInt(2, 4))
         this.dropLoot('wood', n, scatter())
@@ -3014,7 +3173,7 @@ export class Game {
       const danger = this.dangerAt(this.ship.pos)
       const cap = Math.min(8, 3 + Math.floor(danger / 2))
       if (hunting < 2 && this.enemies.length < cap) {
-        if (danger > 1.6 && Math.random() < 0.22) this.spawnPod()
+        if (danger > 1.25 && Math.random() < 0.55) this.spawnPod()
         else this.spawnEnemyShip()
       }
     }

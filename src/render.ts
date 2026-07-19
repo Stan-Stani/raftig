@@ -970,6 +970,17 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
     e.kind === 'fireship' ? 'rgba(120,55,42,0.94)' : 'rgba(202,108,91,0.92)',
     e.kind === 'fireship' ? '#e28a55' : '#7e4038',
   )
+  // Fleet-role pennants make an authored encounter readable without a label
+  // cloud: identify the prize, screen, artillery and delayed wing at a glance.
+  if (e.encounterRole && (e.mode !== 'roam' || (e.reserveT ?? 0) > 0 || e.encounterRole === 'fleeing')) {
+    const roleMark: Record<string, string> = {
+      anchor: '◆', escort: '◇', flank: '↔', screen: '▰', artillery: '◎', reserve: '◌', patrol: '—', fleeing: '⚑', reinforcement: '✦',
+    }
+    ctx.font = 'bold 13px ui-monospace, monospace'
+    ctx.textAlign = 'center'
+    ctx.fillStyle = (e.reserveT ?? 0) > 0 ? '#7d97a8' : e.encounterRole === 'anchor' ? '#ffd257' : '#d7e7ee'
+    ctx.fillText(roleMark[e.encounterRole] ?? '·', e.pos.x, e.pos.y - e.r - 28 + Math.sin(t * 3 + e.r) * 1.5)
+  }
   // harriers fly a red pennant — the fast ones that row through any wind
   if (e.kind === 'harrier') {
     ctx.strokeStyle = '#33271b'

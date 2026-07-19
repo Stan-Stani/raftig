@@ -34,6 +34,11 @@ npm run dev
   the attack at once; the rest shadow you outside gun range, waiting for a
   slot. The farther from home waters, the deadlier the raiders — and the
   loot scales faster than the threat.
+- **Read the fleet** — open-water enemies arrive in authored encounters instead
+  of anonymous clumps: catch a valuable convoy behind its escorts, survive a
+  delayed pincer or fireship raid, break a screen to reach its mortar, cross a
+  moving patrol quietly, or chase damaged sails before they reach waiting
+  reinforcements. Small pennants mark each ship's role once the fleet wakes.
 - **Flee** — hunters have *patience*: run clean and stop trading shots, and
   after a dozen-odd seconds they decide you're not worth the powder and break
   off. Every hit landed — theirs or yours — renews it, so a fight holds them
