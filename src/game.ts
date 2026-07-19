@@ -109,7 +109,7 @@ export const FIRESHIP_HIT = 8
 /** blanket shell-damage scalar, both directions — hits hurt more, fights swing
  *  faster. Applied once at shot creation so every downstream hit (hull, gun,
  *  splash, venom bonus) inherits it symmetrically for player and raider alike. */
-export const DMG_MULT = 2.5
+export const DMG_MULT = 4
 
 export interface Plant {
   genome: Genome
