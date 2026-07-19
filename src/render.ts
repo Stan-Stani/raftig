@@ -1,10 +1,11 @@
-import { Game, TS, RANGE, SPLASH, WARD_ARC, TIERS, FOG_CELL, DANGER_SCALE, ENEMY_WAKE_S, Plant, Bullet, EnemyShip, seaName } from './game'
+import { Game, TS, RANGE, SPLASH, WARD_ARC, TIERS, FOG_CELL, DANGER_SCALE, ENEMY_WAKE_S, SHIP_SIZE_MULT, Plant, Bullet, EnemyShip, enemyHullDims, seaName } from './game'
 import { describe, phenotype, Genome, Pheno, alleleDef } from './genetics'
 import { TOOLS, toolbarLayout, seedPanelRect, seedRowRects, restartRect, SEED_VISIBLE, boardLayout, BoardChip } from './ui'
 import { synergies, picksCost, DOCK_RANGE } from './breeding'
 import { POI, POI_SIGHT, POI_ICON, POI_COLOR, TRADE_COST, TRADE_RANGE, BREED_COST } from './poi'
 import { muted } from './audio'
-import { Vec, v, hash01, clamp, gkey, dist, waveHeight } from './util'
+import { Vec, v, hash01, clamp, gkey, dist, waveHeight, angleDiff } from './util'
+import { drawWake, drawSinkRipples } from './water'
 
 const ELEMENT_COLOR: Record<string, string> = {
   plain: '#ffd257',
@@ -54,7 +55,17 @@ export function render(ctx: CanvasRenderingContext2D, g: Game) {
   drawWake(ctx, g.shipTrail, g.tierDef().beam, t)
   // every moving hull trails its own wake — a lighter, shorter, haze-less LOD
   // version so a full fleet stays cheap (bastions sit still and carry no trail)
-  for (const e of g.enemies) if (e.trail) drawWake(ctx, e.trail, e.r * 0.7, t, ENEMY_WAKE)
+  for (const e of g.enemies) {
+    if (e.trail) {
+      // A sinking hull graduates from the cheap fleet LOD to the same long,
+      // foam-hazed wake used by the player—the beaded style visible up close.
+      drawWake(ctx, e.trail, e.r * 0.7, t, e.sunk ? { win: 1.5, haze: true, amp: 1 } : ENEMY_WAKE)
+    }
+    if (e.sunk && (e.sinkT ?? 0) > 0) {
+      const origin = e.sinkPos ?? e.pos
+      drawSinkRipples(ctx, origin.x, origin.y, e.r, SINK_EFFECT_S - (e.sinkT ?? 0), e.sinkSeed ?? origin.x * 0.7 + origin.y * 1.3)
+    }
+  }
   drawSpeedStreaks(ctx, g)
   for (const p of g.activePois) if (p.kind === 'calm') drawCalm(ctx, p, t)
   for (const p of g.activePois) if (p.kind !== 'calm') drawPOI(ctx, g, p, t)
@@ -194,169 +205,10 @@ function drawSpeedStreaks(ctx: CanvasRenderingContext2D, g: Game) {
   ctx.lineCap = 'butt'
 }
 
-/** draw a wake straight off a hull's recent course `trail` (each entry a fixed
- *  {x,y,vx,vy,t} the hull left behind), so it never gaps and curves through
- *  turns. Built like a real boat wake rather than two drawn lines: the bright
- *  cusp "edges" are a feather of short diagonal crest barbs stamped en echelon
- *  along the ~19.5° Kelvin envelope, the interior is soft transverse crest arcs
- *  (the V's), and both sit in a haze of foam flecks. Every mark is jittered by a
- *  hash of its own fixed water position, so it reads as churn — not vector art —
- *  and stays put as the hull sails on. Shared by the player and the enemy fleet:
- *  `opts.haze:false` drops the dense (and priciest) fleck layer and `opts.win`
- *  shortens the trail span, for cheap LOD wakes on the AI ships. */
-const WAKE_TAN_HALF_ANGLE = 0.354 // tan(~19.5°), the real Kelvin wake half-angle
 // enemy hulls get a cheap wake: no foam haze, a short trail, a touch dimmer
 const ENEMY_WAKE = { win: ENEMY_WAKE_S, haze: false, amp: 0.9 }
-function drawWake(
-  ctx: CanvasRenderingContext2D,
-  trail: { x: number; y: number; vx: number; vy: number; t: number }[],
-  beam: number,
-  time: number,
-  opts: { win?: number; haze?: boolean; amp?: number } = {},
-) {
-  if (trail.length < 2) return
-  const win = opts.win ?? 1.5 // seconds of course the wake spans and fades over
-  const amp = opts.amp ?? 1 // overall opacity — enemies ride a touch dimmer
-  const haze = opts.haze ?? true // the dense foam-fleck layer; off for LOD wakes
-
-  ctx.lineCap = 'round'
-
-  // how far off the centerline each side sits at a trail point — grows with
-  // how long ago the hull was there, opening the shallow V behind it
-  const offAt = (spd: number, age: number) => beam * 0.4 + spd * age * WAKE_TAN_HALF_ANGLE
-
-  // 1. divergent feather: short diagonal crest "barbs" stamped along each cusp
-  //    envelope, overlapping en echelon so the edge reads as a run of wavelets
-  //    rather than one continuous stroke. Each barb hangs inward-and-forward
-  //    off its envelope point and lengthens down-wake, like real divergent waves
-  ctx.strokeStyle = '#eaf6fa'
-  const BARB_SLICE = 0.045 // course between barbs — dense enough to feather
-  for (const side of [-1, 1]) {
-    let lastBucket = NaN
-    for (let i = trail.length - 1; i >= 0; i--) {
-      const p = trail[i]
-      const age = time - p.t
-      if (age > win) break
-      const spd = Math.hypot(p.vx, p.vy)
-      if (spd < 25) continue
-      // pin one barb per fixed course slice (not per fixed age) so each stays
-      // put in the water as the hull sails on, instead of dancing every frame
-      const bucket = Math.floor(p.t / BARB_SLICE)
-      if (bucket === lastBucket) continue
-      lastBucket = bucket
-      const fade = (1 - age / win) * Math.min(1, age / 0.12) // ease in at the stern
-      const off = offAt(spd, age)
-      const h = Math.atan2(p.vy, p.vx)
-      const nx = -Math.sin(h) * side
-      const ny = Math.cos(h) * side // outward normal on this side
-      const fx = Math.cos(h)
-      const fy = Math.sin(h) // toward the bow
-      const j = hash01(p.x * 0.8, p.y * 0.8)
-      const j2 = hash01(p.y * 0.7 + 3.1, p.x * 0.7 + 1.9)
-      const ex = p.x + nx * off // envelope (outer) point of the barb
-      const ey = p.y + ny * off
-      const len = 8 + off * 0.14 + j * 7 // barbs grow longer down-wake
-      const blend = 0.55 + j2 * 0.4 // how sharply the barb rakes forward
-      let dx = -nx * (1 - blend) + fx * blend // inward + forward
-      let dy = -ny * (1 - blend) + fy * blend
-      const dn = Math.hypot(dx, dy) || 1
-      dx /= dn
-      dy /= dn
-      ctx.globalAlpha = amp * fade * (0.2 + 0.2 * j2)
-      ctx.lineWidth = 1.1 + j * 0.9
-      ctx.beginPath()
-      ctx.moveTo(ex + (j - 0.5) * 2, ey + (j2 - 0.5) * 2)
-      ctx.lineTo(ex + dx * len, ey + dy * len)
-      ctx.stroke()
-    }
-  }
-
-  // 2. transverse crests: the "V's" filling the wake, bowing toward the bow —
-  //    beaded foam arcs, not wires. Each crest is pinned to a fixed slice of
-  //    the ship's course (so it sits still in the water as she sails on) and
-  //    every trait is hash-jittered per slice — some slices skipped for uneven
-  //    gaps, camber and brightness varied, apex leaned off-centre, beads broken
-  //    up — so the run of crests reads irregular and churny, not evenly ribbed
-  ctx.fillStyle = '#eaf6fa'
-  const SLICE = 0.13 // avg seconds of course between crests
-  let lastBucket = NaN
-  for (let i = trail.length - 1; i >= 0; i--) {
-    const p = trail[i]
-    const age = time - p.t
-    if (age > win) break
-    const spd = Math.hypot(p.vx, p.vy)
-    if (spd < 25) continue
-    const bucket = Math.floor(p.t / SLICE)
-    if (bucket === lastBucket) continue
-    lastBucket = bucket
-    const hb = hash01(bucket * 12.9 + 4.7, bucket * 3.3)
-    if (hb < 0.28) continue // skip some slices → uneven gaps between crests
-    const hb2 = hash01(bucket * 5.1, bucket * 8.7 + 1.3)
-    const fade = (1 - age / win) * Math.min(1, age / 0.16) // ease in at the stern, out down-wake
-    const off = offAt(spd, age)
-    const h = Math.atan2(p.vy, p.vx)
-    const px = -Math.sin(h)
-    const py = Math.cos(h)
-    const fx = Math.cos(h)
-    const fy = Math.sin(h)
-    const bow = off * (0.4 + hb * 0.5) // camber varies crest to crest
-    const skew = (hb2 - 0.5) * 0.5 * off // apex leans off-centre
-    const ax = p.x + px * off
-    const ay = p.y + py * off // one cusp
-    const rx = p.x - px * off
-    const ry = p.y - py * off // the other cusp
-    const cx = p.x + fx * bow + px * skew
-    const cy = p.y + fy * bow + py * skew // control point, cambered and skewed
-    const beads = Math.max(5, Math.round(off / 6))
-    const bright = 0.09 + hb2 * 0.12
-    for (let s = 1; s < beads; s++) {
-      const hx = hash01(bucket * 91 + s * 12.7, s * 4.3)
-      const hy = hash01(s * 7.9 + 2.3, bucket * 53 + s * 3.1)
-      if (hx < 0.28) continue // drop beads unevenly → a broken, gappy crest
-      const t = s / beads
-      const u = 1 - t
-      const qx = u * u * ax + 2 * u * t * cx + t * t * rx
-      const qy = u * u * ay + 2 * u * t * cy + t * t * ry
-      ctx.globalAlpha = Math.max(0, amp * fade * bright * (0.6 + hy))
-      ctx.beginPath()
-      ctx.arc(qx + (hx - 0.5) * 6, qy + (hy - 0.5) * 6, 0.5 + hy * 1.4, 0, Math.PI * 2)
-      ctx.fill()
-    }
-  }
-
-  // 3. foam haze: dim flecks scattered across the wake, brighter toward the
-  //    cusps and the churning stern — the noise that sells it as water. This is
-  //    the priciest layer (a bead per trail point), so LOD wakes skip it
-  if (haze) {
-    ctx.fillStyle = '#f2fbff'
-    for (let i = 0; i < trail.length; i++) {
-      const p = trail[i]
-      const spd = Math.hypot(p.vx, p.vy)
-      if (spd < 25) continue
-      const age = time - p.t
-      const fade = 1 - age / win
-      if (fade <= 0) continue
-      const off = offAt(spd, age)
-      const h = Math.atan2(p.vy, p.vx)
-      const px = -Math.sin(h)
-      const py = Math.cos(h)
-      for (let k = 0; k < 5; k++) {
-        const hx = hash01(p.x * 1.9 + k * 21.3, p.y * 1.7 - k * 9.1)
-        const hy = hash01(p.y * 2.3 - k * 6.7, p.x * 1.3 + k * 8.9)
-        const lat = hx * 2 - 1 // -1..1 across the width
-        const x = p.x + px * lat * off + (hy - 0.5) * 4
-        const y = p.y + py * lat * off + (hy - 0.5) * 4
-        ctx.globalAlpha = amp * fade * (0.06 + 0.14 * Math.abs(lat)) * (0.7 + 0.3 * fade)
-        ctx.beginPath()
-        ctx.arc(x, y, 0.6 + hy * 1.4, 0, Math.PI * 2)
-        ctx.fill()
-      }
-    }
-  }
-
-  ctx.globalAlpha = 1
-  ctx.lineCap = 'butt'
-}
+const SINK_EFFECT_S = 6
+const SINK_HULL_S = 3.8
 
 function drawLoot(ctx: CanvasRenderingContext2D, pos: Vec, kind: string, phase: number, ttl: number) {
   const icons: Record<string, string> = { wood: '🪵', seed: '🌰', water: '💧', pollen: '🌼' }
@@ -629,9 +481,6 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
   }
   ctx.restore()
 
-  // mast amidships
-  drawSail(ctx, g, g.ship.pos, t)
-
   g.mounts.forEach((m, i) => {
     const p = g.mountPos(m)
     const plant = m.plant
@@ -661,6 +510,11 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
     const rec = plant.recoilT > 0 ? (plant.recoilT / 0.12) * 3 : 0
     drawPlant(ctx, p.x - Math.cos(a) * rec, p.y - Math.sin(a) * rec, plant, false, t)
     drawWaterBar(ctx, p.x, p.y, plant)
+    if (plant.disruptedT > 0) {
+      ctx.font = '13px serif'
+      ctx.textAlign = 'center'
+      ctx.fillText('🔧', p.x + 13, p.y - 28 + Math.sin(t * 7))
+    }
     // armed to dig: a pulsing ring so a half-finished click reads as a warning,
     // not a silent no-op, before the confirming second click lands
     if (g.pendingDig === m) {
@@ -671,6 +525,21 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
       ctx.stroke()
     }
   })
+
+  // Canvas is the topmost part of the rig, so it passes in front of flowers
+  // and gun pots instead of looking painted onto the deck beneath them.
+  drawShipSail(ctx, g.ship.pos.x, g.ship.pos.y, g.ship.a + tilt, g.wind.a, tier.beam * 0.82, t)
+
+  for (const zone of [
+    ...(g.floodT > 0 ? [{ x: tier.len * 0.72, y: 0, icon: '≈', color: '#7fd8ff' }] : []),
+    ...(g.rudderT > 0 ? [{ x: -tier.len * 0.72, y: 0, icon: '⚓', color: '#ff9d5c' }] : []),
+  ]) {
+    const p = g.mountPos(zone)
+    ctx.font = 'bold 18px ui-monospace, monospace'
+    ctx.textAlign = 'center'
+    ctx.fillStyle = zone.color
+    ctx.fillText(zone.icon, p.x, p.y - 15 + Math.sin(t * 7) * 2)
+  }
 
   // below half hull she wears her own bar — the HUD chip is easy to miss mid-fight
   const hullFrac = g.ship.hp / tier.hull
@@ -762,30 +631,84 @@ function drawAim(
   }
 }
 
-function drawSail(ctx: CanvasRenderingContext2D, g: Game, mp: Vec, t: number) {
-  const a = g.wind.a
-  const stretch = g.sailEff ?? 0.55
-  const boom = 20 + g.wind.speed * 0.18
-  const tipX = mp.x + Math.cos(a) * boom
-  const tipY = mp.y + Math.sin(a) * boom
-  const px = -Math.sin(a)
-  const py = Math.cos(a)
-  const bulge = (7 + g.wind.speed * 0.1) * (0.6 + 0.4 * stretch) + Math.sin(t * 3.1) * 1.2
-  const midX = (mp.x + tipX) / 2
-  const midY = (mp.y + tipY) / 2
-  ctx.fillStyle = 'rgba(238,229,205,0.93)'
-  ctx.strokeStyle = '#b9ac8a'
-  ctx.lineWidth = 1
+/** A top-down square rig. Its yard stays across the hull with only a little
+ * bracing for the wind, so the sail never turns into a second wind arrow. */
+function drawShipSail(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  heading: number,
+  windA: number,
+  size: number,
+  t: number,
+  cloth = 'rgba(238,229,205,0.95)',
+  seam = '#b9ac8a',
+) {
+  const relativeWind = angleDiff(windA, heading)
+  // Match the sailing model's useful-wind read: running with the wind fills the
+  // canvas, while a headwind leaves it narrow, shallow and visibly luffing.
+  const power = 0.18 + 0.82 * Math.pow((1 + Math.cos(relativeWind)) / 2, 1.5)
+  const halfSpan = size * (0.42 + power * 0.3)
+  const depth = size * (0.28 + power * 0.4)
+  // Square yards are braced only slightly either side of athwartships. The
+  // sine makes the motion continuous as the wind shifts without ever allowing
+  // the canvas to line up with the ship or the wind indicator.
+  const trim = Math.sin(relativeWind) * 0.49
+  const flutter = Math.sin(t * (3.4 + (1 - power) * 5) + x * 0.01 + y * 0.013) * size * (0.02 + (1 - power) * 0.09)
+
+  ctx.save()
+  ctx.translate(x, y)
+  ctx.rotate(heading + Math.PI / 2 + trim)
+
+  // dark yard visible along the sail's leading edge
+  ctx.strokeStyle = '#493522'
+  ctx.lineCap = 'round'
+  ctx.lineWidth = Math.max(2, size * 0.075)
   ctx.beginPath()
-  ctx.moveTo(mp.x, mp.y)
-  ctx.quadraticCurveTo(midX + px * bulge, midY + py * bulge, tipX, tipY)
-  ctx.quadraticCurveTo(midX + px * bulge * 0.25, midY + py * bulge * 0.25, mp.x, mp.y)
+  ctx.moveTo(-size * 0.78, 0)
+  ctx.lineTo(size * 0.78, 0)
+  ctx.stroke()
+
+  // Broad square canvas with a wind-filled belly and a slightly curved foot.
+  ctx.fillStyle = cloth
+  ctx.strokeStyle = seam
+  ctx.lineWidth = Math.max(1, size * 0.035)
+  ctx.beginPath()
+  ctx.moveTo(-halfSpan, -size * 0.04)
+  ctx.quadraticCurveTo(0, -size * (0.08 + power * 0.1) - flutter, halfSpan, -size * 0.04)
+  ctx.lineTo(halfSpan * 0.82, -depth)
+  ctx.quadraticCurveTo(0, -depth - size * power * 0.14 - flutter, -halfSpan * 0.82, -depth)
+  ctx.closePath()
   ctx.fill()
   ctx.stroke()
-  ctx.fillStyle = '#5f4830'
+
+  ctx.globalAlpha = 0.42
+  ctx.lineWidth = 0.8
+  for (const f of [-0.32, 0, 0.32]) {
+    ctx.beginPath()
+    ctx.moveTo(halfSpan * (f / 0.42), -size * 0.1)
+    ctx.quadraticCurveTo(halfSpan * (f / 0.46), -depth * 0.55, halfSpan * (f / 0.52), -depth * 0.96)
+    ctx.stroke()
+  }
+  // A taut highlight makes a powered-up sail pop against the deck; it fades
+  // away with the canvas when the ship is on a poor point of sail.
+  ctx.globalAlpha = power * 0.32
+  ctx.strokeStyle = '#fff8df'
+  ctx.lineWidth = Math.max(1, size * 0.025)
   ctx.beginPath()
-  ctx.arc(mp.x, mp.y, 3.5, 0, Math.PI * 2)
+  ctx.moveTo(-halfSpan * 0.72, -depth * 0.78)
+  ctx.quadraticCurveTo(0, -depth * 1.08 - flutter, halfSpan * 0.72, -depth * 0.78)
+  ctx.stroke()
+  ctx.globalAlpha = 1
+  ctx.restore()
+
+  ctx.fillStyle = '#5f4830'
+  ctx.strokeStyle = '#2f2419'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.arc(x, y, Math.max(3, size * 0.11), 0, Math.PI * 2)
   ctx.fill()
+  ctx.stroke()
 }
 
 function drawPot(ctx: CanvasRenderingContext2D, x: number, y: number) {
@@ -806,7 +729,62 @@ function drawPot(ctx: CanvasRenderingContext2D, x: number, y: number) {
   ctx.fill()
 }
 
+/** A defeated hull hangs in the water instead of popping out of existence:
+ * momentum bleeds away, the deck lists, the sail collapses, then foam closes
+ * over the shrinking silhouette. Loot is already live while this plays. */
+function drawSinkingShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: number) {
+  const elapsed = SINK_EFFECT_S - (e.sinkT ?? 0)
+  const p = clamp(elapsed / SINK_HULL_S, 0, 1)
+  // Once the hull and sail are under, only the longer-lived water crests drawn
+  // in the wake layer remain.
+  if (p >= 1) return
+  const ease = p * p * (3 - 2 * p)
+  const dims = enemyHullDims(e)
+  const list = Math.sin(p * Math.PI * 0.85) * 0.34 * e.orbitDir
+  const settle = ease * e.r * 0.32
+  const hullAlpha = 1 - ease * 0.78
+
+  ctx.save()
+  ctx.globalAlpha = hullAlpha
+  ctx.translate(e.pos.x, e.pos.y + settle)
+  ctx.rotate(e.a + list)
+  ctx.scale(1 - ease * 0.16, 1 - ease * 0.48)
+  drawHull(ctx, dims.len, dims.beam, 0, true, e.burnT, 0)
+  // broken spars skid toward the low side as the deck rolls under
+  ctx.strokeStyle = '#2d2117'
+  ctx.lineWidth = 3
+  ctx.beginPath()
+  ctx.moveTo(-dims.beam * 0.45, 0)
+  ctx.lineTo(dims.beam * 0.7, dims.beam * (0.2 + ease * 0.35))
+  ctx.stroke()
+  ctx.restore()
+
+  // Deep water washes over the deck as it settles. The surrounding churn is
+  // deliberately left to drawWake above so sinking foam matches every wake.
+  ctx.save()
+  ctx.globalAlpha = ease * 0.52
+  ctx.fillStyle = '#0a3853'
+  ctx.beginPath()
+  ctx.ellipse(e.pos.x, e.pos.y + settle + 2, dims.len * 0.72, dims.beam * (0.3 + ease * 0.22), e.a + list, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.restore()
+
+  // The canvas loses its wind, crumples toward the mast, and follows the hull
+  // beneath the surface after the deck.
+  ctx.save()
+  ctx.globalAlpha = Math.max(0, 1 - p * 1.18)
+  ctx.translate(0, settle)
+  ctx.scale(1 - p * 0.55, 1 - p * 0.3)
+  drawShipSail(ctx, e.pos.x, e.pos.y, e.a + list, g.wind.a, Math.max(18, dims.beam * 0.72), t, 'rgba(150,76,67,0.9)', '#693a34')
+  ctx.restore()
+
+}
+
 function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: number) {
+  if (e.sunk && (e.sinkT ?? 0) > 0) {
+    drawSinkingShip(ctx, g, e, t)
+    return
+  }
   // the hive garrison is battlements, not a boat: a wax-brick ring on the island
   if (e.kind === 'bastion') {
     const frac0 = e.hp / e.maxHp
@@ -860,25 +838,18 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
   const tilt = waveHeight(e.pos.x * 1.3, e.pos.y * 1.3, t * 0.8 + 50) * 0.045
   ctx.save()
   ctx.translate(0, bob)
-  // the hull sprite noses along its wake — cosmetic; the guns are world-fixed
-  const ha = Math.atan2(e.vel.y, e.vel.x)
+  // hull and gun sockets share one physical heading; gun aim stays world-space
   ctx.save()
   ctx.translate(e.pos.x, e.pos.y)
-  ctx.rotate(ha + tilt)
+  ctx.rotate(e.a + tilt)
   const frac = e.hp / e.maxHp
+  const dims = enemyHullDims(e)
   // class silhouettes: sloops run slim and long, galleons broad with a gilded
   // sterncastle, fireships low with braziers alight; raiders keep the stock hull
   if (e.kind === 'sloop') {
-    drawHull(ctx, e.r * 1.45, e.r * 0.55, frac, true, e.burnT, (e.flashT ?? 0) / 0.09)
-    // a fore-and-aft sail amidships — the cut that lets her flee any brawl
-    ctx.fillStyle = 'rgba(238,229,205,0.85)'
-    ctx.beginPath()
-    ctx.moveTo(e.r * 0.95, 0)
-    ctx.quadraticCurveTo(e.r * 0.1, -e.r * 0.42, -e.r * 0.55, 0)
-    ctx.quadraticCurveTo(e.r * 0.1, e.r * 0.12, e.r * 0.95, 0)
-    ctx.fill()
+    drawHull(ctx, dims.len, dims.beam, frac, true, e.burnT, (e.flashT ?? 0) / 0.09)
   } else if (e.kind === 'galleon') {
-    drawHull(ctx, e.r * 1.25, e.r * 0.95, frac, true, e.burnT, (e.flashT ?? 0) / 0.09)
+    drawHull(ctx, dims.len, dims.beam, frac, true, e.burnT, (e.flashT ?? 0) / 0.09)
     // sterncastle and gold strakes — money and menace
     ctx.fillStyle = '#3a2c1e'
     roundRect(ctx, -e.r * 0.95, -e.r * 0.5, e.r * 0.55, e.r, 3)
@@ -892,7 +863,7 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
       ctx.stroke()
     }
   } else if (e.kind === 'fireship') {
-    drawHull(ctx, e.r * 1.1, e.r * 0.7, frac, true, e.burnT, (e.flashT ?? 0) / 0.09)
+    drawHull(ctx, dims.len, dims.beam, frac, true, e.burnT, (e.flashT ?? 0) / 0.09)
     // plating rims the hull: bronze takes two normal hits, iron three
     if (e.armor) {
       hullPath(ctx, e.r * 1.1, e.r * 0.7)
@@ -909,7 +880,7 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
     }
   } else if (e.kind === 'mortar') {
     // low and broad — a gun-barge built to sit still and take hits, not run
-    drawHull(ctx, e.r * 1.05, e.r * 1.05, frac, true, e.burnT, (e.flashT ?? 0) / 0.09)
+    drawHull(ctx, dims.len, dims.beam, frac, true, e.burnT, (e.flashT ?? 0) / 0.09)
     // a squat brass turret amidships — the "it's cranking elevation" tell
     ctx.fillStyle = '#5a4a30'
     ctx.beginPath()
@@ -919,7 +890,7 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
     ctx.lineWidth = 2
     ctx.stroke()
   } else {
-    drawHull(ctx, e.r * 1.2, e.r * 0.8, frac, true, e.burnT, (e.flashT ?? 0) / 0.09)
+    drawHull(ctx, dims.len, dims.beam, frac, true, e.burnT, (e.flashT ?? 0) / 0.09)
   }
   ctx.restore()
   // the fireship's glow reads at a distance — sink it before it closes
@@ -934,6 +905,18 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
     ctx.beginPath()
     ctx.arc(e.pos.x, e.pos.y, e.r, 0, Math.PI * 2)
     ctx.fill()
+  }
+  for (const status of [
+    ...(e.floodT > 0 ? [{ front: true, icon: '≈', color: '#7fd8ff' }] : []),
+    ...(e.rudderT > 0 ? [{ front: false, icon: '⚓', color: '#ff9d5c' }] : []),
+  ]) {
+    const front = status.front
+    const x = e.pos.x + Math.cos(e.a) * dims.len * 0.72 * (front ? 1 : -1)
+    const y = e.pos.y + Math.sin(e.a) * dims.len * 0.72 * (front ? 1 : -1)
+    ctx.font = 'bold 16px ui-monospace, monospace'
+    ctx.textAlign = 'center'
+    ctx.fillStyle = status.color
+    ctx.fillText(status.icon, x, y - 12 + Math.sin(t * 7) * 2)
   }
   // pressing: a red flare rings the hull while it charges to knife range —
   // the telegraph that says answer with the helm, not the anchor
@@ -968,6 +951,35 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
     }
     const rec = gun.plant.recoilT > 0 ? (gun.plant.recoilT / 0.12) * 3 : 0
     drawPlant(ctx, p.x - Math.cos(a) * rec, p.y - Math.sin(a) * rec, gun.plant, true, t)
+    if (gun.plant.disruptedT > 0) {
+      ctx.font = '13px serif'
+      ctx.textAlign = 'center'
+      ctx.fillText('🔧', p.x + 13, p.y - 28 + Math.sin(t * 7))
+    }
+  }
+  // Enemy canvas also sits above its plants; hostile red keeps the silhouette
+  // distinct even when the sail overlaps a flower.
+  drawShipSail(
+    ctx,
+    e.pos.x,
+    e.pos.y,
+    e.a + tilt,
+    g.wind.a,
+    Math.max(18, dims.beam * 0.72),
+    t,
+    e.kind === 'fireship' ? 'rgba(120,55,42,0.94)' : 'rgba(202,108,91,0.92)',
+    e.kind === 'fireship' ? '#e28a55' : '#7e4038',
+  )
+  // Fleet-role pennants make an authored encounter readable without a label
+  // cloud: identify the prize, screen, artillery and delayed wing at a glance.
+  if (e.encounterRole && (e.mode !== 'roam' || (e.reserveT ?? 0) > 0 || e.encounterRole === 'fleeing')) {
+    const roleMark: Record<string, string> = {
+      anchor: '◆', escort: '◇', flank: '↔', screen: '▰', artillery: '◎', reserve: '◌', patrol: '—', fleeing: '⚑', reinforcement: '✦',
+    }
+    ctx.font = 'bold 13px ui-monospace, monospace'
+    ctx.textAlign = 'center'
+    ctx.fillStyle = (e.reserveT ?? 0) > 0 ? '#7d97a8' : e.encounterRole === 'anchor' ? '#ffd257' : '#d7e7ee'
+    ctx.fillText(roleMark[e.encounterRole] ?? '·', e.pos.x, e.pos.y - e.r - 28 + Math.sin(t * 3 + e.r) * 1.5)
   }
   // harriers fly a red pennant — the fast ones that row through any wind
   if (e.kind === 'harrier') {
@@ -1390,7 +1402,9 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
   x += chip(ctx, x, 12, `🌼 ${g.pollen}`) + 6
   // the standing bee bounty — the pollen income you're sailing for
   if (g.contract) x += chip(ctx, x, 12, `🐝 ${g.contract.got}/${g.contract.need} → ${g.contract.pay}🌼`, '#ffd257') + 6
-  if (g.chillT > 0) chip(ctx, x, 12, '❄ chilled!')
+  if (g.chillT > 0) x += chip(ctx, x, 12, '❄ chilled!') + 6
+  if (g.floodT > 0) x += chip(ctx, x, 12, `≈ flooding ${g.floodT.toFixed(1)}s`, '#7fd8ff') + 6
+  if (g.rudderT > 0) x += chip(ctx, x, 12, `⚓ rudder ${g.rudderT.toFixed(1)}s`, '#ff9d5c') + 6
 
   // the ship herself: hull, next refit, the galley stove
   const tier = g.tierDef()

@@ -34,6 +34,11 @@ npm run dev
   the attack at once; the rest shadow you outside gun range, waiting for a
   slot. The farther from home waters, the deadlier the raiders — and the
   loot scales faster than the threat.
+- **Read the fleet** — open-water enemies arrive in authored encounters instead
+  of anonymous clumps: catch a valuable convoy behind its escorts, survive a
+  delayed pincer or fireship raid, break a screen to reach its mortar, cross a
+  moving patrol quietly, or chase damaged sails before they reach waiting
+  reinforcements. Small pennants mark each ship's role once the fleet wakes.
 - **Flee** — hunters have *patience*: run clean and stop trading shots, and
   after a dozen-odd seconds they decide you're not worth the powder and break
   off. Every hit landed — theirs or yours — renews it, so a fight holds them
@@ -56,7 +61,10 @@ npm run dev
   guns are mortars too, playing by the same rules: red rings mark where their
   shells burst, each hunter sails to put a ring on your hull (a spyglass line
   is a proper artillery ship), and gunners hold fire until it's there — keep
-  way on and slip the drop zones while your own shells land.
+  way on and slip the drop zones while your own shells land. Where a shell
+  lands matters: bow hits cause short-lived flooding, midships hits batter the
+  nearest battery, and stern hits slow the rudder. These consequences last six
+  seconds and work against raiders and player ships alike.
 - **Salvage** — sunken ships break up into 🪵 wood and 💧 water; kill a gun
   *carrying a rare line* and its seed may float free — deeper waters run
   hotter genomes, so range is the gene hunt. Kill a ship's *last* gun and her
