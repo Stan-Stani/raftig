@@ -47,6 +47,7 @@ export const ENEMY_REACH_FLOOR = 0.3 // even at home it keeps this much of its r
 export const ENEMY_REACH_DANGER = 6 // danger at which it fights at full bred reach again
 export const SPLASH = 44 // mortar burst radius, px
 export const WARD_ARC = 1.0 // half-angle, rad, of a ward plant's shield arc around its facing
+export const SHIP_SIZE_MULT = 1.5 // larger decks make bow/midships/stern hits readable
 export const PLANT_HP = 60
 /** blanket hull-hp scalar for both your tiers and enemy ships (not fireships —
  *  their hp is deliberately pegged to FIRESHIP_HIT so they keep popping to
@@ -132,6 +133,8 @@ export interface Plant {
   flashT: number
   /** muzzle recoil, seconds left — the sprite kicks back along -aim */
   recoilT: number
+  /** battery damage: reload/traverse work at half speed while this counts down */
+  disruptedT: number
   wobble: number // render phase
   /** firing heading, radians. Hull-relative on your ship (always the mount's
    *  natural facing — the helm is the only traverse); world-fixed on raider
@@ -159,6 +162,8 @@ export interface HullTier {
   mounts: { x: number; y: number; aim: number }[]
 }
 
+const shipSize = (n: number) => n * SHIP_SIZE_MULT
+
 /** the shipwright's ladder: each refit keeps your plants (mount for mount) and
  *  adds fresh ones — bow chasers first, then broadsides, then a stern chaser */
 export const TIERS: HullTier[] = [
@@ -166,52 +171,52 @@ export const TIERS: HullTier[] = [
     name: 'skiff',
     hull: Math.round(140 * HULL_HP_MULT),
     cost: 0,
-    len: 54,
-    beam: 30,
+    len: shipSize(54),
+    beam: shipSize(30),
     mounts: [
-      { x: -4, y: -14, aim: -Math.PI / 2 },
-      { x: -4, y: 14, aim: Math.PI / 2 },
+      { x: shipSize(-4), y: shipSize(-14), aim: -Math.PI / 2 },
+      { x: shipSize(-4), y: shipSize(14), aim: Math.PI / 2 },
     ],
   },
   {
     name: 'sloop',
     hull: Math.round(220 * HULL_HP_MULT),
     cost: 30,
-    len: 70,
-    beam: 36,
+    len: shipSize(70),
+    beam: shipSize(36),
     mounts: [
-      { x: -12, y: -18, aim: -Math.PI / 2 },
-      { x: -12, y: 18, aim: Math.PI / 2 },
-      { x: 34, y: 0, aim: 0 },
+      { x: shipSize(-12), y: shipSize(-18), aim: -Math.PI / 2 },
+      { x: shipSize(-12), y: shipSize(18), aim: Math.PI / 2 },
+      { x: shipSize(34), y: 0, aim: 0 },
     ],
   },
   {
     name: 'brig',
     hull: Math.round(320 * HULL_HP_MULT),
     cost: 70,
-    len: 88,
-    beam: 44,
+    len: shipSize(88),
+    beam: shipSize(44),
     mounts: [
-      { x: 4, y: -24, aim: -Math.PI / 2 },
-      { x: 4, y: 24, aim: Math.PI / 2 },
-      { x: 48, y: 0, aim: 0 },
-      { x: -42, y: -22, aim: -Math.PI / 2 },
-      { x: -42, y: 22, aim: Math.PI / 2 },
+      { x: shipSize(4), y: shipSize(-24), aim: -Math.PI / 2 },
+      { x: shipSize(4), y: shipSize(24), aim: Math.PI / 2 },
+      { x: shipSize(48), y: 0, aim: 0 },
+      { x: shipSize(-42), y: shipSize(-22), aim: -Math.PI / 2 },
+      { x: shipSize(-42), y: shipSize(22), aim: Math.PI / 2 },
     ],
   },
   {
     name: 'galleon',
     hull: Math.round(460 * HULL_HP_MULT),
     cost: 140,
-    len: 106,
-    beam: 52,
+    len: shipSize(106),
+    beam: shipSize(52),
     mounts: [
-      { x: 18, y: -30, aim: -Math.PI / 2 },
-      { x: 18, y: 30, aim: Math.PI / 2 },
-      { x: 62, y: 0, aim: 0 },
-      { x: -32, y: -30, aim: -Math.PI / 2 },
-      { x: -32, y: 30, aim: Math.PI / 2 },
-      { x: -74, y: 0, aim: Math.PI },
+      { x: shipSize(18), y: shipSize(-30), aim: -Math.PI / 2 },
+      { x: shipSize(18), y: shipSize(30), aim: Math.PI / 2 },
+      { x: shipSize(62), y: 0, aim: 0 },
+      { x: shipSize(-32), y: shipSize(-30), aim: -Math.PI / 2 },
+      { x: shipSize(-32), y: shipSize(30), aim: Math.PI / 2 },
+      { x: shipSize(-74), y: 0, aim: Math.PI },
     ],
   },
 ]
@@ -233,6 +238,8 @@ export interface EGun {
 export interface EnemyShip {
   pos: Vec
   vel: Vec
+  /** physical hull heading; rendering, mounts and damage zones all share it */
+  a: number
   hp: number
   maxHp: number
   r: number // hull radius
@@ -282,6 +289,8 @@ export interface EnemyShip {
   /** mid-scuttle guard — the hull is going down, don't re-enter */
   scuttling?: boolean
   sunk?: boolean
+  /** seconds remaining in the visible sinking sequence */
+  sinkT?: number
   /** stung by hive artillery: drops nothing until the crew fully patches the
    *  hull and the player lands the kill themselves */
   beeHit?: boolean
@@ -304,6 +313,26 @@ export interface EnemyShip {
   sinceFired?: number
   /** pressing: seconds left of the flat-out charge to knife range */
   pressT?: number
+  floodT: number
+  /** cadence accumulator for visible one-point flooding damage ticks */
+  floodTickT: number
+  rudderT: number
+  zoneImmune: Record<HullZone, number>
+}
+
+export type HullZone = 'bow' | 'midships' | 'stern'
+
+/** Exact mobile-enemy silhouette dimensions, shared by rendering and hit tests. */
+export function enemyHullDims(e: EnemyShip): { len: number; beam: number } {
+  return e.kind === 'sloop'
+    ? { len: e.r * 1.45, beam: e.r * 0.55 }
+    : e.kind === 'galleon'
+      ? { len: e.r * 1.25, beam: e.r * 0.95 }
+      : e.kind === 'fireship'
+        ? { len: e.r * 1.1, beam: e.r * 0.7 }
+        : e.kind === 'mortar'
+          ? { len: e.r * 1.05, beam: e.r * 1.05 }
+          : { len: e.r * 1.2, beam: e.r * 0.8 }
 }
 
 export interface Wind {
@@ -436,6 +465,7 @@ function makePlant(genome: Genome, gen: number): Plant {
     poisonT: 0,
     flashT: 0,
     recoilT: 0,
+    disruptedT: 0,
     wobble: rand(Math.PI * 2),
     aim: -Math.PI / 2, // overwritten at sowing with the mount's facing
   }
@@ -452,6 +482,11 @@ export class Game {
   mounts: Mount[] = []
   /** the hull is alight — hp burns off until it gutters out */
   burnT = 0
+  /** location damage; timed and refreshed, never stacked */
+  floodT = 0
+  floodTickT = 0.5
+  rudderT = 0
+  zoneImmune: Record<HullZone, number> = { bow: 0, midships: 0, stern: 0 }
 
   wood = 0
   water = 0
@@ -560,6 +595,10 @@ export class Game {
     this.ship = { pos: v(0, 0), vel: v(0, 0), a: 0, hp: TIERS[0].hull }
     this.mounts = TIERS[0].mounts.map(m => ({ x: m.x, y: m.y, aim0: m.aim, plant: null }))
     this.burnT = 0
+    this.floodT = 0
+    this.floodTickT = 0.5
+    this.rudderT = 0
+    this.zoneImmune = { bow: 0, midships: 0, stern: 0 }
     // one basic shooter on the port mount so wave 1 is survivable
     const starter = makePlant(makeGenome(), 0)
     starter.aim = this.mounts[0].aim0
@@ -667,8 +706,32 @@ export class Game {
     return (l.x * l.x) / (a * a) + (l.y * l.y) / (b * b) <= 1
   }
 
+  private enemyWorldToLocal(e: EnemyShip, w: Vec): Vec {
+    const c = Math.cos(e.a)
+    const s = Math.sin(e.a)
+    const dx = w.x - e.pos.x
+    const dy = w.y - e.pos.y
+    return v(dx * c + dy * s, dy * c - dx * s)
+  }
+
+  private onEnemyHull(e: EnemyShip, w: Vec, pad = 0): boolean {
+    if (e.kind === 'bastion') return dist(e.pos, w) <= e.r + pad
+    const l = this.enemyWorldToLocal(e, w)
+    const d = enemyHullDims(e)
+    const a = d.len + pad
+    const b = d.beam + pad
+    return (l.x * l.x) / (a * a) + (l.y * l.y) / (b * b) <= 1
+  }
+
+  private hullZone(localX: number, halfLength: number): HullZone {
+    return localX > halfLength * 0.33 ? 'bow' : localX < -halfLength * 0.33 ? 'stern' : 'midships'
+  }
+
   gunPos(e: EnemyShip, g: EGun): Vec {
-    return v(e.pos.x + g.x, e.pos.y + g.y)
+    if (e.kind === 'bastion') return v(e.pos.x + g.x, e.pos.y + g.y)
+    const c = Math.cos(e.a)
+    const s = Math.sin(e.a)
+    return v(e.pos.x + g.x * c - g.y * s, e.pos.y + g.x * s + g.y * c)
   }
 
   screenToWorld(mx: number, my: number): Vec {
@@ -1108,7 +1171,7 @@ export class Game {
     // sense of speed: ease the camera back and lead it forward as way comes on
     const sp = Math.hypot(this.ship.vel.x, this.ship.vel.y)
     const s01 = clamp((sp - 40) / 180, 0, 1) // 0 below ~40px/s, full by ~220
-    const zoomTarget = 1 - 0.11 * s01 // pull back up to 11%
+    const zoomTarget = 1 - 0.16 * s01 // pull back up to 16% at full speed
     this.camZoom += (zoomTarget - this.camZoom) * Math.min(1, 2.5 * dt)
     const lx = sp > 1 ? this.ship.vel.x / sp : 0
     const ly = sp > 1 ? this.ship.vel.y / sp : 0
@@ -1140,7 +1203,7 @@ export class Game {
     const fwd = keys.has('KeyW') || keys.has('ArrowUp')
     const back = keys.has('KeyS') || keys.has('ArrowDown')
     // the tiller: A/D swing the prow, the hull (and every gun on it) turns with it
-    if (left !== right) this.ship.a += (right ? 1 : -1) * TURN_RATE * dt
+    if (left !== right) this.ship.a += (right ? 1 : -1) * TURN_RATE * (this.rudderT > 0 ? 0.5 : 1) * dt
     this.sailEff = null
     // becalmed pools starve the sail — rowing raiders don't care
     const calm = this.calmAt(this.ship.pos)
@@ -1208,6 +1271,23 @@ export class Game {
     const raise = keys.has('KeyX')
     if (lower !== raise) this.elev = clamp(this.elev + (raise ? 1 : -1) * ELEV_RATE * dt, ELEV_MIN, 1)
 
+    this.floodT = Math.max(0, this.floodT - dt)
+    this.rudderT = Math.max(0, this.rudderT - dt)
+    for (const z of ['bow', 'midships', 'stern'] as HullZone[]) this.zoneImmune[z] = Math.max(0, this.zoneImmune[z] - dt)
+    if (this.floodT > 0) {
+      this.floodTickT -= dt
+      while (this.floodTickT <= 0 && this.floodT > 0) {
+        this.floodTickT += 0.5
+        this.ship.hp -= 1
+        this.dmgText(this.mountPos({ x: this.tierDef().len * 0.72, y: 0 }), 1, 'frost', true)
+      }
+      if (Math.random() < 9 * dt) {
+        const t = this.tierDef()
+        this.puff(this.mountPos({ x: t.len * 0.72, y: rand(-t.beam * 0.45, t.beam * 0.45) }), '#bfe3f2', 1)
+      }
+      if (this.ship.hp <= 0) return this.gameOver()
+    }
+
     // hull afire — hp burns off until the flames gutter out
     if (this.burnT > 0) {
       this.burnT -= dt
@@ -1253,6 +1333,7 @@ export class Game {
 
       p.flashT = Math.max(0, p.flashT - dt)
       p.recoilT = Math.max(0, p.recoilT - dt)
+      p.disruptedT = Math.max(0, p.disruptedT - dt)
       // damage over time
       if (p.burnT > 0) {
         p.burnT -= dt
@@ -1275,7 +1356,7 @@ export class Game {
         continue
       }
 
-      p.cooldown -= dt // reload timer ticks down whether or not you fire
+      p.cooldown -= dt * (p.disruptedT > 0 ? 0.5 : 1) // a battered battery works at half speed
 
       // manual fire: mortars hold along their mount's fixed facing until YOU pull
       // the lanyard (Space). Each shell bursts at the plant's bred reach scaled by
@@ -1425,7 +1506,8 @@ export class Game {
   inCombat(): boolean {
     const reach = this.playerReach()
     for (const e of this.enemies) {
-      if (dist(this.ship.pos, e.pos) - e.r - this.tierDef().len < reach) return true
+      const er = e.kind === 'bastion' ? e.r : enemyHullDims(e).len
+      if (dist(this.ship.pos, e.pos) - er - this.tierDef().len < reach) return true
     }
     return false
   }
@@ -1625,7 +1707,7 @@ export class Game {
               : kind === 'bastion'
                 ? 8
                 : randInt(2, Math.min(2 + Math.ceil(danger / 2), 6))
-    const r = 20 + size * 6
+    const r = (20 + size * 6) * (kind === 'bastion' ? 1 : SHIP_SIZE_MULT)
     // fireship plating deepens with the waters: bare hulls pop to one normal
     // hit, bronze takes two, iron three — the blast is the same either way
     const armor: 0 | 1 | 2 = kind !== 'fireship' ? 0 : danger >= 6.5 ? 2 : danger >= 4 ? 1 : 0
@@ -1705,6 +1787,7 @@ export class Game {
     this.enemies.push({
       pos,
       vel: v(0, 0),
+      a: gunA,
       hp: maxHp,
       maxHp,
       r,
@@ -1751,6 +1834,10 @@ export class Game {
       danger,
       kind,
       armor,
+      floodT: 0,
+      floodTickT: 0.5,
+      rudderT: 0,
+      zoneImmune: { bow: 0, midships: 0, stern: 0 },
       home: opts.home,
       // some crews aren't dumb: sloops always shy off hive guns, fireships never
       // (the crew is already dead), the rest split roughly half and half
@@ -1829,7 +1916,45 @@ export class Game {
       for (const s of shadowers.slice(0, HUNT_CAP - slots)) s.engaged = true
     }
     for (const e of this.enemies) {
+      if (e.sunk) {
+        if ((e.sinkT ?? 0) > 0) {
+          e.sinkT = Math.max(0, e.sinkT! - dt)
+          const sinkVx = e.vel.x
+          const sinkVy = e.vel.y
+          e.pos.x += sinkVx * dt
+          e.pos.y += sinkVy * dt
+          if (e.kind !== 'bastion') {
+            ;(e.trail ??= []).push({ x: e.pos.x, y: e.pos.y, vx: sinkVx, vy: sinkVy, t: this.time })
+            // Keep enough history for the full-quality sinking wake. Normal
+            // enemy wakes remain on the shorter ENEMY_WAKE_S window.
+            while (e.trail.length && e.trail[0].t < this.time - 1.5) e.trail.shift()
+          }
+          e.vel.x *= 1 - Math.min(1, 1.45 * dt)
+          e.vel.y *= 1 - Math.min(1, 1.45 * dt)
+        }
+        continue
+      }
       e.chillT = Math.max(0, e.chillT - dt)
+      e.floodT = Math.max(0, e.floodT - dt)
+      e.rudderT = Math.max(0, e.rudderT - dt)
+      for (const z of ['bow', 'midships', 'stern'] as HullZone[]) e.zoneImmune[z] = Math.max(0, e.zoneImmune[z] - dt)
+      if (e.floodT > 0 && e.kind !== 'bastion') {
+        e.floodTickT -= dt
+        while (e.floodTickT <= 0 && e.floodT > 0) {
+          e.floodTickT += 0.5
+          e.hp -= 1
+          const d0 = enemyHullDims(e)
+          this.dmgText(v(e.pos.x + Math.cos(e.a) * d0.len * 0.72, e.pos.y + Math.sin(e.a) * d0.len * 0.72), 1, 'frost', false)
+        }
+        if (Math.random() < 9 * dt) {
+          const d0 = enemyHullDims(e)
+          this.puff(v(e.pos.x + Math.cos(e.a) * d0.len * 0.72, e.pos.y + Math.sin(e.a) * d0.len * 0.72), '#bfe3f2', 1)
+        }
+        if (e.hp <= 0) {
+          this.sinkShip(e)
+          continue
+        }
+      }
       e.flashT = Math.max(0, (e.flashT ?? 0) - dt)
       e.frostRecoverT = Math.max(0, (e.frostRecoverT ?? 0) - dt)
       if (e.frostRecoverT <= 0) e.frostStacks = 0
@@ -1897,7 +2022,7 @@ export class Game {
         if (Math.random() < 9 * dt) {
           this.puff(v(e.pos.x + rand(-e.r * 0.5, e.r * 0.5), e.pos.y + rand(-e.r * 0.5, e.r * 0.5)), '#ff8c42', 1)
         }
-        if (this.onHull(e.pos, e.r * 0.7)) {
+        if (this.onHull(e.pos, enemyHullDims(e).beam * 0.6)) {
           this.fireshipBlast(e)
           continue
         }
@@ -1927,18 +2052,19 @@ export class Game {
           const sx = tx - e.pos.x
           const sy = ty - e.pos.y
           const sl2 = sx * sx + sy * sy
+          const deckClear = this.tierDef().len + enemyHullDims(e).beam + 30
           if (sl2 > 60 * 60) {
             const tp = clamp(((center.x - e.pos.x) * sx + (center.y - e.pos.y) * sy) / sl2, 0, 1)
             const nx = e.pos.x + sx * tp
             const ny = e.pos.y + sy * tp
             const clearance = Math.hypot(center.x - nx, center.y - ny)
-            if (clearance < 160) {
+            if (clearance < deckClear) {
               const side =
                 clearance > 1
                   ? { x: (nx - center.x) / clearance, y: (ny - center.y) / clearance }
                   : { x: -uy * e.orbitDir, y: ux * e.orbitDir }
-              tx = center.x + side.x * 250
-              ty = center.y + side.y * 250
+              tx = center.x + side.x * (deckClear + 70)
+              ty = center.y + side.y * (deckClear + 70)
             }
           }
           const fx = tx - e.pos.x
@@ -1949,8 +2075,8 @@ export class Game {
           e.vel.x = (fx / fd) * s - uy * e.orbitDir * spd * 0.1
           e.vel.y = (fy / fd) * s + ux * e.orbitDir * spd * 0.1
           // never cut across the player's deck on the way there
-          if (d < 180) {
-            const push = ((180 - d) / 180) * spd
+          if (d < deckClear) {
+            const push = ((deckClear - d) / deckClear) * spd
             e.vel.x -= ux * push
             e.vel.y -= uy * push
           }
@@ -2014,7 +2140,11 @@ export class Game {
         const ox = e.pos.x - o.pos.x
         const oy = e.pos.y - o.pos.y
         const od = Math.hypot(ox, oy)
-        if (od > 0 && od < 190) {
+        const sep =
+          (e.kind === 'bastion' ? e.r : enemyHullDims(e).beam) +
+          (o.kind === 'bastion' ? o.r : enemyHullDims(o).beam) +
+          40
+        if (od > 0 && od < sep) {
           e.vel.x += (ox / od) * 30
           e.vel.y += (oy / od) * 30
         }
@@ -2037,6 +2167,28 @@ export class Game {
               e.vel.y = (hy / hd) * Math.max(spd, 60)
             }
           }
+        }
+      }
+      // Turn every mobile hull toward its intended course instead of assigning
+      // the velocity angle directly. Steering forces can alternate from frame
+      // to frame near a firing station or obstacle; rate limiting prevents the
+      // whole sprite (and sail) from flickering between those solutions.
+      if (e.kind !== 'bastion') {
+        const way = Math.hypot(e.vel.x, e.vel.y)
+        if (way > 1) {
+          const desired = Math.atan2(e.vel.y, e.vel.x)
+          const turnRate =
+            e.kind === 'harrier' || e.kind === 'fireship'
+              ? 3.2
+              : e.kind === 'sloop'
+                ? 2.6
+                : e.kind === 'galleon' || e.kind === 'mortar'
+                  ? 1.45
+                  : 2.2
+          const maxTurn = turnRate * (e.rudderT > 0 ? 0.3 : 1) * dt
+          e.a += clamp(angleDiff(desired, e.a), -maxTurn, maxTurn)
+          e.vel.x = Math.cos(e.a) * way
+          e.vel.y = Math.sin(e.a) * way
         }
       }
       // whatever the steering above decided, a fortress stays a fortress
@@ -2068,6 +2220,7 @@ export class Game {
         const p = g.plant
         p.flashT = Math.max(0, p.flashT - dt)
         p.recoilT = Math.max(0, p.recoilT - dt)
+        p.disruptedT = Math.max(0, p.disruptedT - dt)
         if (p.burnT > 0) {
           p.burnT -= dt
           p.hp -= 3 * dt
@@ -2083,7 +2236,7 @@ export class Game {
           this.checkScuttle(e)
           continue
         }
-        p.cooldown -= dt
+        p.cooldown -= dt * (p.disruptedT > 0 ? 0.5 : 1)
         const from = this.gunPos(e, g)
         // a ward gene on a raider gun is just as live: their point-defense
         // swats your shells out of the sky while the crew is awake
@@ -2121,7 +2274,7 @@ export class Game {
             p,
             from,
             want,
-            drop => (prey ? dist(drop, want!) < prey.r + SPLASH * 0.5 : this.onHull(drop, SPLASH * 0.5)),
+            drop => (prey ? this.onEnemyHull(prey, drop, SPLASH * 0.5) : this.onHull(drop, SPLASH * 0.5)),
             dt
           )
           continue
@@ -2164,7 +2317,7 @@ export class Game {
           const wantPt = v(past.x + Math.cos(g.leadHeadingA) * leadDist, past.y + Math.sin(g.leadHeadingA) * leadDist)
           g.leadPt = wantPt
           const want = Math.atan2(wantPt.y - from.y, wantPt.x - from.x)
-          const tr = gunTraverse(e.kind) * drill * dt
+          const tr = gunTraverse(e.kind) * drill * (p.disruptedT > 0 ? 0.5 : 1) * dt
           p.aim += clamp(angleDiff(want, p.aim), -tr, tr)
           // range in the same way you crank Z/X on your own battery — and range
           // on the belief, not on where you are right now: a shot that lands
@@ -2177,7 +2330,8 @@ export class Game {
           const elevCeil = this.enemyReach(p, e.danger) / p.pheno.range
           const wantElev = clamp(dist(from, wantPt) / p.pheno.range, Math.min(ELEV_MIN, elevCeil), elevCeil)
           const curElev = p.elev ?? 1
-          p.elev = curElev + clamp(wantElev - curElev, -ELEV_RATE * drill * dt, ELEV_RATE * drill * dt)
+          const crank = ELEV_RATE * drill * (p.disruptedT > 0 ? 0.5 : 1) * dt
+          p.elev = curElev + clamp(wantElev - curElev, -crank, crank)
         }
         // pull the lanyard when the ranged solution covers the gunner's belief
         // of where you'll be as the shell lands — or your hull outright. Gating
@@ -2196,9 +2350,10 @@ export class Game {
         }
       }
     }
-    // sunk ships go; distant roamers slip over the horizon (fresh ones respawn nearer)
+    // Sunk ships remain just long enough to settle beneath the water; distant
+    // roamers still slip over the horizon normally.
     this.enemies = this.enemies.filter(
-      e => !e.sunk && (e.mode === 'hunt' || dist(e.pos, center) < (e.home ? 2600 : 1700))
+      e => (!e.sunk || (e.sinkT ?? 0) > 0) && (e.mode === 'hunt' || e.sunk || dist(e.pos, center) < (e.home ? 2600 : 1700))
     )
     // a nest whose pod drifted out of the world re-arms for the next visit
     for (const p of this.activePois) {
@@ -2228,11 +2383,12 @@ export class Game {
     const maxR = p.pheno.range
     if (want) {
       const wantA = Math.atan2(want.y - from.y, want.x - from.x)
-      const tr = gunTraverse(e.kind) * dt
+      const work = p.disruptedT > 0 ? 0.5 : 1
+      const tr = gunTraverse(e.kind) * work * dt
       p.aim += clamp(angleDiff(wantA, p.aim), -tr, tr)
       const wantE = clamp(dist(from, want) / maxR, 0.5, 1)
       const cur = p.elev ?? 1
-      p.elev = cur + clamp(wantE - cur, -ELEV_RATE * dt, ELEV_RATE * dt)
+      p.elev = cur + clamp(wantE - cur, -ELEV_RATE * work * dt, ELEV_RATE * work * dt)
     }
     if (p.cooldown <= 0 && want) {
       const dropR = maxR * (p.elev ?? 1)
@@ -2350,6 +2506,66 @@ export class Game {
     })
   }
 
+  private damagePlayerConsequence(at: Vec) {
+    const local = this.worldToLocal(at)
+    const zone = this.hullZone(local.x, this.tierDef().len)
+    if (this.zoneImmune[zone] > 0) return
+    if (zone === 'midships') {
+      let nearest: Plant | null = null
+      let nearestD = Infinity
+      for (const m of this.mounts) {
+        if (!m.plant) continue
+        const d = dist(at, this.mountPos(m))
+        if (d < nearestD) {
+          nearest = m.plant
+          nearestD = d
+        }
+      }
+      if (!nearest) return
+      nearest.disruptedT = 6
+      nearest.cooldown = Math.max(nearest.cooldown, 1.5)
+      this.toastAt(at, '🔧 BATTERY HIT', '#ffd257')
+    } else if (zone === 'bow') {
+      this.floodT = 6
+      this.floodTickT = 0.5
+      this.toastAt(at, '≈ FLOODING', '#7fd8ff')
+    } else {
+      this.rudderT = 6
+      this.toastAt(at, '⚓ RUDDER HIT', '#ff9d5c')
+    }
+    this.zoneImmune[zone] = 1
+  }
+
+  private damageEnemyConsequence(e: EnemyShip, at: Vec) {
+    if (e.kind === 'bastion') return
+    const local = this.enemyWorldToLocal(e, at)
+    const zone = this.hullZone(local.x, enemyHullDims(e).len)
+    if (e.zoneImmune[zone] > 0) return
+    if (zone === 'midships') {
+      let nearest: Plant | null = null
+      let nearestD = Infinity
+      for (const g of e.guns) {
+        const d = dist(at, this.gunPos(e, g))
+        if (d < nearestD) {
+          nearest = g.plant
+          nearestD = d
+        }
+      }
+      if (!nearest) return
+      nearest.disruptedT = 6
+      nearest.cooldown = Math.max(nearest.cooldown, 1.5)
+      this.toastAt(at, '🔧 BATTERY HIT', '#ffd257')
+    } else if (zone === 'bow') {
+      e.floodT = 6
+      e.floodTickT = 0.5
+      this.toastAt(at, '≈ FLOODING', '#7fd8ff')
+    } else {
+      e.rudderT = 6
+      this.toastAt(at, '⚓ RUDDER HIT', '#ff9d5c')
+    }
+    e.zoneImmune[zone] = 1
+  }
+
   private damageEnemyHull(e: EnemyShip, b: Bullet) {
     e.hp -= b.dmg
     e.flashT = 0.09
@@ -2357,11 +2573,15 @@ export class Game {
     if (b.element === 'ember') e.burnT = 3
     if (b.element === 'frost') this.chillEnemy(e)
     if (e.hp <= 0) this.sinkShip(e)
+    else this.damageEnemyConsequence(e, b.drop)
   }
 
   private sinkShip(e: EnemyShip) {
     if (e.sunk) return
     e.sunk = true
+    // The hull is gone after ~3.8s, but the displaced water remains long enough
+    // for its crests to spread and decay independently.
+    e.sinkT = 6
     // guns go down with the ship — their seed lines may float free
     for (const g of [...e.guns]) this.killEnemyGun(e, g)
     const scatter = () => v(e.pos.x + rand(-e.r, e.r), e.pos.y + rand(-e.r, e.r))
@@ -2460,7 +2680,7 @@ export class Game {
         }
         if (best) {
           this.steerHoming(b, best.pos, dt)
-          if (bd < best.r + 14) b.life = 0
+          if (this.onEnemyHull(best, b.pos, 14)) b.life = 0
         }
       } else if (b.homing && !b.friendly) {
         const d = this.steerHoming(b, this.ship.pos, dt)
@@ -2530,6 +2750,7 @@ export class Game {
         if (b.element === 'frost') this.chillShip()
         this.shake = Math.min(8, this.shake + 1.5)
         if (this.ship.hp <= 0) this.gameOver()
+        else this.damagePlayerConsequence(at)
         if (b.quirk === 'leech' && b.src) this.leechProc(b.src, at)
       }
       // hive artillery hits raider hulls AND their mounted guns too — a stung
@@ -2557,7 +2778,7 @@ export class Game {
               }
             }
           }
-          if (!o.sunk && dist(at, o.pos) < o.r + splash * 0.5) {
+          if (!o.sunk && this.onEnemyHull(o, at, splash * 0.5)) {
             hitAny = true
             o.beeHit = true
             this.damageEnemyHull(o, b)
@@ -2600,7 +2821,7 @@ export class Game {
           }
         }
       }
-      if (!e.sunk && dist(at, e.pos) < e.r + splash * 0.5) {
+      if (!e.sunk && this.onEnemyHull(e, at, splash * 0.5)) {
         hitAny = true
         this.aggro(e)
         e.patience = e.patience0 // you drew blood — now they're invested
