@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌊</text></svg>" />
+    <title>raftig water lab</title>
+    <style>
+      html, body { margin: 0; padding: 0; overflow: hidden; background: #072a40; height: 100%; }
+      canvas { display: block; cursor: crosshair; }
+      #panel {
+        position: fixed; top: 10px; right: 10px; z-index: 5;
+        width: 210px; padding: 10px 12px; box-sizing: border-box;
+        background: rgba(6, 20, 31, 0.82); color: #cfe7f2;
+        border: 1px solid rgba(255,255,255,0.14); border-radius: 8px;
+        font: 12px/1.5 ui-monospace, monospace;
+      }
+      #panel h1 { margin: 0 0 6px; font-size: 13px; color: #ffd257; }
+      #panel label { display: flex; justify-content: space-between; margin-top: 6px; color: #9fb8c8; }
+      #panel input[type=range] { width: 100%; margin: 1px 0 0; }
+      #panel select { width: 100%; background: #06141f; color: #cfe7f2; border: 1px solid rgba(255,255,255,0.18); border-radius: 4px; font: inherit; }
+      #panel .row { display: flex; gap: 6px; margin-top: 8px; }
+      #panel button {
+        flex: 1; background: #ffd257; color: #06141f; border: none; border-radius: 5px;
+        padding: 4px 0; font: inherit; font-weight: bold; cursor: pointer;
+      }
+      #panel button.ghost { background: transparent; color: #9fb8c8; border: 1px solid rgba(255,255,255,0.2); }
+      #panel .hint { margin-top: 8px; color: #6d8798; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <canvas id="lab"></canvas>
+    <div id="panel">
+      <h1>🌊 water lab</h1>
+      <label>course <select id="mode">
+        <option value="circle">circle</option>
+        <option value="weave">weave</option>
+        <option value="straight">straight</option>
+      </select></label>
+      <label>speed <span id="speedV"></span></label>
+      <input type="range" id="speed" min="40" max="420" step="5" />
+      <label>turn rate <span id="turnV"></span></label>
+      <input type="range" id="turn" min="0.1" max="1.6" step="0.05" />
+      <label>beam <span id="beamV"></span></label>
+      <input type="range" id="beam" min="8" max="44" step="1" />
+      <label>ripple hull r <span id="hullRV"></span></label>
+      <input type="range" id="hullR" min="8" max="44" step="1" />
+      <label>time scale <span id="scaleV"></span></label>
+      <input type="range" id="scale" min="0" max="1" step="0.05" />
+      <label><span>wake haze</span><input type="checkbox" id="haze" checked /></label>
+      <div class="row">
+        <button id="ripple">ripple</button>
+        <button id="pause" class="ghost">pause</button>
+      </div>
+      <div class="hint">click water → ripple there · space → pause · . → step 50ms</div>
+    </div>
+    <script type="module" src="/src/lab.ts"></script>
+  </body>
+</html>

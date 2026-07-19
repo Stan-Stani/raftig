@@ -56,7 +56,10 @@ npm run dev
   guns are mortars too, playing by the same rules: red rings mark where their
   shells burst, each hunter sails to put a ring on your hull (a spyglass line
   is a proper artillery ship), and gunners hold fire until it's there — keep
-  way on and slip the drop zones while your own shells land.
+  way on and slip the drop zones while your own shells land. Where a shell
+  lands matters: bow hits cause short-lived flooding, midships hits batter the
+  nearest battery, and stern hits slow the rudder. These consequences last six
+  seconds and work against raiders and player ships alike.
 - **Salvage** — sunken ships break up into 🪵 wood and 💧 water; kill a gun
   *carrying a rare line* and its seed may float free — deeper waters run
   hotter genomes, so range is the gene hunt. Kill a ship's *last* gun and her
