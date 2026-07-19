@@ -47,7 +47,11 @@ export const ENEMY_REACH_FLOOR = 0.3 // even at home it keeps this much of its r
 export const ENEMY_REACH_DANGER = 6 // danger at which it fights at full bred reach again
 export const SPLASH = 44 // mortar burst radius, px
 export const WARD_ARC = 1.0 // half-angle, rad, of a ward plant's shield arc around its facing
-export const PLANT_HP = 40
+export const PLANT_HP = 60
+/** blanket hull-hp scalar for both your tiers and enemy ships (not fireships —
+ *  their hp is deliberately pegged to FIRESHIP_HIT so they keep popping to
+ *  one/two/three hits by armor tier). Guns got tankier, hulls got squishier. */
+export const HULL_HP_MULT = 0.65
 export const ELEV_MIN = 0.5 // lowest battery elevation — rings pull in to half reach
 export const ELEV_RATE = 0.45 // elevation change per second while Z/X is held
 export const WATER_PER_USE = 45 // meter points per 1💧
@@ -160,7 +164,7 @@ export interface HullTier {
 export const TIERS: HullTier[] = [
   {
     name: 'skiff',
-    hull: 140,
+    hull: Math.round(140 * HULL_HP_MULT),
     cost: 0,
     len: 54,
     beam: 30,
@@ -171,7 +175,7 @@ export const TIERS: HullTier[] = [
   },
   {
     name: 'sloop',
-    hull: 220,
+    hull: Math.round(220 * HULL_HP_MULT),
     cost: 30,
     len: 70,
     beam: 36,
@@ -183,7 +187,7 @@ export const TIERS: HullTier[] = [
   },
   {
     name: 'brig',
-    hull: 320,
+    hull: Math.round(320 * HULL_HP_MULT),
     cost: 70,
     len: 88,
     beam: 44,
@@ -197,7 +201,7 @@ export const TIERS: HullTier[] = [
   },
   {
     name: 'galleon',
-    hull: 460,
+    hull: Math.round(460 * HULL_HP_MULT),
     cost: 140,
     len: 106,
     beam: 52,
@@ -1626,19 +1630,19 @@ export class Game {
     // hit, bronze takes two, iron three — the blast is the same either way
     const armor: 0 | 1 | 2 = kind !== 'fireship' ? 0 : danger >= 6.5 ? 2 : danger >= 4 ? 1 : 0
     const maxHp =
-      kind === 'harrier'
-        ? size * (20 + danger * 3.5)
-        : kind === 'sloop'
-          ? size * (18 + danger * 3)
-          : kind === 'mortar'
-            ? size * (28 + danger * 5.5) // tough enough to survive the approach, not a galleon-tank
-            : kind === 'galleon'
-              ? size * (34 + danger * 6)
-              : kind === 'fireship'
-                ? FIRESHIP_HIT * (armor + 1)
-                : kind === 'bastion'
-                  ? size * (42 + danger * 7) // honeycomb walls out-tank any galleon
-                  : size * (26 + danger * 5)
+      kind === 'fireship'
+        ? FIRESHIP_HIT * (armor + 1)
+        : (kind === 'harrier'
+            ? size * (20 + danger * 3.5)
+            : kind === 'sloop'
+              ? size * (18 + danger * 3)
+              : kind === 'mortar'
+                ? size * (28 + danger * 5.5) // tough enough to survive the approach, not a galleon-tank
+                : kind === 'galleon'
+                  ? size * (34 + danger * 6)
+                  : kind === 'bastion'
+                    ? size * (42 + danger * 7) // honeycomb walls out-tank any galleon
+                    : size * (26 + danger * 5)) * HULL_HP_MULT
     // fireships mount no guns — the hull is the shell
     let gunCount =
       kind === 'harrier'
@@ -2372,6 +2376,7 @@ export class Game {
       }
       if (Math.random() < 0.6) this.dropLoot('water', 1 + Math.floor(e.danger / 6), scatter())
     }
+    this.dropLoot('pollen', 1, scatter()) // a pinch of pollen off every kill, bee-stung or not
     this.stats.sunk++
     this.shake = Math.min(10, this.shake + 5)
     this.burst(e.pos, '#8a6a45', 16)
