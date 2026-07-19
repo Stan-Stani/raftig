@@ -124,9 +124,6 @@ export interface Plant {
   flashT: number
   /** muzzle recoil, seconds left — the sprite kicks back along -aim */
   recoilT: number
-  /** per-mount range trim 0.5..1, set with the 🎯 tool on deck — a mixed deck
-   *  ranges its brawlers and snipers independently; Z/X still scales the lot */
-  trim: number
   wobble: number // render phase
   /** firing heading, radians. Hull-relative on your ship (always the mount's
    *  natural facing — the helm is the only traverse); world-fixed on raider
@@ -431,7 +428,6 @@ function makePlant(genome: Genome, gen: number): Plant {
     poisonT: 0,
     flashT: 0,
     recoilT: 0,
-    trim: 1,
     wobble: rand(Math.PI * 2),
     aim: -Math.PI / 2, // overwritten at sowing with the mount's facing
   }
@@ -487,8 +483,6 @@ export class Game {
    *  destroying a plant for good */
   pendingDig: Mount | null = null
   pendingDigT = 0
-  /** the plant awaiting its second 🎯 click — the one whose range gets trimmed */
-  trimSel: Mount | null = null
   /** any volley fired yet this run — gates the one-time hold-fire teaching toast */
   firedEver = false
   holdFireHinted = false
@@ -511,10 +505,8 @@ export class Game {
   /** bounties fulfilled this run — gates the first onward pointer (BEE_FIRST_MARK) */
   bountiesDone = 0
 
-  /** set by the fire key, consumed each frame → one broadside per press.
-   *  0 none · 1 the whole battery · 2 port rail only · 3 starboard only
-   *  (A/D held with Space pick the rail; chasers on the centreline join any volley) */
-  firing: 0 | 1 | 2 | 3 = 0
+  /** set by the fire key, consumed each frame → one broadside per press */
+  firing = false
   /** battery elevation, ELEV_MIN..1 — scales every gun's burst distance; Z lowers, X raises */
   elev = 1
   /** last time a leech proc floated its +💧 — throttles the toast, not the effect */
@@ -607,7 +599,6 @@ export class Game {
     this.tool = 'water'
     this.seedSel = 0
     this.seedScroll = 0
-    this.trimSel = null
     this.firedEver = false
     this.holdFireHinted = false
     this.board = null
@@ -1288,14 +1279,13 @@ export class Game {
         this.wardIntercept(p, this.mountPos(m), this.ship.a + p.aim, true)
         continue
       }
-      const inVolley = this.firing === 1 || m.y === 0 || (this.firing === 2 ? m.y < 0 : m.y > 0)
-      if (this.firing && inVolley && p.water > 0 && p.cooldown <= 0) {
+      if (this.firing && p.water > 0 && p.cooldown <= 0) {
         this.firePlant(m, this.mountPos(m))
         p.cooldown = p.pheno.period * (this.chillT > 0 ? 1.35 : 1)
         p.water = Math.max(0, p.water - 0.1)
       }
     }
-    this.firing = 0 // consumed this frame; a fresh press re-arms it
+    this.firing = false // consumed this frame; a fresh press re-arms it
     if (this.ship.hp <= 0 && !this.over) this.gameOver()
   }
 
@@ -1437,10 +1427,10 @@ export class Game {
     return SPLASH * (p.pheno.quirk === 'pierce' ? 1.45 : 1)
   }
 
-  /** where one of OUR guns actually drops its shells: bred reach × its own
-   *  🎯 trim × the live battery elevation. Raider guns keep their own machinery. */
+  /** where one of OUR guns actually drops its shells: bred reach × the live
+   *  battery elevation. Raider guns keep their own machinery. */
   plantRange(p: Plant): number {
-    return p.pheno.range * p.trim * this.elev
+    return p.pheno.range * this.elev
   }
 
   /** the ward quirk: a loaded ward detonates one incoming shell inside its
@@ -2838,7 +2828,6 @@ export class Game {
     for (const r of toolbarLayout(this.vw, this.vh)) {
       if (inRect(mx, my, r)) {
         this.tool = r.tool
-        this.trimSel = null
         return
       }
     }
@@ -2931,10 +2920,9 @@ export class Game {
       if (code === 'Escape') this.feedbackOpen = false
       return
     }
-    const idx = ['Digit1', 'Digit2', 'Digit3'].indexOf(code)
+    const idx = ['Digit1', 'Digit2'].indexOf(code)
     if (idx >= 0 && idx < TOOLS.length) {
       this.tool = TOOLS[idx].tool
-      this.trimSel = null
       return
     }
     switch (code) {
@@ -2957,11 +2945,9 @@ export class Game {
         this.upgradeHull()
         break
       case 'Space':
-        // pull the lanyard: the whole battery — or one rail, with A/D held
-        // (turning into a broadside and firing it is one motion)
+        // pull the lanyard: fire the whole battery
         if (!this.over && !this.paused && !this.helpOpen) {
-          this.firing =
-            keys.has('KeyA') || keys.has('ArrowLeft') ? 2 : keys.has('KeyD') || keys.has('ArrowRight') ? 3 : 1
+          this.firing = true
         }
         break
       case 'KeyH':
@@ -3095,26 +3081,6 @@ export class Game {
         p.dryTime = 0
         this.puff(v(this.mountPos(m).x, this.mountPos(m).y - 14), '#7fd8ff', 5)
         sfx('water')
-        break
-      }
-
-      case 'trim': {
-        // 🎯 per-mount range trim: click a plant, then the sea — its shells
-        // range to that distance (never past bred reach, never under half).
-        // Deck-side prep only; Z/X stays the live whole-battery knob mid-fight
-        if (this.inCombat()) return this.toast('trim the battery only out of combat')
-        if (m && m.plant) {
-          this.trimSel = m
-          this.toastAt(this.mountPos(m), '🎯 now click how far it should range', '#ffd257')
-          return
-        }
-        const sel = this.trimSel
-        const sp = sel?.plant
-        if (!sel || !sp) return this.toast('click a plant first, then the sea')
-        sp.trim = clamp(dist(w, this.mountPos(sel)) / sp.pheno.range, 0.5, 1)
-        this.toastAt(this.mountPos(sel), `⌒ ranges to ${Math.round(sp.trim * 100)}%`, '#7fd8ff')
-        sfx('build')
-        this.trimSel = null
         break
       }
     }

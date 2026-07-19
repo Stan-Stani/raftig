@@ -7,9 +7,11 @@
 > 2's frost diminishing returns and the anti-kite **press**, plus a venom
 > rebalance the plan missed (playtesting showed toxin killed every gun and
 > forced the scuttle jackpot — poison now wilts a plant to 1hp but never
-> fells it, the killing blow must be shot in); Phase 3's per-mount 🎯 range
-> trim and A/D+Space broadside rails; Phase 4's `ward` point-defense gene;
-> and the Phase 5 README/controls fixes. Still open: the dangling pity-floor
+> fells it, the killing blow must be shot in); Phase 4's `ward` point-defense
+> gene; and the Phase 5 README/controls fixes. **Phase 3 (per-mount 🎯 range
+> trim and A/D+Space broadside rails) shipped but was reverted per playtest
+> feedback** — disliked in practice, so `elev`/Z-X stayed the only ranging
+> knob and Space stayed an all-or-nothing volley. Still open: the dangling pity-floor
 > comment in `game.ts` (breeding scope), and tuning passes on the new
 > numbers (press trigger 5s/charge 8s, frost ×0.75 per stack, ward arc ±1
 > rad) once they've been felt in real runs.

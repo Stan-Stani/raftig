@@ -646,9 +646,8 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
       // a ward doesn't bombard: its telegraph is the shield arc it can swat
       // shells out of, not a drop ring
       drawWardArc(ctx, p.x, p.y, reach, a, plant.cooldown <= 0 && plant.water > 0, t)
-      if (g.tool === 'trim') drawAim(ctx, p.x, p.y - 12, a, true, g.trimSel === m, t)
     } else {
-      drawAim(ctx, p.x, p.y - 12, a, g.tool === 'trim', g.trimSel === m, t)
+      drawAim(ctx, p.x, p.y - 12, a, false, false, t)
       drawDropRing(
         ctx,
         p.x + Math.cos(a) * reach,
@@ -1437,7 +1436,7 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
   // loaded gun has a target — the old centre spot collided with the wind pill
   const ready = g.mounts.some(m => m.plant && m.plant.water > 0 && m.plant.cooldown <= 0)
   const litFire = ready && g.inCombat() && 0.5 + 0.5 * Math.sin(t * 6) > 0.35
-  const fireTxt = '␣ fire · A/D+␣ rail'
+  const fireTxt = '␣ fire'
   const fw = ctx.measureText(fireTxt).width + 18
   chip(ctx, w - fw - 12, 76, fireTxt, litFire ? '#ffd257' : undefined)
 
@@ -2092,8 +2091,8 @@ function fit(ctx: CanvasRenderingContext2D, s: string, maxW: number): string {
  *  (that's the whole point) on the pause screen so it's never more than
  *  one key away */
 const CONTROL_LINES = [
-  'A/D — helm · W — sheet in · S — back water · SPACE — FIRE (A/D+SPACE — one rail) · Z/X — gun range',
-  '1–3 — tools (🌱 sow · 💧 water · 🎯 trim a gun’s range) · Q/E — cycle seed · B — boil 1🪵 → 2💧 · U — refit',
+  'A/D — helm · W — sheet in · S — back water · SPACE — FIRE · Z/X — gun range',
+  '1–2 — tools (🌱 sow · 💧 water) · Q/E — cycle seed · B — boil 1🪵 → 2💧 · U — refit',
   'T — trade/parley · F — breed (port/hive/boat) · I — suggest something · P/Esc — pause · H — help',
 ]
 

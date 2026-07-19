@@ -48,14 +48,11 @@ npm run dev
   ring off each gun marks where its shells come down. **Space** pulls the
   lanyard — every loaded gun lobs a volley, then **reloads** on its own rate
   gene (an amber gauge winds up around the flower; a green ring means loaded).
-  Hold **A/D with Space** to fire just the port or starboard rail (centreline
-  chasers join any volley) — keep one broadside loaded while the other lands.
   **Z/X** crank the whole battery's elevation live (rings pull in to half
-  reach); the **🎯 trim** tool sets each mount's own ranging out of combat —
-  click a plant, then the sea — so a mixed deck holds different rings.
-  Steering the burst rings over a raider and timing the volley is the whole
-  skill: the helm is the weapon, and the reach gene is your rangefinder —
-  breed short brawlers for the rail and spyglass snipers for standoff. Raider
+  reach). Steering the burst rings over a raider and timing the volley is
+  the whole skill: the helm is the weapon, and the reach gene is your
+  rangefinder — breed short brawlers for close work and spyglass snipers
+  for standoff. Raider
   guns are mortars too, playing by the same rules: red rings mark where their
   shells burst, each hunter sails to put a ring on your hull (a spyglass line
   is a proper artillery ship), and gunners hold fire until it's there — keep
@@ -125,9 +122,9 @@ Every plant is diploid: two alleles per locus, eight loci.
 ## Controls
 
 A/D (or ←/→) helm · W (↑) sheet in · S (↓) back water · **Space fires the
-guns** (A/D+Space — one rail) · **Z/X battery elevation** · 1–3 tools
-(🌱💧🎯) · B boils wood into water · U refits the hull · T trades with a
-nearby trader · F docks to breed · Q/E or wheel picks seeds · H help ·
-P pause · M mute · R restart after sinking.
+guns** · **Z/X battery elevation** · 1–2 tools (🌱💧) · B boils wood into
+water · U refits the hull · T trades with a nearby trader · F docks to
+breed · Q/E or wheel picks seeds · H help · P pause · M mute · R restart
+after sinking.
 
 Hover any plant — yours or theirs — to read its full genotype.
