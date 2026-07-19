@@ -5,8 +5,11 @@ import { render } from './render'
 const canvas = document.getElementById('game') as HTMLCanvasElement
 const ctx = canvas.getContext('2d')!
 const game = new Game()
-// debug handle for poking at a run from the console
+// debug handles for poking at a run from the console — __render/__ctx let a
+// frame be drawn by hand where rAF won't fire (backgrounded automation tabs)
 ;(window as unknown as { __game: Game }).__game = game
+;(window as unknown as { __render: typeof render }).__render = render
+;(window as unknown as { __ctx: CanvasRenderingContext2D }).__ctx = ctx
 
 let dpr = 1
 function resize() {
