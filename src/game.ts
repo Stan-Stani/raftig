@@ -528,7 +528,6 @@ export class Game {
   ambientT = 2
   spawnT = 3
   private encounterSeq = 1
-  private encountersSeen = new Set<number>()
 
   /** materialized POIs by world cell (null = cell checked, empty) */
   pois = new Map<string, POI | null>()
@@ -641,7 +640,6 @@ export class Game {
     this.seeds = []
 
     this.enemies = []
-    this.encountersSeen.clear()
     this.encounterSeq = 1
     this.bullets = []
     this.loot = []
@@ -1964,19 +1962,6 @@ export class Game {
     // the eager classes commit fast: rowers smell blood, fireships exist to burn
     e.noticeT = e.kind === 'harrier' || e.kind === 'fireship' ? t * 0.6 : t
     e.noticeD = dist(e.pos, this.ship.pos)
-    if (e.encounterId != null && e.encounterKind && !this.encountersSeen.has(e.encounterId)) {
-      this.encountersSeen.add(e.encounterId)
-      const names: Record<EncounterKind, [string, string]> = {
-        convoy: ['◆ convoy sighted', 'the prize is running behind escorts'],
-        pincer: ['↔ pincer', 'one sail shows; watch the opposite horizon'],
-        bombardment: ['◎ bombardment screen', 'break the screen or weather the mortar'],
-        'fireship-raid': ['🔥 fireship raid', 'the first wave is making room for something'],
-        patrol: ['— patrol line', 'cross quietly or wake the whole formation'],
-        'broken-fleet': ['⚑ broken fleet', 'damaged sails are running toward help'],
-      }
-      const [title, sub] = names[e.encounterKind]
-      this.banner = { title, sub, t: 3 }
-    }
     this.toastAt(e.pos, '❓', '#ffd257')
     sfx('notice')
   }
