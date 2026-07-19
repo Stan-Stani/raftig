@@ -106,6 +106,10 @@ export const FOG_SIGHT = 640 // radius revealed around the ship
 export const BREEDER_SPEED = 24 // px/s the wandering breeder boat drifts
 /** one "normal" shot's worth of damage — fireship hulls are priced in these */
 export const FIRESHIP_HIT = 8
+/** blanket shell-damage scalar, both directions — hits hurt more, fights swing
+ *  faster. Applied once at shot creation so every downstream hit (hull, gun,
+ *  splash, venom bonus) inherits it symmetrically for player and raider alike. */
+export const DMG_MULT = 2.5
 
 export interface Plant {
   genome: Genome
@@ -1506,7 +1510,7 @@ export class Game {
       this.bullets.push({
         pos,
         vel: v((drop.x - pos.x) / flightT, (drop.y - pos.y) / flightT),
-        dmg: p.pheno.dmg * dmgScale,
+        dmg: p.pheno.dmg * dmgScale * DMG_MULT,
         element: p.pheno.element,
         quirk: p.pheno.quirk,
         friendly,
@@ -1537,7 +1541,7 @@ export class Game {
       this.bullets.push({
         pos,
         vel: v((drop.x - pos.x) / flightT, (drop.y - pos.y) / flightT),
-        dmg: p.pheno.dmg * 0.45,
+        dmg: p.pheno.dmg * 0.45 * DMG_MULT,
         element: p.pheno.element,
         quirk: p.pheno.quirk === 'leech' ? 'leech' : 'none',
         friendly,
