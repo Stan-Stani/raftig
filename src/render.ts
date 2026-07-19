@@ -225,43 +225,75 @@ function drawFoamBead(ctx: CanvasRenderingContext2D, x: number, y: number, hx: n
   ctx.fill()
 }
 
-/** Water displaced by a hull going under, made literally out of wake trails.
- * A ring of small outward-moving wave packets is passed through drawWake, so
- * feathers, transverse crests, haze, breakup and aging are all shared code. */
+/** One expanding ring of displaced water — real ripples spread outward at
+ *  every bearing at once, decelerating (radius ~ sqrt(age)), not along a
+ *  single course. Shares drawFoamBead with drawWake so ripples and wakes read
+ *  as the same water, but samples a true circle instead of a course trail:
+ *  feeding a directional wake fake "outward trails" produced spiky, star-like
+ *  V-wakes radiating from the centre instead of a ring (each fake trail got
+ *  its own pair of Kelvin cusps, which for ten radial trails looks like a
+ *  ten-pointed star, not water) — this draws ring geometry directly instead. */
+function drawRippleRing(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, alpha: number, seed: number) {
+  if (alpha <= 0 || r <= 0) return
+  // the crest LINE: what actually reads as "a ring" at a glance — a broken
+  // necklace of short arcs (not one continuous stroke, so it doesn't look
+  // like a drafted circle), each segment's brightness and width jittered
+  ctx.strokeStyle = '#eaf6fa'
+  ctx.lineCap = 'round'
+  const segs = Math.max(16, Math.round(r * 0.35))
+  for (let i = 0; i < segs; i++) {
+    const a0 = (i / segs) * Math.PI * 2
+    const hx = hash01(Math.cos(a0) * 41 + seed, Math.sin(a0) * 41 + seed * 1.7)
+    if (hx < 0.3) continue // drop segments unevenly — a broken, gappy ring
+    const hy = hash01(Math.sin(a0) * 59 + seed * 2.3, Math.cos(a0) * 59 + seed)
+    const span = (Math.PI * 2 * 0.55) / segs
+    const jr = r + (hy - 0.5) * r * 0.06
+    ctx.globalAlpha = alpha * (0.45 + 0.4 * hy)
+    ctx.lineWidth = 1 + hy * 1.6
+    ctx.beginPath()
+    ctx.arc(cx, cy, jr, a0, a0 + span)
+    ctx.stroke()
+  }
+  // foam beads riding the crest — the same dab used by travelling wakes, for
+  // texture on top of the line rather than carrying the "it's a ring" read
+  const beads = Math.max(14, Math.round(r * 0.5))
+  ctx.fillStyle = '#eaf6fa'
+  for (let i = 0; i < beads; i++) {
+    const a = (i / beads) * Math.PI * 2
+    const hx = hash01(Math.cos(a) * 71 + seed, Math.sin(a) * 71 + seed * 1.7)
+    const hy = hash01(Math.sin(a) * 97 + seed * 2.3, Math.cos(a) * 97 + seed)
+    if (hx < 0.35) continue
+    const jr = r + (hy - 0.5) * r * 0.09
+    drawFoamBead(ctx, cx + Math.cos(a) * jr, cy + Math.sin(a) * jr, hx, hy, alpha * (0.4 + 0.4 * hy))
+  }
+  // a dim halo of flecks straddling the ring — the noise that sells it as
+  // spreading foam rather than a wire outline
+  ctx.fillStyle = '#f2fbff'
+  for (let i = 0; i < beads * 1.5; i++) {
+    const a = hash01(i * 12.9 + seed, i * 7.1 + seed * 0.6) * Math.PI * 2
+    const hy = hash01(i * 3.3 + seed, i * 5.7)
+    const jr = r + (hy - 0.5) * r * 0.22
+    ctx.globalAlpha = alpha * 0.16 * (0.4 + hy)
+    ctx.beginPath()
+    ctx.arc(cx + Math.cos(a) * jr, cy + Math.sin(a) * jr, 0.6 + hy * 1.2, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.globalAlpha = 1
+  ctx.lineCap = 'butt'
+}
+
+/** Water displaced by a hull going under: a couple of ring-shaped pressure
+ *  pulses spreading from where she sat, decaying independently of the hull. */
 function drawSinkRipples(ctx: CanvasRenderingContext2D, e: EnemyShip, time: number) {
   const elapsed = SINK_EFFECT_S - (e.sinkT ?? 0)
-  const packets = 10
-  const speed = 34
-  const history = 1.15
-  const step = 0.075
-
-  // Two pressure pulses leave the hull. Each point around a pulse is a tiny
-  // outward course history, not bespoke ripple geometry.
-  for (const launch of [0.2, 1.65]) {
-    const packetAge = elapsed - launch
-    if (packetAge <= 0 || packetAge >= 4.35) continue
-    const lifeFade = Math.min(1, packetAge / 0.3) * Math.pow(1 - packetAge / 4.35, 0.72)
-    for (let i = 0; i < packets; i++) {
-      const a = (i / packets) * Math.PI * 2
-      const ux = Math.cos(a)
-      const uy = Math.sin(a)
-      const trail: { x: number; y: number; vx: number; vy: number; t: number }[] = []
-      // Oldest-to-newest samples, exactly like a ship trail. Samples before the
-      // pulse launched are omitted so each packet grows in naturally.
-      for (let back = history; back >= 0; back -= step) {
-        const age = packetAge - back
-        if (age < 0) continue
-        const radius = e.r * 0.58 + speed * age
-        trail.push({
-          x: e.pos.x + ux * radius,
-          y: e.pos.y + uy * radius,
-          vx: ux * speed,
-          vy: uy * speed,
-          t: time - back,
-        })
-      }
-      drawWake(ctx, trail, Math.max(5, e.r * 0.12), time, { win: history, haze: true, amp: 0.28 * lifeFade })
-    }
+  const spread = 46 // px / sqrt(second) — ripples decelerate as they widen
+  const life = 4.4
+  for (const launch of [0, 1.5]) {
+    const age = elapsed - launch
+    if (age <= 0 || age >= life) continue
+    const fade = Math.min(1, age / 0.25) * Math.pow(1 - age / life, 0.8)
+    const radius = e.r * 0.45 + spread * Math.sqrt(age)
+    drawRippleRing(ctx, e.pos.x, e.pos.y, radius, 0.85 * fade, e.pos.x * 0.7 + e.pos.y * 1.3 + launch * 97)
   }
 }
 
