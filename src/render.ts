@@ -61,8 +61,10 @@ export function render(ctx: CanvasRenderingContext2D, g: Game) {
       // foam-hazed wake used by the player—the beaded style visible up close.
       drawWake(ctx, e.trail, e.r * 0.7, t, e.sunk ? { win: 1.5, haze: true, amp: 1 } : ENEMY_WAKE)
     }
-    if (e.sunk && (e.sinkT ?? 0) > 0)
-      drawSinkRipples(ctx, e.pos.x, e.pos.y, e.r, SINK_EFFECT_S - (e.sinkT ?? 0), e.pos.x * 0.7 + e.pos.y * 1.3)
+    if (e.sunk && (e.sinkT ?? 0) > 0) {
+      const origin = e.sinkPos ?? e.pos
+      drawSinkRipples(ctx, origin.x, origin.y, e.r, SINK_EFFECT_S - (e.sinkT ?? 0), e.sinkSeed ?? origin.x * 0.7 + origin.y * 1.3)
+    }
   }
   drawSpeedStreaks(ctx, g)
   for (const p of g.activePois) if (p.kind === 'calm') drawCalm(ctx, p, t)

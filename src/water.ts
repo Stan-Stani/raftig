@@ -199,7 +199,7 @@ export function drawRipple(ctx: CanvasRenderingContext2D, cx: number, cy: number
   //    jittered ring position, tilts a little off the tangent, and bows
   //    gently outward, so the crest reads as churned wavelets en echelon
   //    rather than a dashed circle
-  ctx.strokeStyle = '#eaf6fa'
+  ctx.strokeStyle = '#91bac8'
   for (let i = 0; i < RIPPLE_SLOTS; i++) {
     const h1 = hash01(i * 12.9 + seed, i * 3.7 + seed * 1.7)
     if (h1 < 0.26) continue // drop some slots — a broken, gappy crest
@@ -225,7 +225,7 @@ export function drawRipple(ctx: CanvasRenderingContext2D, cx: number, cy: number
   // 2. the packet: foam beads riding the leader, and ONE dimmer beaded crest
   //    chasing a wavelength behind — a second chaser turned each pulse into
   //    tree-ring clutter once two pulses overlapped
-  ctx.fillStyle = '#eaf6fa'
+  ctx.fillStyle = '#91bac8'
   const gap = 8 + r * 0.12 // wavelength opens up as the ring spreads
   for (let k = 0; k < 2; k++) {
     const rr = r - gap * k
@@ -244,12 +244,12 @@ export function drawRipple(ctx: CanvasRenderingContext2D, cx: number, cy: number
 
   // 3. foam haze: dim flecks banded across the packet, mostly INSIDE the
   //    leading crest — spent foam the wave leaves behind as it spreads
-  ctx.fillStyle = '#f2fbff'
+  ctx.fillStyle = '#7fa7b6'
   for (let i = 0; i < RIPPLE_BEADS; i++) {
     const a = hash01(i * 9.7 + seed, i * 5.1 + seed * 0.6) * Math.PI * 2
     const hy = hash01(i * 3.3 + seed, i * 6.7 + seed * 1.3)
     const jr = r * (0.55 + hy * 0.52) // r*0.55 .. r*1.07 — a band, biased inward
-    ctx.globalAlpha = alpha * 0.15 * (0.4 + hy)
+    ctx.globalAlpha = alpha * 0.09 * (0.4 + hy)
     ctx.beginPath()
     ctx.arc(cx + Math.cos(a) * jr, cy + Math.sin(a) * jr, 0.6 + hy * 1.2, 0, Math.PI * 2)
     ctx.fill()
@@ -273,18 +273,18 @@ export function drawSinkRipples(ctx: CanvasRenderingContext2D, cx: number, cy: n
     const fade = Math.min(1, age / 0.25) * Math.pow(1 - age / life, 0.8)
     const radius = hullR * 0.45 + spread * Math.sqrt(age)
     // the follow-up pulse rides dimmer — the first carries the violence
-    drawRipple(ctx, cx, cy, radius, (launch === 0 ? 0.85 : 0.55) * fade, seed + launch * 97)
+    drawRipple(ctx, cx, cy, radius, (launch === 0 ? 0.52 : 0.32) * fade, seed + launch * 97)
   }
   // the boil: churned foam over the grave, drifting slowly outward as it dies
   const boil = 1 - elapsed / 3
   if (boil > 0) {
-    ctx.fillStyle = '#eaf6fa'
+    ctx.fillStyle = '#78a5b5'
     for (let i = 0; i < 34; i++) {
       const hx = hash01(i * 9.1 + seed, i * 4.7 + seed * 1.3)
       const hy = hash01(i * 3.7 + seed * 0.7, i * 6.3 + seed)
       const a = hx * Math.PI * 2 + elapsed * (hy - 0.5) * 0.8
       const rr = Math.sqrt(hy) * hullR * (0.65 + elapsed * 0.22)
-      drawFoamBead(ctx, cx + Math.cos(a) * rr, cy + Math.sin(a) * rr, hx, hy, Math.pow(boil, 1.6) * 0.65)
+      drawFoamBead(ctx, cx + Math.cos(a) * rr, cy + Math.sin(a) * rr, hx, hy, Math.pow(boil, 1.6) * 0.32)
     }
     ctx.globalAlpha = 1
   }

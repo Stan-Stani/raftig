@@ -291,6 +291,10 @@ export interface EnemyShip {
   sunk?: boolean
   /** seconds remaining in the visible sinking sequence */
   sinkT?: number
+  /** fixed water-effect origin; the wreck may drift, but its ripples may not */
+  sinkPos?: Vec
+  /** fixed hash seed so foam marks stay pinned instead of rerolling as she drifts */
+  sinkSeed?: number
   /** stung by hive artillery: drops nothing until the crew fully patches the
    *  hull and the player lands the kill themselves */
   beeHit?: boolean
@@ -2582,6 +2586,8 @@ export class Game {
     // The hull is gone after ~3.8s, but the displaced water remains long enough
     // for its crests to spread and decay independently.
     e.sinkT = 6
+    e.sinkPos = v(e.pos.x, e.pos.y)
+    e.sinkSeed = e.pos.x * 0.7 + e.pos.y * 1.3
     // guns go down with the ship — their seed lines may float free
     for (const g of [...e.guns]) this.killEnemyGun(e, g)
     const scatter = () => v(e.pos.x + rand(-e.r, e.r), e.pos.y + rand(-e.r, e.r))
