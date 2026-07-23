@@ -39,6 +39,13 @@ npm run dev
   delayed pincer or fireship raid, break a screen to reach its mortar, cross a
   moving patrol quietly, or chase damaged sails before they reach waiting
   reinforcements. Small pennants mark each ship's role once the fleet wakes.
+  For repeatable debugging, open the browser console and use `__formations`:
+  `setup('pincer')`, `engage()`, `step(2)`, `snapshot()`, `verify()`, or
+  `verifyAll()`. The harness drives the real encounter AI without ambient sea
+  spawning; each verification returns named checks and a final ship snapshot.
+- **Break their line** — striped gun-deck ships fight beam-on and fire real
+  port/starboard cannon broadsides. Their shot travels fast at sea level and
+  hits what it crosses; it does not arc to a marked mortar drop point.
 - **Flee** — hunters have *patience*: run clean and stop trading shots, and
   after a dozen-odd seconds they decide you're not worth the powder and break
   off. Every hit landed — theirs or yours — renews it, so a fight holds them

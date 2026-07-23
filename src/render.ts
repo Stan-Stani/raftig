@@ -862,6 +862,22 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
       ctx.lineTo(e.r * 0.75, side * e.r * 0.36)
       ctx.stroke()
     }
+  } else if (e.kind === 'broadside') {
+    drawHull(ctx, dims.len, dims.beam, frac, true, e.burnT, (e.flashT ?? 0) / 0.09)
+    ctx.strokeStyle = '#e4d4aa'
+    ctx.lineWidth = 3
+    for (const side of [-1, 1]) {
+      ctx.beginPath()
+      ctx.moveTo(-dims.len * 0.55, side * dims.beam * 0.55)
+      ctx.lineTo(dims.len * 0.55, side * dims.beam * 0.42)
+      ctx.stroke()
+      ctx.fillStyle = '#171a1b'
+      for (const x of [-0.35, 0.05, 0.4]) {
+        ctx.beginPath()
+        ctx.arc(x * dims.len, side * dims.beam * 0.5, 2.5, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }
   } else if (e.kind === 'fireship') {
     drawHull(ctx, dims.len, dims.beam, frac, true, e.burnT, (e.flashT ?? 0) / 0.09)
     // plating rims the hull: bronze takes two normal hits, iron three
@@ -943,7 +959,14 @@ function drawEnemyShip(ctx: CanvasRenderingContext2D, g: Game, e: EnemyShip, t: 
     // (just inside your own) so the ring shows exactly where the shell will land
     const a = gun.plant.aim
     const rr = gun.plant.elev != null ? gun.plant.pheno.range * gun.plant.elev : g.enemyReach(gun.plant, e.danger)
-    if (gun.plant.pheno.quirk === 'ward') {
+    if (e.kind === 'broadside') {
+      ctx.strokeStyle = gun.plant.cooldown <= 0 ? '#ffcf85' : '#8a6a55'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(p.x, p.y)
+      ctx.lineTo(p.x + Math.cos(a) * 28, p.y + Math.sin(a) * 28)
+      ctx.stroke()
+    } else if (gun.plant.pheno.quirk === 'ward') {
       drawWardArc(ctx, p.x, p.y, gun.plant.pheno.range * (gun.plant.elev ?? 1), a, e.mode !== 'roam' && gun.plant.cooldown <= 0, t)
     } else {
       drawAim(ctx, p.x, p.y - 12, a, false, false, t, '255,105,90')
@@ -1335,6 +1358,21 @@ function drawTrader(ctx: CanvasRenderingContext2D, g: Game, p: POI, t: number) {
 function drawBullet(ctx: CanvasRenderingContext2D, g: Game, b: Bullet) {
   const color = g.bulletColor(b)
   const r = clamp(2.5 + b.dmg * 0.12, 2.5, 5)
+  if (b.direct) {
+    ctx.strokeStyle = '#ffd9a0'
+    ctx.globalAlpha = 0.35
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.moveTo(b.pos.x - b.vel.x * 0.035, b.pos.y - b.vel.y * 0.035)
+    ctx.lineTo(b.pos.x, b.pos.y)
+    ctx.stroke()
+    ctx.globalAlpha = 1
+    ctx.fillStyle = '#171a1b'
+    ctx.beginPath()
+    ctx.arc(b.pos.x, b.pos.y, r, 0, Math.PI * 2)
+    ctx.fill()
+    return
+  }
   const prog = clamp(1 - b.life / b.flightT, 0, 1)
   const hgt = (26 + b.flightT * 16) * 4 * prog * (1 - prog)
   ctx.strokeStyle = color

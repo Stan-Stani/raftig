@@ -8,6 +8,15 @@
     <style>
       html, body { margin: 0; padding: 0; overflow: hidden; background: #072a40; height: 100%; }
       canvas { display: block; cursor: crosshair; }
+      #devMenu {
+        position: fixed; left: 10px; bottom: 10px; z-index: 20;
+        padding: 7px 10px; color: #9fb8c8; background: rgba(6,20,31,.86);
+        border: 1px solid rgba(255,255,255,.16); border-radius: 7px;
+        font: 12px/1.6 ui-monospace, monospace;
+      }
+      #devMenu summary { color: #ffd257; cursor: pointer; user-select: none; }
+      #devMenu label { display: block; cursor: pointer; white-space: nowrap; }
+      #devMenu input { vertical-align: middle; margin: 0 6px 0 0; }
 
       #feedback {
         display: none;
@@ -63,6 +72,12 @@
   </head>
   <body>
     <canvas id="game"></canvas>
+
+    <details id="devMenu">
+      <summary>dev mode</summary>
+      <label><input type="checkbox" id="devAnnouncements" />encounter announcements</label>
+      <label><input type="checkbox" id="devGodMode" />god mode (hull)</label>
+    </details>
 
     <div id="feedback">
       <form id="feedbackForm">

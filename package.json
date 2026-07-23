@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test": "npm run test:formations",
+    "test:formations": "node scripts/formation-test.mjs",
     "preview": "vite preview"
   },
   "devDependencies": {

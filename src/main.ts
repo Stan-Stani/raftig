@@ -1,6 +1,7 @@
 import { Game } from './game'
 import { initInput } from './input'
 import { render } from './render'
+import { createFormationDebug, FormationDebug } from './formation-debug'
 
 const canvas = document.getElementById('game') as HTMLCanvasElement
 const ctx = canvas.getContext('2d')!
@@ -10,6 +11,15 @@ const game = new Game()
 ;(window as unknown as { __game: Game }).__game = game
 ;(window as unknown as { __render: typeof render }).__render = render
 ;(window as unknown as { __ctx: CanvasRenderingContext2D }).__ctx = ctx
+;(window as unknown as { __formations: FormationDebug }).__formations = createFormationDebug(game)
+
+const announcements = document.getElementById('devAnnouncements') as HTMLInputElement
+const godMode = document.getElementById('devGodMode') as HTMLInputElement
+announcements.addEventListener('change', () => (game.devEncounterAnnouncements = announcements.checked))
+godMode.addEventListener('change', () => {
+  game.devGodMode = godMode.checked
+  if (game.devGodMode) game.ship.hp = game.tierDef().hull
+})
 
 let dpr = 1
 function resize() {
