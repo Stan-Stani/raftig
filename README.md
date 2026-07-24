@@ -60,8 +60,6 @@ npm run dev
   ring off each gun marks where its shells come down. **Space** pulls the
   lanyard — every loaded gun lobs a volley, then **reloads** on its own rate
   gene (an amber gauge winds up around the flower; a green ring means loaded).
-  Brigs and galleons use a shared lanyard: their usable guns wait for the
-  slowest mount and erupt together in a heavier, deliberately slower broadside.
   **Z/X** crank the whole battery's elevation live (rings pull in to half
   reach). Steering the burst rings over a raider and timing the volley is
   the whole skill: the helm is the weapon, and the reach gene is your

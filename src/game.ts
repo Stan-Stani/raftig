@@ -115,10 +115,6 @@ export const FIRESHIP_HIT = 8
  *  faster. Applied once at shot creation so every downstream hit (hull, gun,
  *  splash, venom bonus) inherits it symmetrically for player and raider alike. */
 export const DMG_MULT = 4
-/** Brigs and galleons fight as batteries, not collections of loose guns. Their
- * crews wait for the slowest usable mount, then fire together; the extra drill
- * and powder handling makes the larger broadside deliberately less frequent. */
-const HEAVY_BATTERY_RELOAD = [1, 1, 1.18, 1.32]
 
 export interface Plant {
   genome: Genome
@@ -1354,16 +1350,6 @@ export class Game {
       if (Math.random() < 1.2 * dt) this.puff(this.ship.pos, '#b8e986', 1)
     }
 
-    const tierIndex = TIERS.indexOf(this.tierDef())
-    const heavyBattery = tierIndex >= 2
-    const battery = heavyBattery
-      ? this.mounts.filter(m => m.plant && m.plant.pheno.quirk !== 'ward' && m.plant.water > 0)
-      : []
-    // A large hull's lanyard is shared: no gun jumps the order while another
-    // usable mount is still loading. Empty, dry, and point-defense mounts do
-    // not hold the broadside.
-    const batteryReady = !heavyBattery || (battery.length > 0 && battery.every(m => m.plant!.cooldown <= 0))
-
     for (const m of this.mounts) {
       const p = m.plant
       if (!p) continue
@@ -1416,9 +1402,9 @@ export class Game {
         this.wardIntercept(p, this.mountPos(m), this.ship.a + p.aim, true)
         continue
       }
-      if (this.firing && batteryReady && p.water > 0 && p.cooldown <= 0) {
+      if (this.firing && p.water > 0 && p.cooldown <= 0) {
         this.firePlant(m, this.mountPos(m))
-        p.cooldown = p.pheno.period * HEAVY_BATTERY_RELOAD[tierIndex] * (this.chillT > 0 ? 1.35 : 1)
+        p.cooldown = p.pheno.period * (this.chillT > 0 ? 1.35 : 1)
         p.water = Math.max(0, p.water - 0.1)
       }
     }
