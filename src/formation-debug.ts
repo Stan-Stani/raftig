@@ -134,6 +134,21 @@ export function createFormationDebug(game: Game) {
       const hp = game.ship.hp
       for (let i = 0; i < 50; i++) game.debugStepBullets(1 / 60)
       check('cannon crosses hull', game.ship.hp < hp, `${Math.round((hp - game.ship.hp) * 10) / 10} hull damage`)
+      game.ship.hp = game.tierDef().hull
+      game.over = false
+      game.bullets = []
+      game.debugStepEnemies(2.4)
+      check('broadside holds while loading', game.bullets.filter(b => b.direct).length === 0, 'no loose gun fires ahead of its battery')
+      let waited = 2.4
+      while (waited < 5 && game.bullets.filter(b => b.direct).length === 0) {
+        // Keep the harness on the same firing line while the convoy sails;
+        // this assertion is about cadence, not whether the target held station.
+        game.ship.pos = v(anchor.pos.x - 350, anchor.pos.y)
+        game.debugStepEnemies(0.1)
+        waited += 0.1
+      }
+      const second = game.bullets.filter(b => b.direct)
+      check('broadside reloads in sync', second.length === 2, `${second.length} cannonballs leave together after ${waited.toFixed(1)}s`)
     }
     if (next === 'broken-fleet') {
       const runner = fleet.find(e => e.encounterRole === 'fleeing')!

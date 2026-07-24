@@ -115,6 +115,9 @@ export const FIRESHIP_HIT = 8
  *  faster. Applied once at shot creation so every downstream hit (hull, gun,
  *  splash, venom bonus) inherits it symmetrically for player and raider alike. */
 export const DMG_MULT = 4
+/** Big enemy batteries trade frequency for a single readable, dangerous beat. */
+const ENEMY_BATTERY_RELOAD = 1.65
+const BROADSIDE_RELOAD = 3.4
 
 export interface Plant {
   genome: Genome
@@ -2489,12 +2492,22 @@ export class Game {
           const side = g.y < 0 ? -1 : 1
           const aim = e.a + side * Math.PI / 2
           p.aim = aim
-          if (e.mode === 'hunt' && e.engaged && p.cooldown <= 0 && !this.over) {
-            const targetA = Math.atan2(this.ship.pos.y - from.y, this.ship.pos.x - from.x)
-            if (Math.abs(angleDiff(targetA, aim)) < 0.14 && dist(from, this.ship.pos) < 520) {
-              this.cannonFire(e, p, from, aim)
-              p.cooldown = Math.max(2.2, p.pheno.period * 1.25) * rand(0.92, 1.12)
-            }
+          const sideBattery = e.guns.filter(bg => (bg.y < 0 ? -1 : 1) === side)
+          const ready =
+            e.mode === 'hunt' &&
+            e.engaged &&
+            !this.over &&
+            sideBattery.every(bg => {
+              const muzzle = this.gunPos(e, bg)
+              const targetA = Math.atan2(this.ship.pos.y - muzzle.y, this.ship.pos.x - muzzle.x)
+              return bg.plant.cooldown <= 0 && Math.abs(angleDiff(targetA, aim)) < 0.14 && dist(muzzle, this.ship.pos) < 520
+            })
+          if (ready) {
+            // One lanyard per side: every gun waits for its battery-mates, then
+            // the whole broadside speaks in the same simulation frame.
+            for (const bg of sideBattery) this.cannonFire(e, bg.plant, this.gunPos(e, bg), aim)
+            const reload = Math.max(BROADSIDE_RELOAD, ...sideBattery.map(bg => bg.plant.pheno.period * ENEMY_BATTERY_RELOAD))
+            for (const bg of sideBattery) bg.plant.cooldown = reload * (e.chillT > 0 ? 1.5 : 1)
           }
           continue
         }
@@ -2603,9 +2616,25 @@ export class Game {
           const drop = v(from.x + Math.cos(p.aim) * reach, from.y + Math.sin(p.aim) * reach)
           const onBelief = g.leadPt != null && dist(drop, g.leadPt) < this.tierDef().len + HUNTER_FIRE_TOL
           if (onBelief || this.onHull(drop, HUNTER_FIRE_TOL)) {
-            this.enemyFire(e, p, from)
-            const diffMult = Math.max(0.7, 1.5 - e.danger * 0.08)
-            p.cooldown = p.pheno.period * diffMult * (e.chillT > 0 ? 1.5 : 1) * rand(0.9, 1.15)
+            if (e.kind === 'galleon') {
+              const battery = e.guns.filter(bg => bg.plant.pheno.quirk !== 'ward')
+              const ready = battery.every(bg => {
+                const bp = bg.plant
+                const muzzle = this.gunPos(e, bg)
+                const r = bp.pheno.range * (bp.elev ?? 1)
+                const d = v(muzzle.x + Math.cos(bp.aim) * r, muzzle.y + Math.sin(bp.aim) * r)
+                return bp.cooldown <= 0 && bg.leadPt != null && dist(d, bg.leadPt) < this.tierDef().len + HUNTER_FIRE_TOL
+              })
+              if (ready) {
+                for (const bg of battery) this.enemyFire(e, bg.plant, this.gunPos(e, bg))
+                const reload = Math.max(...battery.map(bg => bg.plant.pheno.period)) * ENEMY_BATTERY_RELOAD
+                for (const bg of battery) bg.plant.cooldown = reload * (e.chillT > 0 ? 1.5 : 1)
+              }
+            } else {
+              this.enemyFire(e, p, from)
+              const diffMult = Math.max(0.7, 1.5 - e.danger * 0.08)
+              p.cooldown = p.pheno.period * diffMult * (e.chillT > 0 ? 1.5 : 1) * rand(0.9, 1.15)
+            }
           }
         }
       }
