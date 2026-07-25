@@ -96,7 +96,30 @@ export function render(ctx: CanvasRenderingContext2D, g: Game) {
 
   ctx.restore()
 
+  drawRain(ctx, g, w, h, t)
   drawHud(ctx, g, w, h, t)
+}
+
+/** Screen-space squall: fast diagonal streaks stay readable while the camera
+ * and sea move beneath them. */
+function drawRain(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t: number) {
+  if (g.rainT <= 0) return
+  ctx.save()
+  ctx.fillStyle = 'rgba(70, 115, 145, 0.1)'
+  ctx.fillRect(0, 0, w, h)
+  ctx.strokeStyle = 'rgba(185, 225, 245, 0.48)'
+  ctx.lineWidth = 1.2
+  ctx.beginPath()
+  for (let i = 0; i < 90; i++) {
+    const lane = hash01(i * 17.17, i * 3.91)
+    const phase = hash01(i * 5.37, i * 29.1)
+    const x = (lane * (w + 180) + t * 250) % (w + 180) - 90
+    const y = (phase * (h + 120) + t * 620) % (h + 120) - 60
+    ctx.moveTo(x, y)
+    ctx.lineTo(x - 12, y + 30)
+  }
+  ctx.stroke()
+  ctx.restore()
 }
 
 function drawWaves(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t: number) {

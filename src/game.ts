@@ -128,6 +128,8 @@ const BROADSIDE_RELOAD = 3.4
  * Some crews begin a hunt already committed to the charge. */
 const PRESS_AFTER_S = 3.2
 const IMMEDIATE_PRESS_CHANCE = 0.32
+const RAIN_WATER_PER_S = 5
+const SHIP_WATER_DROP_CHANCE = 0.06
 
 export interface Plant {
   genome: Genome
@@ -355,6 +357,8 @@ export interface EnemyShip {
   formation?: Vec
   /** common travel heading for patrols/convoys */
   encounterHeading?: number
+  /** open-sea traffic holds a fast crossing course instead of random-walking */
+  transit?: boolean
   /** delayed entrants stay quiet until this counts down after the fleet wakes */
   reserveT?: number
   /** broken fleets run toward this rally point and wake its reinforcements */
@@ -493,6 +497,17 @@ function enemyShellSpeed(danger: number): number {
   return Math.min(ENEMY_SHELL_SPEED_MAX, ENEMY_SHELL_SPEED + (danger - 1) * ENEMY_SHELL_SPEED_DANGER)
 }
 
+/** Authored attacks are commitments, not ambient opportunists. Once sprung,
+ * these fleets pursue until the player defeats them. */
+function relentlessEncounter(e: EnemyShip): boolean {
+  return (
+    e.encounterKind === 'pincer' ||
+    e.encounterKind === 'patrol' ||
+    e.encounterKind === 'bombardment' ||
+    e.encounterKind === 'fireship-raid'
+  )
+}
+
 function makePlant(genome: Genome, gen: number): Plant {
   return {
     genome,
@@ -550,6 +565,9 @@ export class Game {
   sailEff: number | null = null // sailing efficiency while steering, for the HUD
   ambientT = 2
   spawnT = 3
+  /** seconds remaining in the current squall, and until the next one */
+  rainT = 0
+  rainNextT = 35
   private encounterSeq = 1
   private encountersAnnounced = new Set<number>()
   devEncounterAnnouncements = false
@@ -677,6 +695,8 @@ export class Game {
     this.sailEff = null
     this.ambientT = 2
     this.spawnT = 3
+    this.rainT = 0
+    this.rainNextT = rand(28, 55)
     this.pois = new Map()
     this.activePois = []
     // a breeder boat wanders the far horizon from the start — find it for a
@@ -716,7 +736,9 @@ export class Game {
     this.helpOpen = false
     this.stats = { sunk: 0, bred: 0, time: 0, far: 0 }
     this.banner = { title: 'raftig', sub: 'hoist the sail — raiders roam these waters', t: 4 }
-    for (let i = 0; i < 3; i++) this.spawnEnemyShip()
+    this.spawnTraffic()
+    this.spawnTraffic()
+    this.spawnEnemyShip()
   }
 
   resize(w: number, h: number) {
@@ -855,6 +877,7 @@ export class Game {
     }
 
     this.updateWind(dt)
+    this.updateRain(dt)
     this.updatePOIs(dt)
     this.updateMovement(dt)
     this.updateShip(dt)
@@ -878,6 +901,26 @@ export class Game {
     const ease = Math.min(1, 0.4 * dt)
     w.a += angleDiff(w.targetA, w.a) * ease
     w.speed += (w.targetSpeed - w.speed) * ease
+  }
+
+  /** Passing squalls are the renewable deck-water source. Rain revives dry
+   * batteries directly; it does not mint inventory water for stockpiling. */
+  private updateRain(dt: number) {
+    if (this.rainT > 0) {
+      this.rainT = Math.max(0, this.rainT - dt)
+      for (const m of this.mounts) {
+        if (!m.plant) continue
+        m.plant.water = Math.min(100, m.plant.water + RAIN_WATER_PER_S * dt)
+        if (m.plant.water > 0) m.plant.dryTime = 0
+      }
+      if (this.rainT <= 0) this.rainNextT = rand(42, 85)
+      return
+    }
+    this.rainNextT -= dt
+    if (this.rainNextT <= 0) {
+      this.rainT = rand(8, 14)
+      this.banner = { title: '🌧 squall!', sub: 'rainwater is soaking every deck plant', t: 3.5 }
+    }
   }
 
   // ---- points of interest ----
@@ -1369,15 +1412,15 @@ export class Game {
       const p = m.plant
       if (!p) continue
 
-      // thirst — plants gulp in battle, only sip at rest
+      // Thirst disables a battery; it never kills the cultivar. Active guns
+      // now drink at their full bred rate, making rain and carried water matter.
       if (p.water > 0) {
         p.dryTime = 0
       } else {
         p.dryTime += dt
-        if (p.dryTime > 6) p.hp -= 2 * dt
       }
       p.activeT = Math.max(0, p.activeT - dt)
-      const thirst = p.activeT > 0 ? 0.3 : 0.04
+      const thirst = p.activeT > 0 ? 1 : 0.04
       p.water = Math.max(0, p.water - p.pheno.drain * thirst * dt)
 
       p.flashT = Math.max(0, p.flashT - dt)
@@ -1751,6 +1794,7 @@ export class Game {
     encounterHeading?: number
     reserveT?: number
     rally?: Vec
+    transit?: boolean
   } = {}): EnemyShip {
     const c = this.ship.pos
     let pos = opts.at
@@ -1920,6 +1964,7 @@ export class Game {
       encounterRole: opts.encounterRole,
       formation: opts.formation,
       encounterHeading: opts.encounterHeading,
+      transit: opts.transit,
       reserveT: opts.reserveT,
       rally: opts.rally,
       home: opts.home,
@@ -1931,6 +1976,23 @@ export class Game {
       riskAverse: kind === 'sloop' && Math.random() < clamp(0.2 + danger * 0.07, 0.2, 0.85),
     }
     this.enemies.push(ship)
+    return ship
+  }
+
+  /** A lone sail with somewhere to be: enter from one horizon, cross the
+   * player's surrounding waters on a stable lane, and keep full way on. */
+  private spawnTraffic(): EnemyShip {
+    const c = this.ship.pos
+    const heading = rand(Math.PI * 2)
+    const side = rand(-360, 360)
+    const away = rand(850, 1050)
+    const at = v(
+      c.x - Math.cos(heading) * away - Math.sin(heading) * side,
+      c.y - Math.sin(heading) * away + Math.cos(heading) * side
+    )
+    const ship = this.spawnEnemyShip({ at, encounterHeading: heading, transit: true })
+    ship.a = heading
+    ship.wanderA = heading
     return ship
   }
 
@@ -2020,6 +2082,16 @@ export class Game {
   debugStepBullets(dt: number) {
     this.time += dt
     this.updateBullets(dt)
+  }
+
+  debugStepShip(dt: number) {
+    this.time += dt
+    this.updateShip(dt)
+  }
+
+  debugStepRain(dt: number) {
+    this.time += dt
+    this.updateRain(dt)
   }
 
   private notice(e: EnemyShip, t = NOTICE_T) {
@@ -2160,9 +2232,10 @@ export class Game {
         e.wasEngaged = false
       }
       if ((e.pressT ?? 0) > 0) e.pressT = Math.max(0, e.pressT! - dt)
-      // rowers sprint, then blow — a sustained chase dulls the harrier's edge
+      // Rowers in committed event fleets do not tire and drop the pursuit.
+      // Ambient harriers retain the sprint/rest texture that makes escape work.
       if (e.kind === 'harrier') {
-        e.row = e.mode === 'hunt' ? Math.max(0, e.row - dt / 10) : Math.min(1, e.row + dt / 15)
+        e.row = relentlessEncounter(e) ? 1 : e.mode === 'hunt' ? Math.max(0, e.row - dt / 10) : Math.min(1, e.row + dt / 15)
       }
       const spd =
         e.speed *
@@ -2195,14 +2268,16 @@ export class Game {
         } else if (e.noticeT <= 0) {
           this.aggro(e)
         }
-      } else if (e.mode === 'hunt' && d > e.deaggroR) {
+      } else if (e.mode === 'hunt' && d > e.deaggroR && !relentlessEncounter(e)) {
         this.breakOff(e, ux, uy, 'breaking off — patching up')
       } else if (e.mode === 'hunt') {
         // raiders are opportunists: a chase that lands nothing and costs nothing
         // isn't worth the powder. Trading shots keeps them on you; running clean
         // wears them out — that's how you flee
-        e.patience -= dt
-        if (e.patience <= 0) this.breakOff(e, ux, uy, 'not worth the powder')
+        if (!relentlessEncounter(e)) {
+          e.patience -= dt
+          if (e.patience <= 0) this.breakOff(e, ux, uy, 'not worth the powder')
+        }
       }
 
       if (e.mode === 'hunt' && e.encounterKind === 'convoy' && e.encounterRole === 'anchor') {
@@ -2264,7 +2339,7 @@ export class Game {
         // a sloop that kites the whole fight eventually gives up on its own
         e.vel.x = -ux * spd - uy * e.orbitDir * spd * 0.3
         e.vel.y = -uy * spd + ux * e.orbitDir * spd * 0.3
-        e.patience -= dt * (SLOOP_KITE_PATIENCE_MULT - 1)
+        if (!relentlessEncounter(e)) e.patience -= dt * (SLOOP_KITE_PATIENCE_MULT - 1)
       } else if (e.mode === 'hunt') {
         // sail for the station where the cheapest battery's burst ring will land
         // on you — computed against your led course, so runners get cut off
@@ -2355,8 +2430,9 @@ export class Game {
         e.vel.x = Math.cos(e.wanderA) * spd * 0.3 + Math.cos(this.wind.a) * this.wind.speed * 0.25
         e.vel.y = Math.sin(e.wanderA) * spd * 0.3 + Math.sin(this.wind.a) * this.wind.speed * 0.25
         if (e.encounterHeading != null && !formationCourse) {
-          e.vel.x = Math.cos(e.encounterHeading) * spd * 0.3
-          e.vel.y = Math.sin(e.encounterHeading) * spd * 0.3
+          const cruise = e.transit || e.encounterKind === 'patrol' ? 1 : 0.3
+          e.vel.x = Math.cos(e.encounterHeading) * spd * cruise
+          e.vel.y = Math.sin(e.encounterHeading) * spd * cruise
         }
         if (formationCourse) {
           // Match the leader's translation, then spend only the bounded extra
@@ -2934,7 +3010,9 @@ export class Game {
         this.dropLoot('wood', n, scatter())
         wood -= n
       }
-      if (Math.random() < 0.6) this.dropLoot('water', 1 + Math.floor(e.danger / 6), scatter())
+      // Casks rarely survive a sinking. Rain, wrecks, calm-water flotsam and
+      // boiling are the dependable water economy; combat salvage is a windfall.
+      if (Math.random() < SHIP_WATER_DROP_CHANCE) this.dropLoot('water', 1, scatter())
       this.dropLoot('pollen', 1, scatter()) // pollen is the player's kill reward, not the swarm's
     }
     this.stats.sunk++
@@ -3371,7 +3449,8 @@ export class Game {
       const danger = this.dangerAt(this.ship.pos)
       const cap = Math.min(8, 3 + Math.floor(danger / 2))
       if (hunting < 2 && this.enemies.length < cap) {
-        if (danger > 1.25 && Math.random() < 0.55) this.spawnPod()
+        if (danger > 1.25 && Math.random() < 0.45) this.spawnPod()
+        else if (Math.random() < 0.72) this.spawnTraffic()
         else this.spawnEnemyShip()
       }
     }

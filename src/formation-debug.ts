@@ -114,6 +114,14 @@ export function createFormationDebug(game: Game) {
       step(Math.max(...delayed.map(e => e.reserveT ?? 0)) + 0.1)
       check('timed entrance', delayed.every(e => e.mode !== 'roam' && (e.reserveT ?? 0) === 0), 'reserves enter after their telegraph')
     }
+    if (next === 'pincer' || next === 'patrol') {
+      const pursuer = fleet.find(e => e.mode === 'hunt' && (e.reserveT ?? 0) <= 0)!
+      pursuer.patience = 0.01
+      pursuer.pos = v(game.ship.pos.x + pursuer.deaggroR + 500, game.ship.pos.y)
+      game.debugStepEnemies(0.05)
+      check('event fleet never lets up', pursuer.mode === 'hunt', 'distance and exhausted patience do not end the pursuit')
+      check('event rowers do not tire', fleet.filter(e => e.kind === 'harrier').every(e => e.row === 1), 'committed harriers retain full chase speed')
+    }
     if (next === 'convoy') {
       const anchor = fleet.find(e => e.encounterRole === 'anchor')!
       check('distinct broadside prize', anchor.kind === 'broadside' && anchor.guns.length === 4, 'deep-water convoy carries two guns per side')
@@ -180,6 +188,21 @@ export function createFormationDebug(game: Game) {
         'island impact provokes; a shot merely inside the POI radius does not'
       )
       game.enemies = combatants.filter(e => e !== bastion)
+
+      const deckPlant = game.mounts.find(m => m.plant)?.plant
+      if (deckPlant) {
+        const hp = deckPlant.hp
+        const bullets = game.bullets.length
+        deckPlant.water = 0
+        deckPlant.dryTime = 20
+        game.firing = true
+        game.debugStepShip(0.25)
+        check('thirst never kills plants', deckPlant.hp === hp, 'a bone-dry plant loses no health')
+        check('dry batteries stay silent', game.bullets.length === bullets, 'a dry plant cannot fire')
+        game.rainT = 1
+        game.debugStepRain(0.5)
+        check('rain soaks the battery', deckPlant.water > 0, `${deckPlant.water.toFixed(1)} water caught in half a second`)
+      }
     }
     return { kind: next, pass: checks.every(c => c.pass), checks, ships: snapshot() }
   }

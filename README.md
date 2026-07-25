@@ -107,6 +107,11 @@ Every plant is diploid: two alleles per locus, eight loci.
 | reach   | short (260)           | long (340)      | **spyglass (440)** |
 | element | plain                 | ember/frost/venom | —            |
 | thirst  | thirsty (1.8/s)       | hardy (0.9/s)   | **camel (0.35/s)** |
+
+Active plants now drink at those full rates. A dry plant wilts and cannot fire,
+but never dies from thirst. Passing squalls soak every deck plant; shipwrecked
+water casks are rare, so rain, boiling, wrecks, and flotsam are the dependable
+ways to keep a battery supplied.
 | quirk   | none                  | —               | **pierce / leech / magnet / homing / ward** |
 | burst   | direct                | —               | **airburst**   |
 
