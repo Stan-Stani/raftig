@@ -1532,7 +1532,7 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
   }
 
   drawToolbar(ctx, g, w, h)
-  if (g.tool === 'plant') drawSeedPanel(ctx, g, w)
+  if (g.tool === 'plant' && g.plantPanelT > 0) drawSeedPanel(ctx, g, w)
   if (g.hoverInfo && !g.board) drawPlantTooltip(ctx, g, w, h)
   if (g.board) drawBoard(ctx, g, w, h)
 

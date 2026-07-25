@@ -57,6 +57,7 @@ export const ELEV_MIN = 0.5 // lowest battery elevation — rings pull in to hal
 export const ELEV_RATE = 0.45 // elevation change per second while Z/X is held
 export const WATER_PER_USE = 45 // meter points per 1💧
 export const POUCH_CAP = 12 // the bees stop crossing when the seed pouch is this full
+const PLANT_PANEL_IDLE_S = 6
 export const BOIL_COST = 1 // 🪵 → BOIL_WATER 💧, via the B key — the galley stove
 export const BOIL_WATER = 2
 export const WIND_MIN = 16 // px/s
@@ -587,6 +588,8 @@ export class Game {
   tool: Tool = 'plant'
   seedSel = 0
   seedScroll = 0
+  /** contextual seed pouch visibility; refreshed by mount/panel interaction */
+  plantPanelT = 0
   /** armed by a first click on a planted mount — a second click on the SAME
    *  mount within the window actually digs it up. Stops a stray click from
    *  destroying a plant for good */
@@ -716,6 +719,7 @@ export class Game {
     this.tool = 'plant'
     this.seedSel = 0
     this.seedScroll = 0
+    this.plantPanelT = 0
     this.firedEver = false
     this.holdFireHinted = false
     this.board = null
@@ -863,6 +867,7 @@ export class Game {
   update(dt: number) {
     this.cam = this.ship.pos
     this.hover = this.screenToWorld(this.hoverScreen.x, this.hoverScreen.y)
+    this.plantPanelT = Math.max(0, this.plantPanelT - dt)
     if (this.over || this.paused || this.helpOpen || this.board || this.feedbackOpen) {
       this.updateFx(dt)
       return
@@ -3472,6 +3477,7 @@ export class Game {
   pointerMove(mx: number, my: number) {
     this.hoverScreen = v(mx, my)
     this.hover = this.screenToWorld(mx, my)
+    if (this.plantPanelT > 0 && inRect(mx, my, seedPanelRect(this.vw))) this.plantPanelT = PLANT_PANEL_IDLE_S
   }
 
   private updateHoverInfo() {
@@ -3511,12 +3517,14 @@ export class Game {
     for (const r of toolbarLayout(this.vw, this.vh)) {
       if (inRect(mx, my, r)) {
         this.tool = r.tool
+        this.plantPanelT = PLANT_PANEL_IDLE_S
         return
       }
     }
-    if (this.tool === 'plant' && this.seeds.length) {
+    if (this.tool === 'plant' && this.plantPanelT > 0 && this.seeds.length) {
       const panel = seedPanelRect(this.vw)
       if (inRect(mx, my, panel)) {
+        this.plantPanelT = PLANT_PANEL_IDLE_S
         for (const row of seedRowRects(this.vw, this.seeds.length, this.seedScroll)) {
           if (inRect(mx, my, row)) {
             this.seedSel = row.idx
@@ -3579,6 +3587,8 @@ export class Game {
       return
     }
     if (this.tool === 'plant') {
+      if (this.plantPanelT <= 0) return
+      this.plantPanelT = PLANT_PANEL_IDLE_S
       this.seedScroll = clamp(this.seedScroll + dir, 0, Math.max(0, this.seeds.length - SEED_VISIBLE))
     }
   }
@@ -3606,14 +3616,21 @@ export class Game {
     const idx = ['Digit1', 'Digit2'].indexOf(code)
     if (idx >= 0 && idx < TOOLS.length) {
       this.tool = TOOLS[idx].tool
+      this.plantPanelT = PLANT_PANEL_IDLE_S
       return
     }
     switch (code) {
       case 'KeyQ':
-        if (this.seeds.length) this.seedSel = (this.seedSel + this.seeds.length - 1) % this.seeds.length
+        if (this.seeds.length) {
+          this.seedSel = (this.seedSel + this.seeds.length - 1) % this.seeds.length
+          this.plantPanelT = PLANT_PANEL_IDLE_S
+        }
         break
       case 'KeyE':
-        if (this.seeds.length) this.seedSel = (this.seedSel + 1) % this.seeds.length
+        if (this.seeds.length) {
+          this.seedSel = (this.seedSel + 1) % this.seeds.length
+          this.plantPanelT = PLANT_PANEL_IDLE_S
+        }
         break
       case 'KeyT':
         if (!this.over && !this.paused && !this.helpOpen) this.tryTrade()
@@ -3723,6 +3740,7 @@ export class Game {
   private worldClick(w: Vec) {
     const mi = this.mountAt(w)
     const m = mi === null ? null : this.mounts[mi]
+    if (m) this.plantPanelT = PLANT_PANEL_IDLE_S
 
     switch (this.tool) {
       case 'plant': {
