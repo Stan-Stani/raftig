@@ -109,6 +109,12 @@ export function compassWord(heading: number | null): string {
 export const FOG_CELL = 280 // minimap fog-of-war resolution
 export const FOG_SIGHT = 640 // radius revealed around the ship
 export const BREEDER_SPEED = 24 // px/s the wandering breeder boat drifts
+/** The visible bee island, not its much larger parley/POI interaction radius. */
+export function onHiveIsland(p: POI, at: Vec): boolean {
+  const x = (at.x - p.pos.x) / 74
+  const y = (at.y - (p.pos.y + 8)) / 42
+  return x * x + y * y <= 1
+}
 /** one "normal" shot's worth of damage — fireship hulls are priced in these */
 export const FIRESHIP_HIT = 8
 /** blanket shell-damage scalar, both directions — hits hurt more, fights swing
@@ -1549,6 +1555,10 @@ export class Game {
   inCombat(): boolean {
     const reach = this.playerReach()
     for (const e of this.enemies) {
+      // A raised bee battery may be fighting nearby raiders while remaining
+      // neutral to the player. Sailing alongside neutral bees must not lock
+      // refits, repairs, or other out-of-combat actions.
+      if (e.kind === 'bastion' && !this.beesAngry && !e.home?.hostile) continue
       const er = e.kind === 'bastion' ? e.r : enemyHullDims(e).len
       if (dist(this.ship.pos, e.pos) - er - this.tierDef().len < reach) return true
     }
@@ -3148,7 +3158,8 @@ export class Game {
         const p = g.plant
         if (dist(at, this.gunPos(e, g)) < splash) {
           hitAny = true
-          this.aggro(e)
+          if (e.kind === 'bastion' && e.home) this.provokeHive(e.home)
+          else this.aggro(e)
           e.patience = e.patience0 // you drew blood — now they're invested
           this.maybePress(e)
           const dealt = b.dmg * (b.element === 'venom' ? 1.6 : 1)
@@ -3169,17 +3180,19 @@ export class Game {
       }
       if (!e.sunk && this.onEnemyHull(e, at, splash * 0.5)) {
         hitAny = true
-        this.aggro(e)
+        if (e.kind === 'bastion' && e.home) this.provokeHive(e.home)
+        else this.aggro(e)
         e.patience = e.patience0 // you drew blood — now they're invested
         this.maybePress(e)
         this.damageEnemyHull(e, b)
         if (b.quirk === 'leech' && b.src) this.leechProc(b.src, at)
       }
     }
-    // a shell over a hive island wakes the swarm — the first burst provokes,
-    // every one after lands on the garrison like any other hull
+    // Only a shell that actually lands on the drawn island wakes the swarm.
+    // The POI's broad interaction radius is for parley/navigation, not combat:
+    // near misses remain near misses.
     for (const p of this.activePois) {
-      if (p.kind === 'hive' && !p.done && dist(at, p.pos) < p.r + splash * 0.5) {
+      if (p.kind === 'hive' && !p.done && onHiveIsland(p, at)) {
         hitAny = true
         this.provokeHive(p)
       }

@@ -1,4 +1,5 @@
-import { EncounterKind, EncounterRole, EnemyShip, Game } from './game'
+import { EncounterKind, EncounterRole, EnemyShip, Game, onHiveIsland } from './game'
+import { makePOI } from './poi'
 import { dist, v } from './util'
 
 export interface FormationShipSnapshot {
@@ -168,6 +169,17 @@ export function createFormationDebug(game: Game) {
         game.debugStepEnemies(0.05)
         check('brawler presses proactively', (brawler.pressT ?? 0) > 0, 'silence alone triggers a charge without another incoming hit')
       }
+      const hive = makePOI('hive', v(game.ship.pos.x + 100, game.ship.pos.y))
+      const bastion = game.spawnEnemyShip({ at: hive.pos, kind: 'bastion', home: hive })
+      const combatants = game.enemies
+      game.enemies = [bastion]
+      check('neutral bees do not lock combat', !game.inCombat(), 'a peaceful bastion can stand nearby without blocking recovery/refits')
+      check(
+        'hive uses its visible hitbox',
+        onHiveIsland(hive, v(hive.pos.x + 60, hive.pos.y)) && !onHiveIsland(hive, v(hive.pos.x + 120, hive.pos.y)),
+        'island impact provokes; a shot merely inside the POI radius does not'
+      )
+      game.enemies = combatants.filter(e => e !== bastion)
     }
     return { kind: next, pass: checks.every(c => c.pass), checks, ships: snapshot() }
   }
