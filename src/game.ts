@@ -118,6 +118,10 @@ export const DMG_MULT = 4
 /** Big enemy batteries trade frequency for a single readable, dangerous beat. */
 const ENEMY_BATTERY_RELOAD = 1.65
 const BROADSIDE_RELOAD = 3.4
+/** Brawlers stop orbiting and force the issue after a short unanswered spell.
+ * Some crews begin a hunt already committed to the charge. */
+const PRESS_AFTER_S = 3.2
+const IMMEDIATE_PRESS_CHANCE = 0.32
 
 export interface Plant {
   genome: Genome
@@ -327,6 +331,8 @@ export interface EnemyShip {
   /** seconds this engaged plain hunter has gone without getting a shot off —
    *  taking fire on top of a long silence triggers a press (see maybePress) */
   sinceFired?: number
+  /** previous-frame slot state, used to seed an occasional immediate charge */
+  wasEngaged?: boolean
   /** pressing: seconds left of the flat-out charge to knife range */
   pressT?: number
   floodT: number
@@ -2130,13 +2136,18 @@ export class Game {
       e.flashT = Math.max(0, (e.flashT ?? 0) - dt)
       e.frostRecoverT = Math.max(0, (e.frostRecoverT ?? 0) - dt)
       if (e.frostRecoverT <= 0) e.frostStacks = 0
-      // a raked hunter counts the seconds since it last answered (maybePress);
-      // shedding the slot — or the hunt — resets the grudge
+      // A brawler that wins an attack slot may charge immediately; otherwise
+      // unanswered silence winds it up quickly. This is proactive now rather
+      // than requiring the player to land another hit after the timer matures.
       if (e.mode === 'hunt' && e.engaged && (e.kind === 'raider' || e.kind === 'harrier' || e.kind === 'galleon')) {
+        if (!e.wasEngaged) e.sinceFired = Math.random() < IMMEDIATE_PRESS_CHANCE ? PRESS_AFTER_S : rand(0, 1.4)
         e.sinceFired = (e.sinceFired ?? 0) + dt
+        this.maybePress(e)
+        e.wasEngaged = true
       } else {
         e.sinceFired = 0
         e.pressT = 0
+        e.wasEngaged = false
       }
       if ((e.pressT ?? 0) > 0) e.pressT = Math.max(0, e.pressT! - dt)
       // rowers sprint, then blow — a sustained chase dulls the harrier's edge
@@ -2764,15 +2775,15 @@ export class Game {
     return best
   }
 
-  /** an engaged plain hunter that eats a hit after ~5s without getting a shot
-   *  off stops queuing politely: it PRESSES — abandons its surge station and
+  /** an engaged plain hunter that goes too long without getting a shot off
+   *  stops queuing politely: it PRESSES — abandons its surge station and
    *  sails flat-out to knife range (telegraphed by a red flare) until it gets
    *  a volley away. Out-ranging the fleet still buys time and chip damage; it
    *  stops being a free win in home waters */
   private maybePress(e: EnemyShip) {
     if (e.kind !== 'raider' && e.kind !== 'harrier' && e.kind !== 'galleon') return
     if (e.mode !== 'hunt' || !e.engaged) return
-    if ((e.pressT ?? 0) > 0 || (e.sinceFired ?? 0) < 5) return
+    if ((e.pressT ?? 0) > 0 || (e.sinceFired ?? 0) < PRESS_AFTER_S) return
     e.pressT = 8
     this.toastAt(e.pos, '⚔️ pressing in!', '#ff6e5a')
     sfx('spot')

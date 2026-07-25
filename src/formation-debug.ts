@@ -159,6 +159,16 @@ export function createFormationDebug(game: Game) {
       check('rally wakes reinforcement', (reinforcement.reserveT ?? 1) === 0, 'runner reaching rally cancels reserve delay')
       check('runner joins screen', runner.encounterRole === 'screen' && runner.rally == null, 'runner stops circling the rally point')
     }
+    if (next === 'patrol') {
+      const brawler = fleet.find(e => e.engaged && (e.kind === 'raider' || e.kind === 'harrier' || e.kind === 'galleon'))
+      if (brawler) {
+        brawler.wasEngaged = true
+        brawler.sinceFired = 3.2
+        brawler.pressT = 0
+        game.debugStepEnemies(0.05)
+        check('brawler presses proactively', (brawler.pressT ?? 0) > 0, 'silence alone triggers a charge without another incoming hit')
+      }
+    }
     return { kind: next, pass: checks.every(c => c.pass), checks, ships: snapshot() }
   }
 
