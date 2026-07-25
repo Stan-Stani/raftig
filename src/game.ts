@@ -55,10 +55,10 @@ export const PLANT_HP = 60
 export const HULL_HP_MULT = 0.65
 export const ELEV_MIN = 0.5 // lowest battery elevation — rings pull in to half reach
 export const ELEV_RATE = 0.45 // elevation change per second while Z/X is held
-export const WATER_PER_USE = 45 // meter points per 1💧
+export const WATER_PER_USE = 100 // an automatic cask completely soaks one plant
 export const POUCH_CAP = 12 // the bees stop crossing when the seed pouch is this full
 const PLANT_PANEL_IDLE_S = 6
-export const BOIL_COST = 1 // 🪵 → BOIL_WATER 💧, via the B key — the galley stove
+export const BOIL_COST = 20 // 🪵 → BOIL_WATER 💧, via the B key — the galley stove
 export const BOIL_WATER = 2
 export const WIND_MIN = 16 // px/s
 export const WIND_MAX = 60
@@ -623,6 +623,7 @@ export class Game {
   elev = 1
   /** last time a leech proc floated its +💧 — throttles the toast, not the effect */
   private leechToastT = -9
+  private boilHintT = -9
   /** ~1.5s of the ship's course — enemy lookouts steer from reactT seconds back,
    *  and the wake trail draws straight off it instead of keeping its own history */
   shipTrail: { x: number; y: number; vx: number; vy: number; t: number }[] = []
@@ -727,6 +728,7 @@ export class Game {
     this.rumors = new Set()
     this.elev = 1
     this.leechToastT = -9
+    this.boilHintT = -9
     this.camZoom = 1
     this.camLead = v(0, 0)
     this.shipTrail = []
@@ -1430,14 +1432,19 @@ export class Game {
       const drink = p.pheno.drain * thirst * dt
       // The deck crew draws a cask automatically at the point this plant would
       // run dry. With an empty hold it simply wilts and falls silent.
+      let autoFilled = false
       if (p.water <= drink && this.water > 0) {
         this.water--
-        p.water = Math.min(100, p.water + WATER_PER_USE)
+        p.water = WATER_PER_USE
         p.dryTime = 0
+        autoFilled = true
         this.toastAt(this.mountPos(m), '💧 auto-water', '#7fd8ff')
         this.puff(v(this.mountPos(m).x, this.mountPos(m).y - 14), '#7fd8ff', 3)
+      } else if (p.water <= drink && this.water <= 0 && this.time - this.boilHintT > 3) {
+        this.boilHintT = this.time
+        this.toastAt(v(this.ship.pos.x, this.ship.pos.y - this.tierDef().len * 0.55), 'B to boil 💧', '#7fd8ff')
       }
-      p.water = Math.max(0, p.water - drink)
+      if (!autoFilled) p.water = Math.max(0, p.water - drink)
 
       p.flashT = Math.max(0, p.flashT - dt)
       p.recoilT = Math.max(0, p.recoilT - dt)

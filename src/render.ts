@@ -1474,7 +1474,7 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
   x2 += chip(ctx, x2, 44, `${low ? '⚠ ' : ''}⛵ ${tier.name} ${Math.ceil(g.ship.hp)}/${tier.hull}`) + 6
   const next = TIERS[g.tier + 1]
   if (next) x2 += chip(ctx, x2, 44, `U refit → ${next.name} (${next.cost}🪵)`) + 6
-  chip(ctx, x2, 44, 'B boil 1🪵→2💧')
+  chip(ctx, x2, 44, 'B boil 20🪵→2💧')
 
   // sea status
   const mins = Math.floor(g.stats.time / 60)
@@ -2167,7 +2167,7 @@ function fit(ctx: CanvasRenderingContext2D, s: string, maxW: number): string {
  *  one key away */
 const CONTROL_LINES = [
   'A/D — helm · W — sheet in · S — back water · SPACE — FIRE · Z/X — gun range',
-  '1–2 — tools (🌱 sow · 💧 water) · Q/E — cycle seed · B — boil 1🪵 → 2💧 · U — refit',
+  '1 — sow plants · Q/E — cycle seed · B — boil 20🪵 → 2💧 · U — refit',
   'T — trade/parley · F — breed (port/hive/boat) · I — suggest something · P/Esc — pause · H — help',
 ]
 

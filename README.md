@@ -81,7 +81,7 @@ npm run dev
 - **Refit** — wood buys hulls, not planks: **U** refits skiff → sloop → brig
   → galleon, each with more gun mounts and a stouter hull. Out of combat your
   crew patches damage on their own — no hammering required.
-- **Boil** — **B** burns 1🪵 → 2💧 fresh water on the galley stove. Salt
+- **Boil** — **B** burns 20🪵 → 2💧 fresh water on the galley stove. Salt
   water is free; drinkable water is the economy.
 - **Garden** — sow seeds straight into empty mounts (🌱 tool; click a planted
   mount to dig it up). Plants need watering or they wilt, stop shooting, and

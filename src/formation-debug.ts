@@ -205,7 +205,7 @@ export function createFormationDebug(game: Game) {
         deckPlant.water = 0.1
         deckPlant.activeT = 4
         game.debugStepShip(0.25)
-        check('crew auto-waters from hold', game.water === 0 && deckPlant.water > 1, `${deckPlant.water.toFixed(1)} plant water after drawing the last cask`)
+        check('crew auto-waters from hold', game.water === 0 && deckPlant.water === 100, `${deckPlant.water.toFixed(0)} plant water after drawing the last cask`)
         game.water = holdWater
         deckPlant.water = 0
         game.rainT = 1
