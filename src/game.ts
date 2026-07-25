@@ -131,7 +131,7 @@ const PRESS_AFTER_S = 3.2
 const IMMEDIATE_PRESS_CHANCE = 0.32
 const RAIN_WATER_PER_S = 5
 const SHIP_WATER_DROP_CHANCE = 0.06
-const ACTIVE_THIRST_MULT = 1.75
+const ACTIVE_THIRST_MULT = 5
 
 export interface Plant {
   genome: Genome

@@ -108,7 +108,7 @@ Every plant is diploid: two alleles per locus, eight loci.
 | element | plain                 | ember/frost/venom | —            |
 | thirst  | thirsty (1.8/s)       | hardy (0.9/s)   | **camel (0.35/s)** |
 
-Active plants drink at 1.75× those rates. The crew automatically spends a water
+Active plants drink at 5× those rates. The crew automatically spends a water
 cask from the hold just before a plant runs dry. With an empty hold, a dry plant
 wilts and cannot fire but never dies from thirst. Passing squalls are rare and
 soak every deck plant; shipwrecked water casks are rarer still, so boiling,
