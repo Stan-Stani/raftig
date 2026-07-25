@@ -193,12 +193,21 @@ export function createFormationDebug(game: Game) {
       if (deckPlant) {
         const hp = deckPlant.hp
         const bullets = game.bullets.length
+        const holdWater = game.water
+        game.water = 0
         deckPlant.water = 0
         deckPlant.dryTime = 20
         game.firing = true
         game.debugStepShip(0.25)
         check('thirst never kills plants', deckPlant.hp === hp, 'a bone-dry plant loses no health')
         check('dry batteries stay silent', game.bullets.length === bullets, 'a dry plant cannot fire')
+        game.water = 1
+        deckPlant.water = 0.1
+        deckPlant.activeT = 4
+        game.debugStepShip(0.25)
+        check('crew auto-waters from hold', game.water === 0 && deckPlant.water > 1, `${deckPlant.water.toFixed(1)} plant water after drawing the last cask`)
+        game.water = holdWater
+        deckPlant.water = 0
         game.rainT = 1
         game.debugStepRain(0.5)
         check('rain soaks the battery', deckPlant.water > 0, `${deckPlant.water.toFixed(1)} water caught in half a second`)

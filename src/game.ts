@@ -130,6 +130,7 @@ const PRESS_AFTER_S = 3.2
 const IMMEDIATE_PRESS_CHANCE = 0.32
 const RAIN_WATER_PER_S = 5
 const SHIP_WATER_DROP_CHANCE = 0.06
+const ACTIVE_THIRST_MULT = 1.75
 
 export interface Plant {
   genome: Genome
@@ -583,7 +584,7 @@ export class Game {
   seen = new Set<string>()
   fogT = 0
 
-  tool: Tool = 'water'
+  tool: Tool = 'plant'
   seedSel = 0
   seedScroll = 0
   /** armed by a first click on a planted mount — a second click on the SAME
@@ -696,7 +697,7 @@ export class Game {
     this.ambientT = 2
     this.spawnT = 3
     this.rainT = 0
-    this.rainNextT = rand(28, 55)
+    this.rainNextT = rand(75, 130)
     this.pois = new Map()
     this.activePois = []
     // a breeder boat wanders the far horizon from the start — find it for a
@@ -712,7 +713,7 @@ export class Game {
     // front door: there is always a bounty within an early sail
     const hwa = swa + rand(1.5, Math.PI * 2 - 1.5)
     this.pois.set('homehive', makePOI('hive', v(Math.cos(hwa) * 850, Math.sin(hwa) * 850)))
-    this.tool = 'water'
+    this.tool = 'plant'
     this.seedSel = 0
     this.seedScroll = 0
     this.firedEver = false
@@ -913,7 +914,7 @@ export class Game {
         m.plant.water = Math.min(100, m.plant.water + RAIN_WATER_PER_S * dt)
         if (m.plant.water > 0) m.plant.dryTime = 0
       }
-      if (this.rainT <= 0) this.rainNextT = rand(42, 85)
+      if (this.rainT <= 0) this.rainNextT = rand(100, 180)
       return
     }
     this.rainNextT -= dt
@@ -1420,8 +1421,18 @@ export class Game {
         p.dryTime += dt
       }
       p.activeT = Math.max(0, p.activeT - dt)
-      const thirst = p.activeT > 0 ? 1 : 0.04
-      p.water = Math.max(0, p.water - p.pheno.drain * thirst * dt)
+      const thirst = p.activeT > 0 ? ACTIVE_THIRST_MULT : 0.04
+      const drink = p.pheno.drain * thirst * dt
+      // The deck crew draws a cask automatically at the point this plant would
+      // run dry. With an empty hold it simply wilts and falls silent.
+      if (p.water <= drink && this.water > 0) {
+        this.water--
+        p.water = Math.min(100, p.water + WATER_PER_USE)
+        p.dryTime = 0
+        this.toastAt(this.mountPos(m), '💧 auto-water', '#7fd8ff')
+        this.puff(v(this.mountPos(m).x, this.mountPos(m).y - 14), '#7fd8ff', 3)
+      }
+      p.water = Math.max(0, p.water - drink)
 
       p.flashT = Math.max(0, p.flashT - dt)
       p.recoilT = Math.max(0, p.recoilT - dt)
@@ -3743,18 +3754,6 @@ export class Game {
         break
       }
 
-      case 'water': {
-        const p = m?.plant
-        if (!m || !p) return
-        if (this.water < 1) return this.toast('no fresh water — B boils 1🪵 → 2💧')
-        if (p.water >= 100) return this.toast('already soaked')
-        this.water--
-        p.water = Math.min(100, p.water + WATER_PER_USE)
-        p.dryTime = 0
-        this.puff(v(this.mountPos(m).x, this.mountPos(m).y - 14), '#7fd8ff', 5)
-        sfx('water')
-        break
-      }
     }
   }
 

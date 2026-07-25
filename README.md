@@ -108,10 +108,11 @@ Every plant is diploid: two alleles per locus, eight loci.
 | element | plain                 | ember/frost/venom | —            |
 | thirst  | thirsty (1.8/s)       | hardy (0.9/s)   | **camel (0.35/s)** |
 
-Active plants now drink at those full rates. A dry plant wilts and cannot fire,
-but never dies from thirst. Passing squalls soak every deck plant; shipwrecked
-water casks are rare, so rain, boiling, wrecks, and flotsam are the dependable
-ways to keep a battery supplied.
+Active plants drink at 1.75× those rates. The crew automatically spends a water
+cask from the hold just before a plant runs dry. With an empty hold, a dry plant
+wilts and cannot fire but never dies from thirst. Passing squalls are rare and
+soak every deck plant; shipwrecked water casks are rarer still, so boiling,
+wrecks, and flotsam are the dependable ways to keep a battery supplied.
 | quirk   | none                  | —               | **pierce / leech / magnet / homing / ward** |
 | burst   | direct                | —               | **airburst**   |
 
@@ -142,7 +143,7 @@ ways to keep a battery supplied.
 ## Controls
 
 A/D (or ←/→) helm · W (↑) sheet in · S (↓) back water · **Space fires the
-guns** · **Z/X battery elevation** · 1–2 tools (🌱💧) · B boils wood into
+guns** · **Z/X battery elevation** · 1 selects the planting tool · B boils wood into
 water · U refits the hull · T trades with a nearby trader · F docks to
 breed · Q/E or wheel picks seeds · H help · P pause · M mute · R restart
 after sinking.
