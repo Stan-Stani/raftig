@@ -26,6 +26,7 @@
       }
       #panel button.ghost { background: transparent; color: #9fb8c8; border: 1px solid rgba(255,255,255,0.2); }
       #panel .hint { margin-top: 8px; color: #6d8798; font-size: 11px; }
+      #panel hr { margin: 10px 0 2px; border: 0; border-top: 1px solid rgba(255,255,255,0.14); }
     </style>
   </head>
   <body>
@@ -48,11 +49,20 @@
       <label>time scale <span id="scaleV"></span></label>
       <input type="range" id="scale" min="0" max="1" step="0.05" />
       <label><span>wake haze</span><input type="checkbox" id="haze" checked /></label>
+      <hr />
+      <label><span>🌧 squall</span><input type="checkbox" id="squall" /></label>
+      <label>intensity <span id="rainV"></span></label>
+      <input type="range" id="rain" min="0" max="1" step="0.05" />
+      <label>wind bearing <span id="windAV"></span></label>
+      <input type="range" id="windA" min="0" max="6.28" step="0.02" />
+      <label>wind speed <span id="windSV"></span></label>
+      <input type="range" id="windS" min="0" max="70" step="1" />
+      <label><span>splashes</span><input type="checkbox" id="splashes" checked /></label>
       <div class="row">
         <button id="ripple">ripple</button>
         <button id="pause" class="ghost">pause</button>
       </div>
-      <div class="hint">click water → ripple there · space → pause · . → step 50ms</div>
+      <div class="hint">click water → ripple there · space → pause · . → step 50ms · r → squall</div>
     </div>
     <script type="module" src="/src/lab.ts"></script>
   </body>

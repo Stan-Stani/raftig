@@ -1,12 +1,13 @@
 import { hash01, angleDiff } from './util'
-import { drawWake, drawSinkRipples, TrailPoint } from './water'
+import { drawWake, drawSinkRipples, drawSquall, TrailPoint } from './water'
 
-/** The water lab (lab.html, dev-only): drives a bare hull around the screen
- *  and pops sink ripples on demand so wakes and ripples can be eyeballed side
- *  by side and iterated on without playing a run to set each shot up. Talks
- *  only to water.ts — if an effect looks right here, it looks right in game.
- *  `window.__lab` exposes the whole sim so a console (or an automation tool
- *  in a backgrounded tab, where rAF freezes) can step time by hand. */
+/** The water lab (lab.html, dev-only): drives a bare hull around the screen,
+ *  pops sink ripples on demand and blows a squall over the lot, so every water
+ *  effect can be eyeballed side by side and iterated on without playing a run
+ *  to set each shot up. Talks only to water.ts — if an effect looks right here,
+ *  it looks right in game. `window.__lab` exposes the whole sim so a console
+ *  (or an automation tool in a backgrounded tab, where rAF freezes) can step
+ *  time by hand. */
 
 const canvas = document.getElementById('lab') as HTMLCanvasElement
 const ctx = canvas.getContext('2d')!
@@ -34,6 +35,11 @@ const p = {
   hullR: 16,
   timeScale: 1,
   haze: true,
+  squall: false,
+  rain: 1, // squall intensity, the same 0..1 the game ramps in and out
+  windA: 0.35,
+  windS: 34,
+  splashes: true,
 }
 
 type Ripple = { x: number; y: number; hullR: number; start: number; seed: number }
@@ -140,6 +146,33 @@ function draw() {
   ctx.fill()
   ctx.restore()
 
+  // the weather goes over everything, exactly as render.ts lays it down after
+  // the camera transform is popped. No camera here, so `view` stays at origin
+  if (p.squall) {
+    drawSquall(ctx, vw, vh, lab.t, {
+      intensity: p.rain,
+      windA: p.windA,
+      windSpeed: p.windS,
+      splashes: p.splashes,
+    })
+    // which way the wind is raking it — hard to judge the streaks without it
+    ctx.save()
+    ctx.translate(56, vh - 40)
+    ctx.rotate(p.windA)
+    ctx.strokeStyle = '#ffd257'
+    ctx.globalAlpha = 0.75
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.moveTo(-16, 0)
+    ctx.lineTo(16, 0)
+    ctx.moveTo(16, 0)
+    ctx.lineTo(9, -5)
+    ctx.moveTo(16, 0)
+    ctx.lineTo(9, 5)
+    ctx.stroke()
+    ctx.restore()
+  }
+
   // station marker + clock, tucked in a corner
   ctx.fillStyle = '#9fb8c8'
   ctx.font = '11px ui-monospace, monospace'
@@ -164,8 +197,19 @@ bindRange('turn', () => p.turn, v => (p.turn = v), v => v.toFixed(2))
 bindRange('beam', () => p.beam, v => (p.beam = v))
 bindRange('hullR', () => p.hullR, v => (p.hullR = v))
 bindRange('scale', () => p.timeScale, v => (p.timeScale = v), v => v.toFixed(2))
+bindRange('rain', () => p.rain, v => (p.rain = v), v => v.toFixed(2))
+bindRange('windA', () => p.windA, v => (p.windA = v), v => `${Math.round((v * 180) / Math.PI)}°`)
+bindRange('windS', () => p.windS, v => (p.windS = v))
 ;($('mode') as HTMLSelectElement).addEventListener('change', e => (p.mode = (e.target as HTMLSelectElement).value as typeof p.mode))
-;($('haze') as HTMLInputElement).addEventListener('change', e => (p.haze = (e.target as HTMLInputElement).checked))
+function bindCheck(id: string, get: () => boolean, set: (v: boolean) => void) {
+  const el = $(id) as HTMLInputElement
+  el.checked = get() // params own the truth, same as bindRange — the markup can't drift
+  el.addEventListener('change', () => set(el.checked))
+  return el
+}
+bindCheck('haze', () => p.haze, v => (p.haze = v))
+bindCheck('splashes', () => p.splashes, v => (p.splashes = v))
+const squallBox = bindCheck('squall', () => p.squall, v => (p.squall = v))
 $('ripple').addEventListener('click', () => {
   const s = station()
   lab.spawnRipple(s.x, s.y)
@@ -183,6 +227,10 @@ window.addEventListener('keydown', e => {
     togglePause()
   }
   if (e.code === 'Period') lab.step(0.05)
+  if (e.code === 'KeyR') {
+    p.squall = !p.squall
+    squallBox.checked = p.squall
+  }
 })
 
 let last = performance.now()

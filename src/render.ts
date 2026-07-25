@@ -5,7 +5,7 @@ import { synergies, picksCost, DOCK_RANGE } from './breeding'
 import { POI, POI_SIGHT, POI_ICON, POI_COLOR, TRADE_COST, TRADE_RANGE, BREED_COST } from './poi'
 import { muted } from './audio'
 import { Vec, v, hash01, clamp, gkey, dist, waveHeight, angleDiff } from './util'
-import { drawWake, drawSinkRipples } from './water'
+import { drawWake, drawSinkRipples, drawSquall } from './water'
 
 const ELEMENT_COLOR: Record<string, string> = {
   plain: '#ffd257',
@@ -100,26 +100,20 @@ export function render(ctx: CanvasRenderingContext2D, g: Game) {
   drawHud(ctx, g, w, h, t)
 }
 
-/** Screen-space squall: fast diagonal streaks stay readable while the camera
- * and sea move beneath them. */
+/** The squall itself lives in water.ts alongside the wakes and ripples, so the
+ * water lab drives the identical code. All this does is hand it the weather:
+ * how hard it is coming down, which way the wind rakes it, and where the world
+ * sits on screen so the strike marks stay on the water rather than on the glass. */
 function drawRain(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t: number) {
   if (g.rainT <= 0) return
-  ctx.save()
-  ctx.fillStyle = 'rgba(70, 115, 145, 0.1)'
-  ctx.fillRect(0, 0, w, h)
-  ctx.strokeStyle = 'rgba(185, 225, 245, 0.48)'
-  ctx.lineWidth = 1.2
-  ctx.beginPath()
-  for (let i = 0; i < 90; i++) {
-    const lane = hash01(i * 17.17, i * 3.91)
-    const phase = hash01(i * 5.37, i * 29.1)
-    const x = (lane * (w + 180) + t * 250) % (w + 180) - 90
-    const y = (phase * (h + 120) + t * 620) % (h + 120) - 60
-    ctx.moveTo(x, y)
-    ctx.lineTo(x - 12, y + 30)
-  }
-  ctx.stroke()
-  ctx.restore()
+  // squalls blow in and blow out — a hard cut to full downpour reads as a bug
+  const elapsed = Math.max(0, g.rainMax - g.rainT)
+  drawSquall(ctx, w, h, t, {
+    intensity: Math.min(1, elapsed / 2.5, g.rainT / 2.2),
+    windA: g.wind.a,
+    windSpeed: g.wind.speed,
+    view: { x: g.cam.x + g.camLead.x, y: g.cam.y + g.camLead.y, zoom: g.camZoom },
+  })
 }
 
 function drawWaves(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t: number) {

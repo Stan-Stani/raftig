@@ -567,8 +567,10 @@ export class Game {
   sailEff: number | null = null // sailing efficiency while steering, for the HUD
   ambientT = 2
   spawnT = 3
-  /** seconds remaining in the current squall, and until the next one */
+  /** seconds remaining in the current squall, how long it ran in total (so the
+   * render can ramp it in as well as out), and how long until the next one */
   rainT = 0
+  rainMax = 0
   rainNextT = 35
   private encounterSeq = 1
   private encountersAnnounced = new Set<number>()
@@ -701,6 +703,7 @@ export class Game {
     this.ambientT = 2
     this.spawnT = 3
     this.rainT = 0
+    this.rainMax = 0
     this.rainNextT = rand(75, 130)
     this.pois = new Map()
     this.activePois = []
@@ -927,6 +930,7 @@ export class Game {
     this.rainNextT -= dt
     if (this.rainNextT <= 0) {
       this.rainT = rand(8, 14)
+      this.rainMax = this.rainT
       this.banner = { title: '🌧 squall!', sub: 'rainwater is soaking every deck plant', t: 3.5 }
     }
   }
