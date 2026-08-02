@@ -58,8 +58,11 @@ npm run dev
   where the shipwright set it, and the helm is the only traverse. Every shell
   arcs over the sea and **bursts exactly at the plant's bred reach**; the gold
   ring off each gun marks where its shells come down. **Space** pulls the
-  lanyard — every loaded gun lobs a volley, then **reloads** on its own rate
-  gene (an amber gauge winds up around the flower; a green ring means loaded).
+  lanyard — every loaded gun at battle stations lobs a volley, then **reloads**
+  on its own rate gene (an amber gauge winds up around the flower; a green ring
+  means loaded). Select the ⚔️ tool with **2** and click a mount to order it
+  to battle stations or stand down; stood-down guns ignore Space, wards stop
+  intercepting, and the crew reserves its water casks for other mounts.
   **Z/X** crank the whole battery's elevation live (rings pull in to half
   reach). Steering the burst rings over a raider and timing the volley is
   the whole skill: the helm is the weapon, and the reach gene is your
@@ -84,15 +87,15 @@ npm run dev
 - **Boil** — **B** burns 20🪵 → 2💧 fresh water on the galley stove. Salt
   water is free; drinkable water is the economy.
 - **Garden** — sow seeds straight into empty mounts (🌱 tool; click a planted
-  mount to dig it up). Plants need watering or they wilt, stop shooting, and
-  die — they gulp water in battle but only sip while resting, so peaceful
-  sailing is cheap.
-- **Breed** — the bees do it. Every so often, out of combat, two mature
-  watered plants on deck quietly cross into a fresh seed (no tool, no cost) —
-  so *what you choose to field is the breeding program*, and your pouch
-  drifts toward the ship you're already sailing. You start with one plant and
-  no seeds; loot or trade your way to a second plant and the pollen starts
-  moving. The bees rest when the pouch is full.
+  mount to dig it up). Dry plants wilt and stop shooting but never die of
+  thirst. Active plants gulp water while resting plants only sip; the crew
+  automatically opens a cask just before an active mount runs dry unless that
+  mount is stood down.
+- **Breed** — dock at a port, hive, or breeder boat with **F** to open the
+  channeling board. Choose two parent lines from watered deck plants or pouch
+  seeds, then choose the child's inherited alleles; crossing and directed rare
+  choices cost pollen. Parents are not consumed, and the finished seed goes
+  into your pouch.
 - Run ends when your hull gives out.
 
 ## Genetics (the plantig part)
@@ -107,20 +110,22 @@ Every plant is diploid: two alleles per locus, eight loci.
 | reach   | short (260)           | long (340)      | **spyglass (440)** |
 | element | plain                 | ember/frost/venom | —            |
 | thirst  | thirsty (1.8/s)       | hardy (0.9/s)   | **camel (0.35/s)** |
-
-Active plants drink at 5× those rates. The crew automatically spends a water
-cask from the hold just before a plant runs dry. With an empty hold, a dry plant
-wilts and cannot fire but never dies from thirst. Passing squalls are rare and
-soak every deck plant; shipwrecked water casks are rarer still, so boiling,
-wrecks, and flotsam are the dependable ways to keep a battery supplied.
 | quirk   | none                  | —               | **pierce / leech / magnet / homing / ward** |
 | burst   | direct                | —               | **airburst**   |
 
+Firing or intercepting makes a plant active for one second; active plants
+drink at 5× their bred rate, and follow-up shots refresh that window. The crew
+automatically spends a water cask just before a battle-stations plant runs dry.
+With an empty hold, or while stood down, a dry plant wilts and cannot act but
+never dies from thirst. Passing squalls soak every deck plant; boiling, wrecks,
+and flotsam are the dependable ways to keep a battery supplied.
+
 - Dominant alleles mask recessives; the best traits are rare recessives, so
-  they hide in **carrier lines** ([bH] shows single, breeds hydra) until the
-  bees pair two carriers — field carriers side by side and wait for the ✦.
-- Meiosis takes one allele from each parent per locus; ~6% of inherited
-  alleles mutate, and a third of mutations jackpot into a rare allele.
+  they hide in **carrier lines** ([bH] shows single, breeds hydra) until you
+  channel compatible parent lines at a breeding site.
+- The channeling board lets you direct one allele per locus from the chosen
+  parents; rare choices consume extra pollen, with mutation wildcards offering
+  genes outside those parent lines.
 - Elements ride the shells: **ember** burns hulls over time, **frost**
   chills ships and fire rates (with diminishing returns — a chilled crew
   shakes off repeat frost faster), **venom** shreds enemy plants but only
@@ -143,8 +148,8 @@ wrecks, and flotsam are the dependable ways to keep a battery supplied.
 ## Controls
 
 A/D (or ←/→) helm · W (↑) sheet in · S (↓) back water · **Space fires the
-guns** · **Z/X battery elevation** · 1 selects the planting tool · B boils wood into
-water · U refits the hull · T trades with a nearby trader · F docks to
+guns** · **Z/X battery elevation** · 1 selects the planting tool · 2 selects
+battle-stations orders · B boils wood into water · U refits the hull · T trades with a nearby trader · F docks to
 breed · Q/E or wheel picks seeds · H help · P pause · M mute · R restart
 after sinking.
 

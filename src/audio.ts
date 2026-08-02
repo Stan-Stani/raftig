@@ -6,7 +6,7 @@ let musicSource: AudioBufferSourceNode | null = null
 let musicLoading: Promise<void> | null = null
 export let muted = false
 
-const MUSIC_VOLUME = 0.16
+const MUSIC_VOLUME = 0.1
 
 async function startMusic() {
   if (!actx || musicSource) return

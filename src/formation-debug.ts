@@ -100,6 +100,64 @@ export function createFormationDebug(game: Game) {
       check('convoy retains formation', errors.every(error => error < 55), `escort errors ${errors.map(n => Math.round(n)).join(', ')}px after 3s`)
     }
 
+    if (next === 'pincer') {
+      const screen = fleet.find(e => e.encounterRole === 'screen')!
+      const wings = fleet.filter(e => e.encounterRole === 'flank')
+      check('one visible contact', !!screen && wings.length === 2, `screen plus ${wings.length} delayed wings`)
+      check(
+        'wings begin beyond the screen',
+        wings.every(e => dist(e.pos, game.ship.pos) > 1000) && dist(wings[0].pos, wings[1].pos) > 1300,
+        `${wings.map(e => Math.round(dist(e.pos, game.ship.pos))).join('m, ')}m from player · ${Math.round(dist(wings[0].pos, wings[1].pos))}m apart`,
+      )
+    }
+
+    if (next === 'bombardment') {
+      const artillery = fleet.find(e => e.encounterRole === 'artillery')!
+      const screens = fleet.filter(e => e.encounterRole === 'screen')
+      const screenRange = screens.map(e => dist(e.pos, game.ship.pos))
+      check(
+        'screen guards the gun line',
+        screens.length === 2 && screenRange.every(range => range < dist(artillery.pos, game.ship.pos)),
+        `screens at ${screenRange.map(Math.round).join('m, ')}m · artillery at ${Math.round(dist(artillery.pos, game.ship.pos))}m`,
+      )
+      check('screen has a navigable edge', dist(screens[0].pos, screens[1].pos) > 550, `${Math.round(dist(screens[0].pos, screens[1].pos))}m wide`)
+    }
+
+    if (next === 'fireship-raid') {
+      const fireship = fleet.find(e => e.kind === 'fireship')!
+      const screens = fleet.filter(e => e.encounterRole === 'screen')
+      check(
+        'fireship waits beyond its escorts',
+        screens.every(e => dist(e.pos, game.ship.pos) < dist(fireship.pos, game.ship.pos)) && dist(fireship.pos, game.ship.pos) > 1400,
+        `escorts at ${screens.map(e => Math.round(dist(e.pos, game.ship.pos))).join('m, ')}m · fireship at ${Math.round(dist(fireship.pos, game.ship.pos))}m`,
+      )
+    }
+
+    if (next === 'patrol') {
+      let span = 0
+      for (const a of fleet) for (const b of fleet) span = Math.max(span, dist(a.pos, b.pos))
+      check('patrol bars a wide lane', span > 600, `${Math.round(span)}m end to end`)
+    }
+
+    if (next === 'broken-fleet') {
+      const runners = fleet.filter(e => e.encounterRole === 'fleeing')
+      const reinforcements = fleet.filter(e => e.encounterRole === 'reinforcement')
+      check(
+        'reinforcement waits beyond the runners',
+        reinforcements.length > 0 && reinforcements.every(r => runners.every(e => dist(e.pos, game.ship.pos) < dist(r.pos, game.ship.pos))) && dist(reinforcements[0].pos, game.ship.pos) > 1600,
+        `runners at ${runners.map(e => Math.round(dist(e.pos, game.ship.pos))).join('m, ')}m · relief at ${reinforcements.map(e => Math.round(dist(e.pos, game.ship.pos))).join('m, ')}m`,
+      )
+      const runnerHp = runners.reduce((sum, e) => sum + e.hp, 0)
+      const rescueHp = reinforcements.reduce((sum, e) => sum + e.hp, 0)
+      const runnerGuns = runners.reduce((sum, e) => sum + e.guns.length, 0)
+      const rescueGuns = reinforcements.reduce((sum, e) => sum + e.guns.length, 0)
+      check(
+        'relief force badly outguns its charges',
+        rescueHp > runnerHp * 2 && rescueGuns > runnerGuns,
+        `${Math.round(rescueHp)}hp/${rescueGuns} guns relief vs ${Math.round(runnerHp)}hp/${runnerGuns} guns runners`,
+      )
+    }
+
     const delayed = fleet.filter(e => (e.reserveT ?? 0) > 0)
     if (delayed.length) {
       const before = delayed.map(e => e.reserveT!)
@@ -119,8 +177,12 @@ export function createFormationDebug(game: Game) {
       pursuer.patience = 0.01
       pursuer.pos = v(game.ship.pos.x + pursuer.deaggroR + 500, game.ship.pos.y)
       game.debugStepEnemies(0.05)
-      check('event fleet never lets up', pursuer.mode === 'hunt', 'distance and exhausted patience do not end the pursuit')
-      check('event rowers do not tire', fleet.filter(e => e.kind === 'harrier').every(e => e.row === 1), 'committed harriers retain full chase speed')
+      if (next === 'pincer') {
+        check('event fleet never lets up', pursuer.mode === 'hunt', 'distance and exhausted patience do not end the pursuit')
+        check('event rowers do not tire', fleet.filter(e => e.kind === 'harrier').every(e => e.row === 1), 'committed harriers retain full chase speed')
+      } else {
+        check('patrol gives up a clean escape', pursuer.mode === 'roam', 'distance ends the limited pursuit')
+      }
     }
     if (next === 'convoy') {
       const anchor = fleet.find(e => e.encounterRole === 'anchor')!
@@ -132,7 +194,7 @@ export function createFormationDebug(game: Game) {
       const across = Math.abs(anchor.vel.x * -Math.sin(h) + anchor.vel.y * Math.cos(h))
       check('convoy holds course', along > 0 && across < along * 0.15, 'anchor follows the authored heading')
       const escorts = fleet.filter(e => e.encounterRole === 'escort')
-      check('convoy grouped tightly', escorts.every(e => dist(e.pos, anchor.pos) < 150), 'escorts begin within 150px of the prize')
+      check('convoy grouped tightly', escorts.every(e => dist(e.pos, anchor.pos) < 190), 'escorts begin within 190px of the prize')
       // Put the player squarely off the port battery and exercise the real
       // direct projectile path independently of the ambient simulation.
       game.ship.pos = v(anchor.pos.x - 350, anchor.pos.y)
@@ -159,14 +221,46 @@ export function createFormationDebug(game: Game) {
       const second = game.bullets.filter(b => b.direct)
       check('broadside reloads in sync', second.length === 2, `${second.length} cannonballs leave together after ${waited.toFixed(1)}s`)
     }
+    if (next === 'bombardment') {
+      const artillery = fleet.find(e => e.encounterRole === 'artillery')!
+      artillery.mode = 'hunt'
+      game.debugStepEnemies(0.05)
+      check('artillery anchors the objective', Math.hypot(artillery.vel.x, artillery.vel.y) < 0.01, 'mortar hull holds its station while ranging')
+    }
+    if (next === 'fireship-raid') {
+      const fireship = fleet.find(e => e.kind === 'fireship')!
+      const screens = fleet.filter(e => e.encounterRole === 'screen')
+      check('fireship skips lookout hesitation', fireship.mode === 'hunt', 'reserve release goes directly into the charge')
+      game.debugStepEnemies(0.05)
+      const chargeA = fireship.chargeA
+      game.ship.pos = v(game.ship.pos.x, game.ship.pos.y + 500)
+      game.debugStepEnemies(0.1)
+      check('fireship commits to one line', chargeA != null && fireship.chargeA === chargeA, 'dodging does not bend the charge back toward the player')
+      fireship.chargeT = 0.01
+      game.debugStepEnemies(0.05)
+      game.debugStepEnemies(0.05)
+      check('spent raid releases its escorts', !!fireship.sunk && screens.every(e => e.mode === 'roam' && e.encounterKind == null), 'one missed charge resolves the raid')
+    }
     if (next === 'broken-fleet') {
       const runner = fleet.find(e => e.encounterRole === 'fleeing')!
-      const reinforcement = fleet.find(e => e.encounterRole === 'reinforcement')!
-      runner.pos = v(runner.rally!.x + 10, runner.rally!.y)
-      game.aggro(runner)
+      const reinforcements = fleet.filter(e => e.encounterRole === 'reinforcement')
+      // Enter the rally radius from the side instead of overlapping the guard
+      // ship at its exact authored station.
+      runner.pos = v(runner.rally!.x + 180, runner.rally!.y)
+      game.ship.pos = v(runner.rally!.x - 180, runner.rally!.y)
+      runner.mode = 'hunt'
+      runner.engaged = true
       game.debugStepEnemies(0.05)
-      check('rally wakes reinforcement', (reinforcement.reserveT ?? 1) === 0, 'runner reaching rally cancels reserve delay')
-      check('runner joins screen', runner.encounterRole === 'screen' && runner.rally == null, 'runner stops circling the rally point')
+      check(
+        'rally wakes reinforcement',
+        reinforcements.every(e => (e.reserveT ?? 1) === 0),
+        `reserves ${reinforcements.map(e => (e.reserveT ?? 0).toFixed(2)).join(', ')} · runner ${runner.mode}/${runner.encounterRole}#${runner.encounterId} · rally gap ${runner.rally ? Math.round(dist(runner.pos, runner.rally)) : 'none'}m`,
+      )
+      check(
+        'runner joins screen',
+        runner.encounterRole === 'screen' && runner.rally == null,
+        `runner ${runner.mode}/${runner.encounterRole} · rally ${runner.rally ? 'held' : 'cleared'}`,
+      )
     }
     if (next === 'patrol') {
       const brawler = fleet.find(e => e.engaged && (e.kind === 'raider' || e.kind === 'harrier' || e.kind === 'galleon'))
@@ -189,8 +283,9 @@ export function createFormationDebug(game: Game) {
       )
       game.enemies = combatants.filter(e => e !== bastion)
 
-      const deckPlant = game.mounts.find(m => m.plant)?.plant
-      if (deckPlant) {
+      const deckMount = game.mounts.find(m => m.plant)
+      const deckPlant = deckMount?.plant
+      if (deckMount && deckPlant) {
         const hp = deckPlant.hp
         const bullets = game.bullets.length
         const holdWater = game.water
@@ -203,9 +298,22 @@ export function createFormationDebug(game: Game) {
         check('dry batteries stay silent', game.bullets.length === bullets, 'a dry plant cannot fire')
         game.water = 1
         deckPlant.water = 0.1
-        deckPlant.activeT = 4
+        deckPlant.activeT = 1
         game.debugStepShip(0.25)
         check('crew auto-waters from hold', game.water === 0 && deckPlant.water === 100, `${deckPlant.water.toFixed(0)} plant water after drawing the last cask`)
+        deckMount.battleStations = false
+        game.water = 1
+        deckPlant.water = 0.1
+        deckPlant.activeT = 1
+        game.debugStepShip(0.25)
+        check('stood-down mount does not draw a cask', game.water === 1, `${game.water} cask remains`)
+        deckPlant.water = 100
+        deckPlant.cooldown = 0
+        const heldBullets = game.bullets.length
+        game.firing = true
+        game.debugStepShip(0.01)
+        check('stood-down mount ignores fire order', game.bullets.length === heldBullets, 'no shell launched')
+        deckMount.battleStations = true
         game.water = holdWater
         deckPlant.water = 0
         game.rainT = 1

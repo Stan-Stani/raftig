@@ -132,6 +132,9 @@ const IMMEDIATE_PRESS_CHANCE = 0.32
 const RAIN_WATER_PER_S = 5
 const SHIP_WATER_DROP_CHANCE = 0.06
 const ACTIVE_THIRST_MULT = 5
+/** One deliberate trigger pull should not cost more than a cask. Follow-up
+ *  volleys refresh this short window, so sustained fire still pays full thirst. */
+export const ACTIVE_THIRST_S = 1
 
 export interface Plant {
   genome: Genome
@@ -168,6 +171,8 @@ export interface Mount {
   y: number
   aim0: number // the mount's natural facing; new plants point this way
   plant: Plant | null
+  /** Persistent crew order. Stood-down mounts neither act nor draw casks. */
+  battleStations: boolean
 }
 
 export interface HullTier {
@@ -365,6 +370,9 @@ export interface EnemyShip {
   reserveT?: number
   /** broken fleets run toward this rally point and wake its reinforcements */
   rally?: Vec
+  /** fireships commit to one aimed run instead of homing indefinitely */
+  chargeA?: number
+  chargeT?: number
 }
 
 export type HullZone = 'bow' | 'midships' | 'stern'
@@ -504,9 +512,8 @@ function enemyShellSpeed(danger: number): number {
 function relentlessEncounter(e: EnemyShip): boolean {
   return (
     e.encounterKind === 'pincer' ||
-    e.encounterKind === 'patrol' ||
-    e.encounterKind === 'bombardment' ||
-    e.encounterKind === 'fireship-raid'
+    (e.encounterKind === 'bombardment' && e.encounterRole === 'artillery') ||
+    (e.encounterKind === 'fireship-raid' && e.kind === 'fireship')
   )
 }
 
@@ -576,6 +583,9 @@ export class Game {
   private encountersAnnounced = new Set<number>()
   devEncounterAnnouncements = false
   devGodMode = false
+  /** Dev-only authored encounter range: keep procedural POIs, weather and
+   * ambient traffic out so the stationed fleets are the only moving parts. */
+  devEncounterLab = false
 
   /** materialized POIs by world cell (null = cell checked, empty) */
   pois = new Map<string, POI | null>()
@@ -665,7 +675,7 @@ export class Game {
   reset() {
     this.tier = 0
     this.ship = { pos: v(0, 0), vel: v(0, 0), a: 0, hp: TIERS[0].hull }
-    this.mounts = TIERS[0].mounts.map(m => ({ x: m.x, y: m.y, aim0: m.aim, plant: null }))
+    this.mounts = TIERS[0].mounts.map(m => ({ x: m.x, y: m.y, aim0: m.aim, plant: null, battleStations: true }))
     this.burnT = 0
     this.floodT = 0
     this.floodTickT = 0.5
@@ -888,14 +898,18 @@ export class Game {
     }
 
     this.updateWind(dt)
-    this.updateRain(dt)
-    this.updatePOIs(dt)
+    if (!this.devEncounterLab) {
+      this.updateRain(dt)
+      this.updatePOIs(dt)
+    } else {
+      this.activePois = []
+    }
     this.updateMovement(dt)
     this.updateShip(dt)
     this.updateEnemies(dt)
     this.updateBullets(dt)
     this.updateLoot(dt)
-    this.updateSea(dt)
+    if (!this.devEncounterLab) this.updateSea(dt)
     this.updateHoverInfo()
     this.updateFx(dt)
     this.stats.far = Math.max(this.stats.far, dist(this.ship.pos, v(0, 0)))
@@ -1437,14 +1451,14 @@ export class Game {
       // The deck crew draws a cask automatically at the point this plant would
       // run dry. With an empty hold it simply wilts and falls silent.
       let autoFilled = false
-      if (p.water <= drink && this.water > 0) {
+      if (p.water <= drink && this.water > 0 && m.battleStations) {
         this.water--
         p.water = WATER_PER_USE
         p.dryTime = 0
         autoFilled = true
         this.toastAt(this.mountPos(m), '💧 auto-water', '#7fd8ff')
         this.puff(v(this.mountPos(m).x, this.mountPos(m).y - 14), '#7fd8ff', 3)
-      } else if (p.water <= drink && this.water <= 0 && this.time - this.boilHintT > 3) {
+      } else if (p.water <= drink && m.battleStations && this.water <= 0 && this.time - this.boilHintT > 3) {
         this.boilHintT = this.time
         this.toastAt(v(this.ship.pos.x, this.ship.pos.y - this.tierDef().len * 0.55), 'B to boil 💧', '#7fd8ff')
       }
@@ -1484,10 +1498,11 @@ export class Game {
       // a ward plant is point-defense, not artillery: it never joins a volley,
       // it swats incoming shells out of its arc on its own reload instead
       if (p.pheno.quirk === 'ward') {
+        if (!m.battleStations) continue
         this.wardIntercept(p, this.mountPos(m), this.ship.a + p.aim, true)
         continue
       }
-      if (this.firing && p.water > 0 && p.cooldown <= 0) {
+      if (m.battleStations && this.firing && p.water > 0 && p.cooldown <= 0) {
         this.firePlant(m, this.mountPos(m))
         p.cooldown = p.pheno.period * (this.chillT > 0 ? 1.35 : 1)
         p.water = Math.max(0, p.water - 0.1)
@@ -1663,7 +1678,7 @@ export class Game {
       this.bullets.splice(i, 1)
       p.cooldown = p.pheno.period
       p.water = Math.max(0, p.water - 0.5)
-      p.activeT = 4
+      p.activeT = ACTIVE_THIRST_S
       p.recoilT = 0.12
       this.burst(v(b.pos.x, b.pos.y), '#bfe3f2', 8)
       sfx('break')
@@ -1678,7 +1693,7 @@ export class Game {
   private firePlant(m: Mount, from: Vec) {
     const p = m.plant!
     this.firedEver = true
-    p.activeT = 4
+    p.activeT = ACTIVE_THIRST_S
     const heading = this.ship.a + p.aim // hull-relative: turning walks the burst
     this.fireVolley(from, heading, p, true, 1, true)
     this.puff(v(from.x, from.y - 16), '#fff3c4', 2)
@@ -1786,7 +1801,13 @@ export class Game {
     this.tier++
     this.ship.hp = next.hull
     const old = this.mounts
-    this.mounts = next.mounts.map((md, i) => ({ x: md.x, y: md.y, aim0: md.aim, plant: old[i]?.plant ?? null }))
+    this.mounts = next.mounts.map((md, i) => ({
+      x: md.x,
+      y: md.y,
+      aim0: md.aim,
+      plant: old[i]?.plant ?? null,
+      battleStations: old[i]?.battleStations ?? true,
+    }))
     this.banner = { title: `${next.name}!`, sub: `${next.mounts.length} gun mounts · hull ${next.hull}`, t: 3 }
     this.burst(this.ship.pos, '#e8c98a', 16)
     this.shake = Math.min(8, this.shake + 3)
@@ -2063,34 +2084,98 @@ export class Game {
       ship.wanderA = heading
       return ship
     }
+    const spawnWorld = (
+      shipKind: EnemyShip['kind'],
+      role: EncounterRole,
+      pos: Vec,
+      extra: Partial<Pick<EnemyShip, 'reserveT' | 'rally'>> = {},
+    ) => {
+      const dx = pos.x - anchor.x
+      const dy = pos.y - anchor.y
+      // Keep formation metadata in the encounter's course basis even when a
+      // composition is authored relative to the player's approach bearing.
+      return spawn(shipKind, role, dx * fx + dy * fy, dx * px + dy * py, extra)
+    }
+    const approachD = Math.hypot(anchor.x - c.x, anchor.y - c.y) || 1
+    const ax = (anchor.x - c.x) / approachD
+    const ay = (anchor.y - c.y) / approachD
+    const sx = -ay
+    const sy = ax
 
     if (kind === 'convoy') {
       spawn(danger > 4.2 ? 'broadside' : 'raider', 'anchor', 0, 0)
-      spawn('harrier', 'escort', -60, -110)
-      spawn(danger > 2.5 ? 'sloop' : 'raider', 'escort', -60, 110)
+      // A shallow V keeps the prize readable between its escorts without
+      // stretching pod wake or turning the convoy into three separate fights.
+      spawn('harrier', 'escort', -85, -155)
+      spawn(danger > 2.5 ? 'sloop' : 'raider', 'escort', -85, 155)
     } else if (kind === 'pincer') {
-      spawn(danger > 2.4 ? 'sloop' : 'raider', 'flank', 30, -190)
-      spawn('harrier', 'flank', 30, 190, { reserveT: 1.8 })
-      if (danger > 4.5) spawn('raider', 'reserve', -210, 0, { reserveT: 3 })
+      // One sail makes contact while two delayed wings wait beyond opposite
+      // screen edges. Author the wings against the player's approach bearing,
+      // not the fleet's travel heading; a tangential course previously put one
+      // so close that all three read as an ordinary cluster.
+      spawn('raider', 'screen', 0, 0)
+      spawnWorld(
+        danger > 2.4 ? 'sloop' : 'raider',
+        'flank',
+        v(anchor.x + ax * 90 + sx * 720, anchor.y + ay * 90 + sy * 720),
+        { reserveT: 1.4 },
+      )
+      spawnWorld(
+        'harrier',
+        'flank',
+        v(anchor.x + ax * 90 - sx * 720, anchor.y + ay * 90 - sy * 720),
+        { reserveT: 2.1 },
+      )
     } else if (kind === 'bombardment') {
-      spawn('mortar', 'artillery', -190, 0)
-      spawn('raider', 'screen', 80, -130)
-      spawn(danger > 4.8 ? 'galleon' : 'harrier', 'screen', 80, 130)
+      // Put the screen literally between the approaching player and the gun,
+      // with enough lateral spread that slipping around an edge is a choice.
+      spawnWorld('mortar', 'artillery', v(anchor.x + ax * 360, anchor.y + ay * 360))
+      spawnWorld('raider', 'screen', v(anchor.x - ax * 100 + sx * 300, anchor.y - ay * 100 + sy * 300))
+      spawnWorld(
+        danger > 4.8 ? 'galleon' : 'harrier',
+        'screen',
+        v(anchor.x - ax * 100 - sx * 300, anchor.y - ay * 100 - sy * 300),
+      )
     } else if (kind === 'fireship-raid') {
-      spawn('raider', 'screen', 70, -125)
-      spawn('harrier', 'screen', 70, 125)
-      spawn('fireship', 'reserve', -220, 0, { reserveT: 2.8 })
+      // Escorts show first; the weapon itself waits over the far horizon and
+      // acquires room for a legible full-speed charge when their screen wakes.
+      spawnWorld('raider', 'screen', v(anchor.x + sx * 240, anchor.y + sy * 240))
+      spawnWorld('harrier', 'screen', v(anchor.x - sx * 240, anchor.y - sy * 240))
+      spawnWorld('fireship', 'reserve', v(anchor.x + ax * 720, anchor.y + ay * 720), { reserveT: 2.8 })
     } else if (kind === 'patrol') {
+      // A broad line abreast creates an actual gap-crossing problem and makes
+      // the shared wake obvious when one lookout alerts the other two.
       spawn('raider', 'patrol', 0, 0)
-      spawn(danger > 2 ? 'harrier' : 'raider', 'patrol', -125, -90)
-      spawn(danger > 3.5 ? 'sloop' : 'raider', 'patrol', -250, 90)
+      spawn(danger > 2 ? 'harrier' : 'raider', 'patrol', -35, -310)
+      spawn(danger > 3.5 ? 'sloop' : 'raider', 'patrol', -35, 310)
     } else {
-      const rally = at(-420, 0)
-      const a = spawn('raider', 'fleeing', 80, -70, { rally })
-      const b = spawn(danger > 2.5 ? 'sloop' : 'raider', 'fleeing', 20, 80, { rally })
+      // The damaged sails are the breadcrumb. Their haven begins off-screen,
+      // so chasing the easy kills is what reveals the waiting reinforcement.
+      const rally = v(anchor.x + ax * 900, anchor.y + ay * 900)
+      const a = spawnWorld('raider', 'fleeing', v(anchor.x + sx * 105, anchor.y + sy * 105), { rally })
+      const b = spawnWorld(
+        danger > 2.5 ? 'sloop' : 'raider',
+        'fleeing',
+        v(anchor.x - sx * 105, anchor.y - sy * 105),
+        { rally },
+      )
       a.hp *= rand(0.38, 0.62)
       b.hp *= rand(0.45, 0.7)
-      spawn(danger > 4 ? 'galleon' : 'raider', 'reinforcement', -420, 0, { reserveT: 6, rally })
+      // Chasing wounded sails is greed: the relief force is categorically
+      // heavier than its charges, not another same-tier raider with fresh HP.
+      const rescue = spawnWorld('galleon', 'reinforcement', rally, { reserveT: 6, rally })
+      rescue.maxHp *= 1.35
+      rescue.hp = rescue.maxHp
+      if (danger > 4.5) {
+        const guard = spawnWorld(
+          'broadside',
+          'reinforcement',
+          v(rally.x + sx * 230, rally.y + sy * 230),
+          { reserveT: 6.3, rally },
+        )
+        guard.maxHp *= 1.2
+        guard.hp = guard.maxHp
+      }
     }
     return this.enemies.filter(e => e.encounterId === id)
   }
@@ -2161,14 +2246,54 @@ export class Game {
       this.holdFireHinted = true
       this.toastAt(this.ship.pos, '⚓ your guns are silent until ␣ — you can still slip away', '#9fb8c8')
     }
-    // stirring one ship wakes its podmates — pick where you engage
+    // Stirring one ship wakes its authored formation even when a readable
+    // screen spans farther than the ambient pod radius. Delayed members remain
+    // gated by reserveT and enter on their own telegraphed cadence.
     for (const o of this.enemies) {
-      if (o !== e && o.mode === 'roam' && (o.reserveT ?? 0) <= 0 && dist(o.pos, e.pos) < POD_WAKE_R) this.notice(o, rand(0.7, 1.2))
+      // Patrol alerts travel lookout-to-lookout through the ordinary pod radius;
+      // the far end of the line does not psychically wake with the first ship.
+      const formationMate = e.encounterKind !== 'patrol' && e.encounterId != null && o.encounterId === e.encounterId
+      if (o !== e && o.mode === 'roam' && (o.reserveT ?? 0) <= 0 && (formationMate || dist(o.pos, e.pos) < POD_WAKE_R)) {
+        this.notice(o, rand(0.7, 1.2))
+      }
     }
   }
 
   private updateEnemies(dt: number) {
     const center = this.ship.pos
+    // A bombardment owns a place, not the whole sea. Leaving its waters resets
+    // the gun and reforms its screen instead of dragging the battery along.
+    const bombardments = this.enemies.filter(e => e.encounterKind === 'bombardment' && e.encounterRole === 'artillery' && !e.sunk)
+    for (const artillery of bombardments) {
+      if (artillery.mode === 'roam' || dist(artillery.pos, center) <= 1400 || artillery.encounterId == null) continue
+      for (const ship of this.enemies) {
+        if (ship.encounterId !== artillery.encounterId || ship.sunk) continue
+        ship.mode = 'roam'
+        ship.engaged = false
+        ship.patience = ship.patience0
+      }
+      this.toastAt(artillery.pos, 'gun line holding position', '#9fb8c8')
+    }
+
+    // Once the raid's single weapon is gone, its escorts peel away rather than
+    // turning the encounter into a generic cleanup brawl.
+    const spentRaids = new Set(
+      this.enemies
+        .filter(e => e.encounterKind === 'fireship-raid' && e.encounterId != null)
+        .map(e => e.encounterId!)
+        .filter(id => !this.enemies.some(e => e.encounterId === id && e.kind === 'fireship' && !e.sunk)),
+    )
+    for (const escort of this.enemies) {
+      if (escort.encounterId == null || !spentRaids.has(escort.encounterId) || escort.kind === 'fireship' || escort.sunk) continue
+      this.toastAt(escort.pos, 'screen breaking off', '#9fb8c8')
+      escort.mode = 'roam'
+      escort.engaged = false
+      escort.aggroR = 0
+      escort.encounterKind = undefined
+      escort.encounterRole = undefined
+      escort.encounterId = undefined
+      escort.wanderA = Math.atan2(escort.pos.y - center.y, escort.pos.x - center.x)
+    }
     // Delayed wings and fireships enter only after another member reveals the
     // encounter. Their countdown is the ambush telegraph and prevents one
     // proximity check from turning every composition back into a blob.
@@ -2177,7 +2302,12 @@ export class Game {
       const awake = this.enemies.some(o => o !== e && o.encounterId === e.encounterId && (o.mode === 'notice' || o.mode === 'hunt'))
       if (!awake) continue
       e.reserveT = Math.max(0, e.reserveT! - dt)
-      if (e.reserveT <= 0) this.notice(e, e.kind === 'fireship' ? 0.35 : 0.7)
+      // A fireship is already committed before it appears. It does not slow to
+      // identify the player; release turns directly into its one aimed run.
+      if (e.reserveT <= 0) {
+        if (e.kind === 'fireship') this.aggro(e)
+        else this.notice(e, 0.7)
+      }
     }
     // only a few press the attack — the rest shadow outside gun range and wait
     // for a slot. Slots are sticky (held until the hunter breaks off or sinks)
@@ -2285,7 +2415,10 @@ export class Game {
       // staged aggro: raiders eye you (❓) for a beat before committing (⚔️) —
       // back out of range while they wonder and nothing happens
       if (e.mode === 'roam' && d < e.aggroR && !this.over) {
-        this.notice(e)
+        // The doomed fireship crew never pauses for a lookout check. Ambient
+        // fireships acquire just as decisively as authored raid weapons.
+        if (e.kind === 'fireship') this.aggro(e)
+        else this.notice(e)
       } else if (e.mode === 'notice') {
         e.noticeT -= dt
         // escape means opening the gap beyond where they first noticed you
@@ -2307,7 +2440,27 @@ export class Game {
         }
       }
 
-      if (e.mode === 'hunt' && e.encounterKind === 'convoy' && e.encounterRole === 'anchor') {
+      if (e.mode === 'hunt' && e.encounterKind === 'bombardment' && e.encounterRole === 'artillery') {
+        // The mortar traverses and ranges its gun, but its hull is the objective.
+        e.vel.x = 0
+        e.vel.y = 0
+      } else if (e.mode === 'hunt' && e.encounterKind === 'bombardment' && e.encounterRole === 'screen') {
+        const artillery = this.enemies.find(o => o.encounterId === e.encounterId && o.encounterRole === 'artillery' && !o.sunk)
+        if (artillery && (dist(center, artillery.pos) > 800 || dist(e.pos, artillery.pos) > 560)) {
+          const h = artillery.encounterHeading ?? 0
+          const f = (e.formation?.x ?? 0) - (artillery.formation?.x ?? 0)
+          const side = (e.formation?.y ?? 0) - (artillery.formation?.y ?? 0)
+          const tx = artillery.pos.x + Math.cos(h) * f - Math.sin(h) * side
+          const ty = artillery.pos.y + Math.sin(h) * f + Math.cos(h) * side
+          const gd = Math.hypot(tx - e.pos.x, ty - e.pos.y) || 1
+          e.vel.x = ((tx - e.pos.x) / gd) * Math.min(spd, gd * 1.5)
+          e.vel.y = ((ty - e.pos.y) / gd) * Math.min(spd, gd * 1.5)
+        } else {
+          const tangent = v(-uy * e.orbitDir, ux * e.orbitDir)
+          e.vel.x = ux * spd * 0.65 + tangent.x * spd * 0.35
+          e.vel.y = uy * spd * 0.65 + tangent.y * spd * 0.35
+        }
+      } else if (e.mode === 'hunt' && e.encounterKind === 'convoy' && e.encounterRole === 'anchor') {
         // The prize holds the convoy's visibly authored course while its
         // escorts peel off. It no longer changes escape direction around the
         // player, which made the group look like a loose accidental cluster.
@@ -2333,18 +2486,25 @@ export class Game {
           e.rally = undefined
         }
       } else if (e.mode === 'hunt' && e.kind === 'fireship') {
-        // the fireship IS the shell: charge the intercept point flat out and burn
-        // together on contact. Its flame wake says where it's pointed — turn away
-        const lx = lead.x - e.pos.x
-        const ly = lead.y - e.pos.y
-        const ld = Math.hypot(lx, ly) || 1
-        e.vel.x = (lx / ld) * spd
-        e.vel.y = (ly / ld) * spd
+        // The fireship takes one intercept solution and then holds it. A hard
+        // turn dodges the run; the hull does not curve back for another pass.
+        if (e.chargeA == null) {
+          e.chargeA = Math.atan2(lead.y - e.pos.y, lead.x - e.pos.x)
+          e.chargeT = 14
+          this.toastAt(e.pos, '🔥 charge committed!', '#ff9d5c')
+        }
+        e.chargeT = Math.max(0, (e.chargeT ?? 0) - dt)
+        e.vel.x = Math.cos(e.chargeA) * spd
+        e.vel.y = Math.sin(e.chargeA) * spd
         if (Math.random() < 9 * dt) {
           this.puff(v(e.pos.x + rand(-e.r * 0.5, e.r * 0.5), e.pos.y + rand(-e.r * 0.5, e.r * 0.5)), '#ff8c42', 1)
         }
         if (this.onHull(e.pos, enemyHullDims(e).beam * 0.6)) {
           this.fireshipBlast(e)
+          continue
+        }
+        if (e.chargeT <= 0) {
+          this.fireshipSpent(e)
           continue
         }
       } else if (e.mode === 'hunt' && e.kind === 'broadside') {
@@ -2471,6 +2631,10 @@ export class Game {
           const correction = Math.min(45, error * 1.4)
           e.vel.x = formationCourse.leader.vel.x + (error > 0 ? ex / error * correction : 0)
           e.vel.y = formationCourse.leader.vel.y + (error > 0 ? ey / error * correction : 0)
+        }
+        if (e.encounterKind === 'bombardment' && e.encounterRole === 'artillery') {
+          e.vel.x = 0
+          e.vel.y = 0
         }
       }
       // every class under canvas feels the wind and the dead pools — less than
@@ -2764,9 +2928,12 @@ export class Game {
       }
     }
     // Sunk ships remain just long enough to settle beneath the water; distant
-    // roamers still slip over the horizon normally.
+    // roamers still slip over the horizon normally. Authored reserves must
+    // survive beyond that horizon until their encounter releases them.
     this.enemies = this.enemies.filter(
-      e => (!e.sunk || (e.sinkT ?? 0) > 0) && (e.mode === 'hunt' || e.sunk || dist(e.pos, center) < (e.home ? 2600 : 1700))
+      e =>
+        (!e.sunk || (e.sinkT ?? 0) > 0) &&
+        (e.mode === 'hunt' || e.sunk || (e.encounterId != null && (e.reserveT ?? 0) > 0) || dist(e.pos, center) < (e.home ? 2600 : 1700))
     )
     // a nest whose pod drifted out of the world re-arms for the next visit
     for (const p of this.activePois) {
@@ -2851,6 +3018,17 @@ export class Game {
     this.toastAt(e.pos, '🔥 fireship!', '#ff9d5c')
     sfx('sunk')
     if (this.ship.hp <= 0) this.gameOver()
+  }
+
+  /** A dodged fireship burns past its solution and founders without a second
+   * homing pass. No loot: the raid spent the hull as ammunition. */
+  private fireshipSpent(e: EnemyShip) {
+    if (e.sunk) return
+    e.sunk = true
+    this.burst(e.pos, '#ff8c42', 14)
+    this.puff(e.pos, '#4d4a43', 10)
+    this.toastAt(e.pos, 'fireship spent', '#9fb8c8')
+    sfx('break')
   }
 
   /** give up the chase and wander off to lick wounds — the way out of a hunt */
@@ -3780,6 +3958,19 @@ export class Game {
         m.plant = plant
         this.toastAt(this.mountPos(m), `🌱 ${phenotype(seed.genome).name}`, '#b8e986')
         sfx('build')
+        break
+      }
+
+      case 'stations': {
+        if (!m?.plant) return
+        m.battleStations = !m.battleStations
+        if (!m.battleStations) m.plant.activeT = 0
+        this.toastAt(
+          this.mountPos(m),
+          m.battleStations ? '⚔️ battle stations' : '🛑 stood down',
+          m.battleStations ? '#ffd257' : '#ff9d9d'
+        )
+        sfx(m.battleStations ? 'build' : 'deny')
         break
       }
 

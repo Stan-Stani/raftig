@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚔️</text></svg>" />
+    <title>raftig encounter range</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #072a40; }
+      canvas { display: block; cursor: crosshair; }
+      #rangePanel {
+        position: fixed; top: 10px; left: 10px; z-index: 10; width: 280px;
+        box-sizing: border-box; padding: 11px 12px; color: #cfe7f2;
+        background: rgba(5, 18, 29, .9); border: 1px solid rgba(255,255,255,.16);
+        border-radius: 9px; font: 12px/1.4 ui-monospace, monospace;
+      }
+      h1 { margin: 0 0 3px; color: #ffd257; font-size: 14px; }
+      .sub { margin: 0 0 9px; color: #7f9aaa; }
+      #stations { display: grid; gap: 5px; }
+      .station {
+        display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 6px;
+        width: 100%; padding: 5px 7px; box-sizing: border-box; text-align: left;
+        color: #cfe7f2; background: rgba(255,255,255,.035);
+        border: 1px solid rgba(255,255,255,.1); border-radius: 5px;
+        font: inherit; cursor: pointer;
+      }
+      .station:hover { border-color: #ffd25788; background: rgba(255,210,87,.08); }
+      .station.active { border-color: #ff8d72; }
+      .station.cleared { color: #78909d; }
+      .station .distance { color: #7fd8ff; font-size: 11px; }
+      .row { display: flex; gap: 6px; margin-top: 9px; }
+      .row button {
+        flex: 1; padding: 5px; color: #071a27; background: #ffd257; border: 0;
+        border-radius: 5px; font: inherit; font-weight: bold; cursor: pointer;
+      }
+      .row button.ghost { color: #9fb8c8; background: transparent; border: 1px solid rgba(255,255,255,.18); }
+      .hint { margin-top: 8px; color: #7690a0; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <canvas id="encounterLab"></canvas>
+    <aside id="rangePanel">
+      <h1>⚔ authored encounter range</h1>
+      <p class="sub">Sail into a gold station ring to release that fleet. Click a station to stage an approach.</p>
+      <div id="stations"></div>
+      <div class="row">
+        <button id="resetRange">reset fleets</button>
+        <button id="toggleGod" class="ghost">god: on</button>
+      </div>
+      <div class="hint">A/D helm · W sail · S reverse · Space fire · Z/X range · P pause · M mute</div>
+    </aside>
+    <script type="module" src="/src/encounter-lab.ts"></script>
+  </body>
+</html>

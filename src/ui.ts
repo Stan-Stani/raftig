@@ -4,7 +4,7 @@
 import { Board, BoardParent, slotChoices, slotSwitchCost, picksCost } from './breeding'
 import { Genome, LocusId, LOCUS_ORDER, expressed, alleleDef } from './genetics'
 
-export type Tool = 'plant'
+export type Tool = 'plant' | 'stations'
 
 export interface ToolDef {
   tool: Tool
@@ -15,6 +15,7 @@ export interface ToolDef {
 
 export const TOOLS: ToolDef[] = [
   { tool: 'plant', icon: '🌱', name: 'plant', tip: 'pick a seed (Q/E or wheel), click an empty mount to sow · click a planted mount twice to dig it up' },
+  { tool: 'stations', icon: '⚔️', name: 'stations', tip: 'click a mounted plant to order battle stations / stand down' },
 ]
 
 export interface Rect {

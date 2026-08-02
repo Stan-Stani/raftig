@@ -511,22 +511,30 @@ function drawPlayerShip(ctx: CanvasRenderingContext2D, g: Game, t: number) {
     if (plant.pheno.quirk === 'ward') {
       // a ward doesn't bombard: its telegraph is the shield arc it can swat
       // shells out of, not a drop ring
-      drawWardArc(ctx, p.x, p.y, reach, a, plant.cooldown <= 0 && plant.water > 0, t)
+      if (m.battleStations) drawWardArc(ctx, p.x, p.y, reach, a, plant.cooldown <= 0 && plant.water > 0, t)
     } else {
-      drawAim(ctx, p.x, p.y - 12, a, false, false, t)
-      drawDropRing(
-        ctx,
-        p.x + Math.cos(a) * reach,
-        p.y + Math.sin(a) * reach,
-        g.plantSplash(plant),
-        plant.cooldown <= 0 && plant.water > 0,
-        t
-      )
+      if (m.battleStations) {
+        drawAim(ctx, p.x, p.y - 12, a, false, false, t)
+        drawDropRing(
+          ctx,
+          p.x + Math.cos(a) * reach,
+          p.y + Math.sin(a) * reach,
+          g.plantSplash(plant),
+          plant.cooldown <= 0 && plant.water > 0,
+          t
+        )
+      }
     }
     // muzzle recoil: the sprite kicks back along -aim as a volley leaves
     const rec = plant.recoilT > 0 ? (plant.recoilT / 0.12) * 3 : 0
     drawPlant(ctx, p.x - Math.cos(a) * rec, p.y - Math.sin(a) * rec, plant, false, t)
     drawWaterBar(ctx, p.x, p.y, plant)
+    if (!m.battleStations) {
+      ctx.font = 'bold 12px ui-monospace, monospace'
+      ctx.textAlign = 'center'
+      ctx.fillStyle = '#ff9d9d'
+      ctx.fillText('🛑 STAND DOWN', p.x, p.y - 38)
+    }
     if (plant.disruptedT > 0) {
       ctx.font = '13px serif'
       ctx.textAlign = 'center'
@@ -1503,7 +1511,7 @@ function drawHud(ctx: CanvasRenderingContext2D, g: Game, w: number, h: number, t
   chip(ctx, w - ew - 12, 44, elevTxt, g.elev < 0.995 ? '#7fd8ff' : undefined)
   // manual fire: reminder chip under it (the gunnery corner), lit gold when a
   // loaded gun has a target — the old centre spot collided with the wind pill
-  const ready = g.mounts.some(m => m.plant && m.plant.water > 0 && m.plant.cooldown <= 0)
+  const ready = g.mounts.some(m => m.battleStations && m.plant && m.plant.water > 0 && m.plant.cooldown <= 0)
   const litFire = ready && g.inCombat() && 0.5 + 0.5 * Math.sin(t * 6) > 0.35
   const fireTxt = '␣ fire'
   const fw = ctx.measureText(fireTxt).width + 18
@@ -2161,7 +2169,7 @@ function fit(ctx: CanvasRenderingContext2D, s: string, maxW: number): string {
  *  one key away */
 const CONTROL_LINES = [
   'A/D — helm · W — sheet in · S — back water · SPACE — FIRE · Z/X — gun range',
-  '1 — sow plants · Q/E — cycle seed · B — boil 20🪵 → 2💧 · U — refit',
+  '1 — sow plants · 2 — battle stations / stand down · Q/E — cycle seed · B — boil 20🪵 → 2💧 · U — refit',
   'T — trade/parley · F — breed (port/hive/boat) · I — suggest something · P/Esc — pause · H — help',
 ]
 
