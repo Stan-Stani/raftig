@@ -1,7 +1,45 @@
-// Tiny WebAudio synth — all sfx are oscillator envelopes, no assets.
+// Shared WebAudio bus for the looping score and tiny oscillator-envelope SFX.
 
 let actx: AudioContext | null = null
+let musicGain: GainNode | null = null
+let musicSource: AudioBufferSourceNode | null = null
+let musicLoading: Promise<void> | null = null
 export let muted = false
+
+const MUSIC_VOLUME = 0.16
+
+async function startMusic() {
+  if (!actx || musicSource) return
+  if (musicLoading) return musicLoading
+
+  const ctx = actx
+  musicLoading = (async () => {
+    try {
+      // Vorbis stays small while preserving the loop boundary far better than
+      // MP3's encoder padding does.
+      const url = new URL('audio/brinegarden.ogg', document.baseURI).href
+      const response = await fetch(url)
+      if (!response.ok) throw new Error(`music request failed (${response.status})`)
+      const buffer = await ctx.decodeAudioData(await response.arrayBuffer())
+      // Another gesture may have completed the load while this one decoded.
+      if (musicSource) return
+      musicGain = ctx.createGain()
+      musicGain.gain.value = muted ? 0 : MUSIC_VOLUME
+      musicGain.connect(ctx.destination)
+      musicSource = ctx.createBufferSource()
+      musicSource.buffer = buffer
+      musicSource.loop = true
+      musicSource.connect(musicGain)
+      musicSource.start()
+    } catch (error) {
+      // Audio should never keep the game from running. Leave a useful clue for
+      // local builds while allowing a later gesture to retry a failed request.
+      console.warn('Could not start Brinegarden soundtrack.', error)
+      musicLoading = null
+    }
+  })()
+  return musicLoading
+}
 
 /** Call from a user gesture (autoplay policy). */
 export function ensureAudio() {
@@ -12,11 +50,16 @@ export function ensureAudio() {
       return
     }
   }
-  if (actx.state === 'suspended') void actx.resume()
+  if (actx.state === 'suspended') void actx.resume().then(startMusic)
+  else void startMusic()
 }
 
 export function toggleMute(): boolean {
   muted = !muted
+  if (musicGain && actx) {
+    musicGain.gain.cancelScheduledValues(actx.currentTime)
+    musicGain.gain.setTargetAtTime(muted ? 0 : MUSIC_VOLUME, actx.currentTime, 0.025)
+  }
   return muted
 }
 

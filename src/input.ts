@@ -10,6 +10,7 @@ export function initInput(canvas: HTMLCanvasElement, game: Game) {
     const el = document.activeElement
     if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return
     if (e.repeat) return
+    ensureAudio()
     keys.add(e.code)
     game.keydown(e.code)
     if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault()
